@@ -8,6 +8,8 @@
 
 首发边界：Android、单人、单账本、本地优先、人民币本位币。
 
+代码仓库：[Y-Unfettered/finance-manager](https://github.com/Y-Unfettered/finance-manager)。每个完成版本都会同步更新版本记录、创建 Git 标签并推送到 GitHub。
+
 ## 文档索引
 
 | 文档 | 解决的问题 | 权威范围 |
