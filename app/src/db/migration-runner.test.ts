@@ -1,35 +1,8 @@
 // @vitest-environment node
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite'
+import { NodeSqliteExecutor } from '@/test/node-sqlite-executor'
 
-import type { Migration, SqliteExecutor, SqlValue } from './core/types'
+import type { Migration } from './core/types'
 import { runMigrations } from './migration-runner'
-
-class NodeSqliteExecutor implements SqliteExecutor {
-  constructor(readonly database = new DatabaseSync(':memory:')) {}
-
-  async execute(statements: string, transaction = true): Promise<void> {
-    if (!transaction) {
-      this.database.exec(statements)
-      return
-    }
-
-    this.database.exec('BEGIN IMMEDIATE')
-    try {
-      this.database.exec(statements)
-      this.database.exec('COMMIT')
-    } catch (error) {
-      this.database.exec('ROLLBACK')
-      throw error
-    }
-  }
-
-  async query<Row extends object>(
-    statement: string,
-    values: readonly SqlValue[] = [],
-  ): Promise<Row[]> {
-    return this.database.prepare(statement).all(...(values as SQLInputValue[])) as Row[]
-  }
-}
 
 const now = () => '2026-08-03T12:00:00.000Z'
 

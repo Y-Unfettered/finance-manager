@@ -19,7 +19,7 @@ async function bootstrap(): Promise<void> {
   try {
     const database = await initializeFinanceDatabase()
     if (database.initialized) {
-      appStore.markDatabaseReady(database.schemaVersion)
+      appStore.markDatabaseReady(database.schemaVersion, database.ledgerId)
     } else {
       appStore.databaseStatus = 'not_applicable'
     }

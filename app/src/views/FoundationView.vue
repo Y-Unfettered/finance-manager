@@ -16,7 +16,7 @@ const showFilter = ref(false)
 const databaseStatusText = computed(() => {
   switch (appStore.databaseStatus) {
     case 'ready':
-      return `SQLite 已就绪 · Schema v${appStore.schemaVersion}`
+      return `SQLite 已就绪 · Schema v${appStore.schemaVersion}${appStore.ledgerId ? ' · 账本已初始化' : ''}`
     case 'initializing':
       return 'SQLite 正在初始化'
     case 'error':

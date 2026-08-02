@@ -7,6 +7,7 @@ export const useAppStore = defineStore('app', {
     appName: '财务经理',
     version: __APP_VERSION__,
     ledgerName: '日常账本',
+    ledgerId: undefined as string | undefined,
     databaseStatus: 'not_applicable' as DatabaseStatus,
     schemaVersion: 0,
     databaseError: undefined as string | undefined,
@@ -16,9 +17,10 @@ export const useAppStore = defineStore('app', {
       this.databaseStatus = 'initializing'
       this.databaseError = undefined
     },
-    markDatabaseReady(schemaVersion: number) {
+    markDatabaseReady(schemaVersion: number, ledgerId?: string) {
       this.databaseStatus = 'ready'
       this.schemaVersion = schemaVersion
+      this.ledgerId = ledgerId
       this.databaseError = undefined
     },
     markDatabaseError(error: unknown) {
