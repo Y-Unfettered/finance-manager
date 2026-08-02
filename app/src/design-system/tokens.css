@@ -1,0 +1,100 @@
+:root {
+  color-scheme: light;
+
+  --size-home-hero: 296px;
+  --size-report-hero: 256px;
+  --size-app-bar: 56px;
+  --size-bottom-nav: 64px;
+  --size-touch-target: 48px;
+  --size-icon-inline: 16px;
+  --size-icon-control: 20px;
+  --size-icon-navigation: 24px;
+  --size-account-avatar: 40px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  --radius-control: 12px;
+  --radius-card: 16px;
+  --radius-sheet: 28px;
+  --radius-pill: 999px;
+
+  --color-primary-700: #12574e;
+  --color-primary-600: #176b5d;
+  --color-primary-500: #2a806f;
+  --color-primary-100: #dcefea;
+  --color-primary-50: #eef7f4;
+  --color-accent-gold: #d8a248;
+  --color-background: #f4f6f3;
+  --color-surface: #ffffff;
+  --color-text-primary: #17211e;
+  --color-text-secondary: #66726e;
+  --color-text-tertiary: #98a19e;
+  --color-divider: #e7ebe8;
+  --color-income: #248561;
+  --color-expense: #d45f5a;
+  --color-warning: #c9842d;
+  --color-danger: #b94343;
+  --color-info: #4778ad;
+
+  --type-money-display-size: 30px;
+  --type-money-display-line: 36px;
+  --type-money-hero-size: 28px;
+  --type-money-hero-line: 34px;
+  --type-money-summary-size: 20px;
+  --type-money-summary-line: 28px;
+  --type-appbar-title-size: 17px;
+  --type-appbar-title-line: 24px;
+  --type-section-title-size: 16px;
+  --type-section-title-line: 24px;
+  --type-list-primary-size: 15px;
+  --type-list-primary-line: 22px;
+  --type-body-size: 14px;
+  --type-body-line: 21px;
+  --type-label-size: 13px;
+  --type-label-line: 18px;
+  --type-caption-size: 12px;
+  --type-caption-line: 18px;
+
+  --motion-instant: 100ms;
+  --motion-fast: 160ms;
+  --motion-base: 220ms;
+  --motion-slow: 280ms;
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --van-primary-color: var(--color-primary-600);
+  --van-background-2: var(--color-background);
+  --van-text-color: var(--color-text-primary);
+  --van-text-color-2: var(--color-text-secondary);
+  --van-border-color: var(--color-divider);
+  --van-radius-lg: var(--radius-card);
+  --van-popup-round-radius: var(--radius-sheet);
+}
+
+@media (min-width: 412px) {
+  :root {
+    --page-gutter: 20px;
+  }
+}
+
+@media (max-width: 411px) {
+  :root {
+    --page-gutter: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-instant: 1ms;
+    --motion-fast: 1ms;
+    --motion-base: 1ms;
+    --motion-slow: 1ms;
+  }
+}

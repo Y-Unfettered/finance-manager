@@ -1,0 +1,21 @@
+# Dependencies and builds
+app/node_modules/
+app/dist/
+app/coverage/
+app/android/.gradle/
+app/android/local.properties
+app/android/app/build/
+.gradle-cache/
+releases/*.apk
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local secrets and environment
+*.local
+.env
+.env.*
+!.env.example
