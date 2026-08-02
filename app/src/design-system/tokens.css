@@ -49,18 +49,24 @@
   --type-money-hero-line: 34px;
   --type-money-summary-size: 20px;
   --type-money-summary-line: 28px;
+  --type-page-title-size: 20px;
+  --type-page-title-line: 28px;
   --type-appbar-title-size: 17px;
   --type-appbar-title-line: 24px;
   --type-section-title-size: 16px;
   --type-section-title-line: 24px;
   --type-list-primary-size: 15px;
   --type-list-primary-line: 22px;
+  --type-list-amount-size: 15px;
+  --type-list-amount-line: 22px;
   --type-body-size: 14px;
   --type-body-line: 21px;
   --type-label-size: 13px;
   --type-label-line: 18px;
   --type-caption-size: 12px;
   --type-caption-line: 18px;
+  --type-nav-label-size: 11px;
+  --type-nav-label-line: 16px;
 
   --motion-instant: 100ms;
   --motion-fast: 160ms;

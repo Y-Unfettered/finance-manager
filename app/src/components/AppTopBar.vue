@@ -26,14 +26,16 @@ defineEmits<{
 <template>
   <header class="app-top-bar" :class="`app-top-bar--${variant}`">
     <div class="app-top-bar__slot">
-      <AppIconButton
-        v-if="showBack"
-        label="返回"
-        :variant="variant === 'transparent' ? 'on-dark' : 'default'"
-        @click="$emit('back')"
-      >
-        <ArrowLeft :size="24" :stroke-width="1.75" aria-hidden="true" />
-      </AppIconButton>
+      <slot name="left">
+        <AppIconButton
+          v-if="showBack"
+          label="返回"
+          :variant="variant === 'transparent' ? 'on-dark' : 'default'"
+          @click="$emit('back')"
+        >
+          <ArrowLeft :size="24" :stroke-width="1.75" aria-hidden="true" />
+        </AppIconButton>
+      </slot>
     </div>
 
     <button

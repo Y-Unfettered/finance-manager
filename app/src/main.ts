@@ -2,7 +2,10 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
 import App from './App.vue'
-import { initializeFinanceDatabase } from './db/bootstrap'
+import { initializeFinanceDatabase, requireFinanceDatabase } from './db/bootstrap'
+import { FinanceService, financeServiceKey } from './features/finance/finance-service'
+import { systemClock } from './domain/time'
+import { systemIdGenerator } from './domain/identity'
 import router from './router'
 import { useAppStore } from './stores/app'
 import './design-system/tokens.css'
@@ -20,6 +23,10 @@ async function bootstrap(): Promise<void> {
     const database = await initializeFinanceDatabase()
     if (database.initialized) {
       appStore.markDatabaseReady(database.schemaVersion, database.ledgerId)
+      app.provide(
+        financeServiceKey,
+        new FinanceService(requireFinanceDatabase(), systemIdGenerator, systemClock),
+      )
     } else {
       appStore.databaseStatus = 'not_applicable'
     }
