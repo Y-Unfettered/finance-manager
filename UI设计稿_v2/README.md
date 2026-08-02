@@ -50,4 +50,4 @@ Constraints: exact legible Chinese, no mojibake, no third-party logos, no coins,
 
 ## 参考图
 
-用户提供的参考截图已复制到 `D:\财务经理\UI参考图`，仅用于研究信息密度和视觉调性，不作为直接复制模板。
+用户提供的参考截图已复制到 `D:\finance-manager\UI参考图`，仅用于研究信息密度和视觉调性，不作为直接复制模板。

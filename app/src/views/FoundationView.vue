@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CalendarDays, Ellipsis, Landmark, ListFilter, WalletCards } from '@lucide/vue'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import AccountAvatar from '@/components/AccountAvatar.vue'
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
@@ -13,6 +13,18 @@ import { useAppStore } from '@/stores/app'
 const appStore = useAppStore()
 const showPeriod = ref(false)
 const showFilter = ref(false)
+const databaseStatusText = computed(() => {
+  switch (appStore.databaseStatus) {
+    case 'ready':
+      return `SQLite 已就绪 · Schema v${appStore.schemaVersion}`
+    case 'initializing':
+      return 'SQLite 正在初始化'
+    case 'error':
+      return `SQLite 初始化失败：${appStore.databaseError ?? '未知错误'}`
+    default:
+      return 'SQLite 仅在 Android 安装包中初始化'
+  }
+})
 </script>
 
 <template>
@@ -37,6 +49,9 @@ const showFilter = ref(false)
         <span class="foundation-page__eyebrow">SPRINT 0 · V{{ appStore.version }}</span>
         <h1>工程与设计系统基线</h1>
         <p>本页用于验证字号、颜色、卡片、账户图标、金额和移动弹层，不是正式业务首页。</p>
+        <span class="foundation-page__database-status" :data-status="appStore.databaseStatus">
+          {{ databaseStatusText }}
+        </span>
       </div>
 
       <BaseCard variant="summary">
@@ -151,6 +166,22 @@ const showFilter = ref(false)
   color: var(--color-text-secondary);
   font-size: var(--type-body-size);
   line-height: var(--type-body-line);
+}
+
+.foundation-page__database-status {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
+}
+
+.foundation-page__database-status[data-status='ready'] {
+  color: var(--color-income);
+}
+
+.foundation-page__database-status[data-status='error'] {
+  color: var(--color-expense);
 }
 
 .summary-card__header {
