@@ -122,17 +122,17 @@ onMounted(loadHome)
       </div>
 
       <div class="home-hero__summary">
-        <span>月支出</span>
-        <MoneyText class="home-hero__expense" :amount-minor="snapshot?.summary.expenseMinor ?? 0" />
-        <div class="home-hero__metrics">
-          <div>
-            <span>月收入</span>
-            <MoneyText :amount-minor="snapshot?.summary.incomeMinor ?? 0" />
-          </div>
-          <div>
-            <span>本月结余</span>
-            <MoneyText :amount-minor="snapshot?.summary.balanceMinor ?? 0" />
-          </div>
+        <div class="home-hero__metric home-hero__metric--primary">
+          <span>月支出</span>
+          <MoneyText :amount-minor="snapshot?.summary.expenseMinor ?? 0" />
+        </div>
+        <div class="home-hero__metric">
+          <span>月收入</span>
+          <MoneyText :amount-minor="snapshot?.summary.incomeMinor ?? 0" />
+        </div>
+        <div class="home-hero__metric">
+          <span>本月结余</span>
+          <MoneyText :amount-minor="snapshot?.summary.balanceMinor ?? 0" />
         </div>
       </div>
     </section>
@@ -216,40 +216,35 @@ onMounted(loadHome)
 .home-hero__summary {
   position: absolute;
   right: var(--page-gutter);
-  bottom: var(--space-5);
+  bottom: var(--space-3);
   left: var(--page-gutter);
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: var(--space-3);
 }
 
-.home-hero__summary > span,
-.home-hero__metrics span {
+.home-hero__metric span {
   display: block;
   color: rgb(255 255 255 / 82%);
-  font-size: var(--type-label-size);
-  line-height: var(--type-label-line);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
 }
 
-.home-hero__expense {
-  display: block;
-  margin-top: 2px;
-  color: white;
-  font-size: var(--type-money-hero-size);
-  font-weight: 600;
-  line-height: var(--type-money-hero-line);
-}
-
-.home-hero__metrics {
-  display: grid;
-  margin-top: var(--space-3);
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-5);
-}
-
-.home-hero__metrics :deep(.money-text) {
+.home-hero__metric :deep(.money-text) {
   display: block;
   margin-top: 1px;
+  overflow: hidden;
   color: white;
   font-size: var(--type-list-primary-size);
   font-weight: 500;
+  line-height: var(--type-list-primary-line);
+  text-overflow: ellipsis;
+}
+
+.home-hero__metric--primary :deep(.money-text) {
+  font-size: var(--type-money-summary-size);
+  font-weight: 600;
+  line-height: var(--type-money-summary-line);
 }
 
 .home-page__content {
