@@ -15,6 +15,7 @@ defineEmits<{
 <template>
   <Popup
     :show="show"
+    teleport="body"
     position="bottom"
     round
     closeable

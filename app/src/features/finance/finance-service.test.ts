@@ -93,4 +93,31 @@ describe('FinanceService', () => {
       expect.objectContaining({ id: bank.id, balanceMinor: 0 }),
     )
   })
+
+  it('supports asset and liability account types used by the account catalog', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+
+    const investment = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'investment',
+      name: '股票账户',
+    })
+    const credit = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'credit_card',
+      name: '招商银行信用卡',
+      institution: '招商银行',
+    })
+
+    expect(investment.normalBalance).toBe('debit')
+    expect(credit.normalBalance).toBe('credit')
+  })
 })

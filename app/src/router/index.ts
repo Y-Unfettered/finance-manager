@@ -1,9 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-import AccountsView from '@/views/AccountsView.vue'
 import FoundationView from '@/views/FoundationView.vue'
-import HomeView from '@/views/HomeView.vue'
 import NewExpenseView from '@/views/NewExpenseView.vue'
+import OverviewSwipeView from '@/views/OverviewSwipeView.vue'
 import PlaceholderView from '@/views/PlaceholderView.vue'
 
 const router = createRouter({
@@ -12,13 +11,13 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: HomeView,
+      component: OverviewSwipeView,
       meta: { bottomNav: true },
     },
     {
       path: '/accounts',
       name: 'accounts',
-      component: AccountsView,
+      component: OverviewSwipeView,
       meta: { bottomNav: true },
     },
     {

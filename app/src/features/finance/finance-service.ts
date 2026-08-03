@@ -24,7 +24,7 @@ export interface HomeSnapshot {
 export interface CreateAccountInput {
   ledgerId: string
   name: string
-  type: Extract<AccountType, 'cash' | 'bank' | 'platform'>
+  type: AccountType
   institution?: string
 }
 
