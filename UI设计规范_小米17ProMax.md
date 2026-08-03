@@ -323,9 +323,9 @@ IconPark 虽然支持 Vue 3、Outline、Filled、Two-tone 和 Multi-color，并�
 
 ### 8.2 首页
 
-- 首页摄影主视觉 `HomeHero` **固定总高度 196dp**，从屏幕物理顶部开始，包含状态栏和透明顶部操作区；目标 393 × 854dp 画布中约占 23.0%。
-- V2 母版中的摄影区原为 296dp；从 v0.0.5 起按真机反馈缩短 100dp。若按 1200px 宽出图，摄影区高度约 598px。
-- 开发使用 `height: 196px; box-sizing: border-box; padding-top: env(safe-area-inset-top)`；不要使用模糊百分比。
+- 首页摄影主视觉 `HomeHero` **固定总高度 246dp**，从屏幕物理顶部开始，包含状态栏和透明顶部操作区；目标 393 × 854dp 画布中约占 28.8%。
+- V2 母版中的摄影区原为 296dp；真机反馈最终调整为 246dp。若按 1200px 宽出图，摄影区高度约 751px。
+- 开发使用 `height: 246px; box-sizing: border-box; padding-top: env(safe-area-inset-top)`；不要使用模糊百分比。
 - 图片使用 `object-fit: cover`，默认焦点 `50% 50%`；每张照片可记录独立 `object-position`，不得通过拉伸适配。
 - 图片叠加统一遮罩：顶部 18% 深色保护状态栏，中部基本透明，底部逐渐增加到 68% 黑青色，确保所有白字在不同照片上均可读。
 - 状态栏下依次为月份、隐藏金额、最大数字“本月支出”、收入与结余双列。
@@ -448,7 +448,7 @@ Capacitor WebView 在正确 viewport 配置下，以下 CSS px 按设计 dp 使�
 
 ```css
 :root {
-  --size-home-hero: 196px;
+  --size-home-hero: 246px;
   --size-report-hero: 256px;
   --size-app-bar: 56px;
   --size-bottom-nav: 64px;

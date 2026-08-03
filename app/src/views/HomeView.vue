@@ -122,17 +122,19 @@ onMounted(loadHome)
       </div>
 
       <div class="home-hero__summary">
-        <div class="home-hero__metric home-hero__metric--primary">
+        <div class="home-hero__expense">
           <span>月支出</span>
           <MoneyText :amount-minor="snapshot?.summary.expenseMinor ?? 0" />
         </div>
-        <div class="home-hero__metric">
-          <span>月收入</span>
-          <MoneyText :amount-minor="snapshot?.summary.incomeMinor ?? 0" />
-        </div>
-        <div class="home-hero__metric">
-          <span>本月结余</span>
-          <MoneyText :amount-minor="snapshot?.summary.balanceMinor ?? 0" />
+        <div class="home-hero__metrics">
+          <div>
+            <span>月收入</span>
+            <MoneyText :amount-minor="snapshot?.summary.incomeMinor ?? 0" />
+          </div>
+          <div>
+            <span>本月结余</span>
+            <MoneyText :amount-minor="snapshot?.summary.balanceMinor ?? 0" />
+          </div>
         </div>
       </div>
     </section>
@@ -216,35 +218,56 @@ onMounted(loadHome)
 .home-hero__summary {
   position: absolute;
   right: var(--page-gutter);
-  bottom: var(--space-3);
+  bottom: var(--space-4);
   left: var(--page-gutter);
-  display: grid;
-  grid-template-columns: 1.2fr 1fr 1fr;
-  gap: var(--space-3);
 }
 
-.home-hero__metric span {
+.home-hero__expense > span {
   display: block;
-  color: rgb(255 255 255 / 82%);
-  font-size: var(--type-caption-size);
-  line-height: var(--type-caption-line);
+  color: rgb(255 255 255 / 92%);
+  font-size: var(--type-label-size);
+  font-weight: 600;
+  line-height: var(--type-label-line);
 }
 
-.home-hero__metric :deep(.money-text) {
+.home-hero__expense :deep(.money-text) {
   display: block;
-  margin-top: 1px;
+  margin-top: 2px;
+  color: white;
+  font-size: var(--type-money-hero-size);
+  font-weight: 600;
+  line-height: var(--type-money-hero-line);
+}
+
+.home-hero__metrics {
+  display: flex;
+  margin-top: var(--space-3);
+  align-items: center;
+  gap: var(--space-6);
+}
+
+.home-hero__metrics > div {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.home-hero__metrics span {
+  flex: 0 0 auto;
+  color: rgb(255 255 255 / 92%);
+  font-size: var(--type-label-size);
+  font-weight: 600;
+  line-height: var(--type-label-line);
+}
+
+.home-hero__metrics :deep(.money-text) {
   overflow: hidden;
   color: white;
   font-size: var(--type-list-primary-size);
-  font-weight: 500;
+  font-weight: 600;
   line-height: var(--type-list-primary-line);
   text-overflow: ellipsis;
-}
-
-.home-hero__metric--primary :deep(.money-text) {
-  font-size: var(--type-money-summary-size);
-  font-weight: 600;
-  line-height: var(--type-money-summary-line);
 }
 
 .home-page__content {
