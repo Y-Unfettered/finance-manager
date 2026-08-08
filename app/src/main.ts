@@ -14,6 +14,13 @@ import { TemplateService, templateServiceKey } from './features/templates/templa
 import { RecurringService, recurringServiceKey } from './features/recurring/recurring-service'
 import { ReminderService, reminderServiceKey } from './features/reminders/reminder-service'
 import { SearchService, searchServiceKey } from './features/search/search-service'
+import {
+  HomePreferencesService,
+  homePreferencesServiceKey,
+} from './features/preferences/home-preferences-service'
+import { StatisticsService, statisticsServiceKey } from './features/statistics/statistics-service'
+import { LedgerService, ledgerServiceKey } from './features/ledger/ledger-service'
+import { LedgerRepository } from './db/repositories/ledger-repository'
 import { systemClock } from './domain/time'
 import { systemIdGenerator } from './domain/identity'
 import router from './router'
@@ -36,8 +43,15 @@ async function bootstrap(): Promise<void> {
         `数据库升级失败：${database.migrationError}。升级前已自动备份到：${database.migrationBackupPath ?? 'Documents 目录'}`,
       )
     } else if (database.initialized) {
-      appStore.markDatabaseReady(database.schemaVersion, database.ledgerId)
       const db = requireFinanceDatabase()
+      const preferredLedgerId = localStorage.getItem('finance-manager:selected-ledger')
+      const preferredLedger = preferredLedgerId
+        ? await new LedgerRepository(db).findById(preferredLedgerId)
+        : undefined
+      const initialLedger =
+        preferredLedger ??
+        (database.ledgerId ? await new LedgerRepository(db).findById(database.ledgerId) : undefined)
+      appStore.markDatabaseReady(database.schemaVersion, initialLedger?.id, initialLedger?.name)
       app.provide(financeServiceKey, new FinanceService(db, systemIdGenerator, systemClock))
       app.provide(
         importServiceKey,
@@ -58,6 +72,9 @@ async function bootstrap(): Promise<void> {
       app.provide(recurringServiceKey, new RecurringService(db, systemIdGenerator, systemClock))
       app.provide(reminderServiceKey, new ReminderService(db, systemIdGenerator, systemClock))
       app.provide(searchServiceKey, new SearchService(db, systemIdGenerator, systemClock))
+      app.provide(homePreferencesServiceKey, new HomePreferencesService(db, systemClock))
+      app.provide(statisticsServiceKey, new StatisticsService(db, systemIdGenerator, systemClock))
+      app.provide(ledgerServiceKey, new LedgerService(db, systemIdGenerator, systemClock))
     } else {
       appStore.databaseStatus = 'not_applicable'
     }

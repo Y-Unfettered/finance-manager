@@ -1,21 +1,13 @@
 <script setup lang="ts">
-import {
-  BookOpen,
-  FileText,
-  Search,
-  Receipt,
-  CreditCard,
-  PiggyBank,
-  MessageCircle,
-  Info,
-  Settings,
-  X,
-} from '@lucide/vue'
+import { BookOpen, Search, Receipt, Settings, X } from '@lucide/vue'
 import { Popup } from 'vant'
 import 'vant/es/popup/style'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAppStore } from '@/stores/app'
+import { useLedgerService } from '@/features/ledger/ledger-service'
 
-defineProps<{
+const props = defineProps<{
   show: boolean
 }>()
 
@@ -24,6 +16,9 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+const appStore = useAppStore()
+const ledgers = useLedgerService()
+const ledgerCount = ref(1)
 
 interface DrawerEntry {
   id: string
@@ -34,15 +29,10 @@ interface DrawerEntry {
 }
 
 const entries: readonly DrawerEntry[] = [
-  { id: 'ledger', label: '我的账本', icon: BookOpen, route: 'home' },
-  { id: 'reimburse', label: '报销管理', icon: FileText, disabled: true },
+  { id: 'ledger', label: '我的账本', icon: BookOpen, route: 'ledgers' },
   { id: 'search', label: '搜索', icon: Search, route: 'search' },
-  { id: 'bills', label: '账单', icon: Receipt, disabled: true },
-  { id: 'installment', label: '分期', icon: CreditCard, disabled: true },
-  { id: 'savings', label: '周期存钱计划', icon: PiggyBank, disabled: true },
-  { id: 'feedback', label: '意见与反馈', icon: MessageCircle, disabled: true },
-  { id: 'about', label: '关于', icon: Info, disabled: true },
-  { id: 'settings', label: '设置', icon: Settings, route: 'profile' },
+  { id: 'bills', label: '账单', icon: Receipt, route: 'bills' },
+  { id: 'settings', label: '设置', icon: Settings, route: 'settings' },
 ] as const
 
 function close(): void {
@@ -54,6 +44,18 @@ function go(entry: DrawerEntry): void {
   close()
   void router.replace({ name: entry.route })
 }
+
+async function loadLedgerCount(): Promise<void> {
+  if (ledgers) ledgerCount.value = (await ledgers.list()).filter((item) => !item.archivedAt).length
+}
+
+watch(
+  () => props.show,
+  (show) => {
+    if (show) void loadLedgerCount()
+  },
+)
+onMounted(loadLedgerCount)
 </script>
 
 <template>
@@ -70,26 +72,24 @@ function go(entry: DrawerEntry): void {
         <X :size="22" :stroke-width="1.75" aria-hidden="true" />
       </button>
     </div>
-    <div class="side-drawer__profile">
+    <button class="side-drawer__profile" type="button" @click="go(entries[0]!)">
       <div class="side-drawer__avatar">账</div>
-      <strong>日常账本</strong>
-      <span>个人记账 · 共 1 个账本</span>
-    </div>
+      <strong>{{ appStore.ledgerName }}</strong>
+      <span>个人记账 · 共 {{ ledgerCount }} 个账本</span>
+    </button>
     <nav class="side-drawer__nav">
       <button
         v-for="entry in entries"
         :key="entry.id"
         type="button"
         class="drawer-entry"
-        :class="{ 'drawer-entry--disabled': entry.disabled }"
         @click="go(entry)"
       >
         <component :is="entry.icon" :size="22" :stroke-width="1.75" aria-hidden="true" />
         <span>{{ entry.label }}</span>
-        <i v-if="entry.disabled" class="drawer-entry__tag">规划中</i>
       </button>
     </nav>
-    <footer class="side-drawer__footer">财务经理 v0.2.1</footer>
+    <footer class="side-drawer__footer">财务经理 · 本地账本</footer>
   </Popup>
 </template>
 
@@ -118,8 +118,13 @@ function go(entry: DrawerEntry): void {
 }
 .side-drawer__profile {
   display: grid;
+  width: 100%;
   padding: var(--space-5) var(--space-5) var(--space-6);
   gap: var(--space-1);
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
 }
 .side-drawer__avatar {
   display: grid;

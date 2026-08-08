@@ -11,8 +11,13 @@ import NewExpenseView from '@/views/NewExpenseView.vue'
 import OverviewSwipeView from '@/views/OverviewSwipeView.vue'
 import PayablesView from '@/views/PayablesView.vue'
 import PinSetupView from '@/views/PinSetupView.vue'
-import PlaceholderView from '@/views/PlaceholderView.vue'
-import ProfileView from '@/views/ProfileView.vue'
+import BillsView from '@/views/BillsView.vue'
+import CategoryManagementView from '@/views/CategoryManagementView.vue'
+import LedgerView from '@/views/LedgerView.vue'
+import SettingsView from '@/views/SettingsView.vue'
+import AccountStatisticsView from '@/views/AccountStatisticsView.vue'
+import AssetStatisticsView from '@/views/AssetStatisticsView.vue'
+import CategoryStatisticsView from '@/views/CategoryStatisticsView.vue'
 import ReceivablesView from '@/views/ReceivablesView.vue'
 import RemindersView from '@/views/RemindersView.vue'
 import TemplatesView from '@/views/TemplatesView.vue'
@@ -53,19 +58,23 @@ const router = createRouter({
       name: 'payables',
       component: PayablesView,
     },
+    { path: '/analysis', redirect: '/bills' },
+    { path: '/profile', redirect: '/settings' },
+    { path: '/ledgers', name: 'ledgers', component: LedgerView },
+    { path: '/bills', name: 'bills', component: BillsView },
+    { path: '/settings', name: 'settings', component: SettingsView },
+    { path: '/categories', name: 'categories', component: CategoryManagementView },
     {
-      path: '/analysis',
-      name: 'analysis',
-      component: PlaceholderView,
-      props: { title: '分析', description: '周报、月报和趋势分析将在后续版本逐步开放。' },
-      meta: { bottomNav: true },
+      path: '/categories/:categoryId/statistics',
+      name: 'category-statistics',
+      component: CategoryStatisticsView,
     },
     {
-      path: '/profile',
-      name: 'profile',
-      component: ProfileView,
-      meta: { bottomNav: true },
+      path: '/accounts/:accountId/statistics',
+      name: 'account-statistics',
+      component: AccountStatisticsView,
     },
+    { path: '/assets/statistics', name: 'asset-statistics', component: AssetStatisticsView },
     {
       path: '/import',
       name: 'import',

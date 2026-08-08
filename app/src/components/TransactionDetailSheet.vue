@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Copy, Pencil, Trash2, Wallet, Tag, CalendarClock, FileText } from '@lucide/vue'
+import { Copy, Pencil, RotateCcw, Trash2, Wallet, Tag, CalendarClock, FileText } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -41,12 +41,19 @@ const displayAmount = computed(() => {
 
 const amountTone = computed<'income' | 'expense' | 'default'>(() => {
   if (!tx.value) return 'default'
-  if (tx.value.type === 'income') return 'income'
+  if (tx.value.type === 'income' || tx.value.type === 'refund') return 'income'
   if (tx.value.type === 'expense' || tx.value.type === 'credit_purchase') return 'expense'
   return 'default'
 })
 
-const showPlus = computed(() => tx.value?.type === 'income')
+const showPlus = computed(() => tx.value?.type === 'income' || tx.value?.type === 'refund')
+const canEditOrCopy = computed(() =>
+  tx.value
+    ? ['expense', 'income', 'transfer', 'credit_purchase', 'repayment', 'refund'].includes(
+        tx.value.type,
+      )
+    : false,
+)
 
 const formattedOccurredAt = computed(() => {
   if (!tx.value) return ''
@@ -103,17 +110,39 @@ function close(): void {
 }
 
 function handleEdit(): void {
-  if (!tx.value) return
+  if (!tx.value || !canEditOrCopy.value) return
   const id = tx.value.id
   close()
   void router.push({ name: 'new-expense', query: { edit: id } })
 }
 
 function handleCopy(): void {
-  if (!tx.value) return
+  if (!tx.value || !canEditOrCopy.value) return
   const id = tx.value.id
   close()
   void router.push({ name: 'new-expense', query: { copy: id } })
+}
+
+function handleRefund(): void {
+  if (!tx.value || !['expense', 'credit_purchase'].includes(tx.value.type)) return
+  const id = tx.value.id
+  close()
+  void router.push({ name: 'new-expense', query: { refund: id } })
+}
+
+async function handleOriginal(): Promise<void> {
+  if (!tx.value?.originalTransactionId || !finance) return
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    const original = await finance.getTransaction(tx.value.originalTransactionId)
+    if (!original) throw new Error('原交易不存在')
+    tx.value = original
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    loading.value = false
+  }
 }
 
 function startDelete(): void {
@@ -146,11 +175,16 @@ async function confirmDelete(): Promise<void> {
   }
 }
 
-function goAccount(): void {
-  if (!tx.value?.accountId) return
-  const accountId = tx.value.accountId
+function goAccount(accountId?: string): void {
+  if (!accountId) return
   close()
   void router.push({ name: 'account-detail', params: { accountId } })
+}
+
+function goCategory(categoryId?: string): void {
+  if (!categoryId) return
+  close()
+  void router.push({ name: 'category-statistics', params: { categoryId } })
 }
 </script>
 
@@ -163,14 +197,30 @@ function goAccount(): void {
     <div v-else class="tx-detail">
       <!-- 表头操作按钮 -->
       <div class="tx-detail__actions">
-        <button class="action-btn" type="button" @click="handleCopy">
+        <button class="action-btn" type="button" :disabled="!canEditOrCopy" @click="handleCopy">
           <Copy :size="18" :stroke-width="1.75" aria-hidden="true" />
           <span>复制</span>
         </button>
         <button
+          v-if="tx.type === 'expense' || tx.type === 'credit_purchase'"
           class="action-btn"
           type="button"
-          :disabled="tx.status === 'void'"
+          @click="handleRefund"
+        >
+          <RotateCcw :size="18" :stroke-width="1.75" aria-hidden="true" /><span>退款</span>
+        </button>
+        <button
+          v-if="tx.type === 'refund' && tx.originalTransactionId"
+          class="action-btn"
+          type="button"
+          @click="handleOriginal"
+        >
+          <RotateCcw :size="18" :stroke-width="1.75" aria-hidden="true" /><span>原交易</span>
+        </button>
+        <button
+          class="action-btn"
+          type="button"
+          :disabled="tx.status === 'void' || !canEditOrCopy"
           @click="handleEdit"
         >
           <Pencil :size="18" :stroke-width="1.75" aria-hidden="true" />
@@ -196,18 +246,43 @@ function goAccount(): void {
       </div>
 
       <!-- 第二行：分类 -->
-      <div v-if="tx.categoryName" class="tx-detail__row">
+      <button
+        v-if="tx.categoryName"
+        class="tx-detail__row tx-detail__row--clickable"
+        type="button"
+        @click="goCategory(tx.categoryId)"
+      >
         <Tag :size="18" :stroke-width="1.75" aria-hidden="true" />
         <span class="tx-detail__label">分类</span>
         <strong class="tx-detail__value">{{ tx.categoryName }}</strong>
-      </div>
+      </button>
 
       <!-- 账户 -->
       <button
-        v-if="tx.accountName"
+        v-if="tx.sourceAccountName"
         class="tx-detail__row tx-detail__row--clickable"
         type="button"
-        @click="goAccount"
+        @click="goAccount(tx.sourceAccountId)"
+      >
+        <Wallet :size="18" :stroke-width="1.75" aria-hidden="true" />
+        <span class="tx-detail__label">转出/还款账户</span>
+        <strong class="tx-detail__value">{{ tx.sourceAccountName }}</strong>
+      </button>
+      <button
+        v-if="tx.targetAccountName"
+        class="tx-detail__row tx-detail__row--clickable"
+        type="button"
+        @click="goAccount(tx.targetAccountId)"
+      >
+        <Wallet :size="18" :stroke-width="1.75" aria-hidden="true" />
+        <span class="tx-detail__label">转入/信用账户</span>
+        <strong class="tx-detail__value">{{ tx.targetAccountName }}</strong>
+      </button>
+      <button
+        v-if="tx.accountName && !tx.sourceAccountName"
+        class="tx-detail__row tx-detail__row--clickable"
+        type="button"
+        @click="goAccount(tx.accountId)"
       >
         <Wallet :size="18" :stroke-width="1.75" aria-hidden="true" />
         <span class="tx-detail__label">账户</span>
@@ -226,6 +301,21 @@ function goAccount(): void {
         <FileText :size="18" :stroke-width="1.75" aria-hidden="true" />
         <span class="tx-detail__label">备注</span>
         <span class="tx-detail__value">{{ tx.note }}</span>
+      </div>
+
+      <div v-if="tx.attachmentDataUris.length" class="tx-detail__attachments">
+        <span>图片凭证</span>
+        <div>
+          <a
+            v-for="(dataUri, index) in tx.attachmentDataUris"
+            :key="`${index}-${dataUri.length}`"
+            :href="dataUri"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <img :src="dataUri" :alt="`图片凭证 ${index + 1}`" />
+          </a>
+        </div>
       </div>
 
       <div v-if="errorMessage" class="form-error" role="alert">{{ errorMessage }}</div>
@@ -286,7 +376,7 @@ function goAccount(): void {
 }
 .tx-detail__actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
   gap: var(--space-2);
   padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--color-divider);
@@ -327,6 +417,26 @@ function goAccount(): void {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) 0;
+}
+.tx-detail__attachments {
+  display: grid;
+  gap: var(--space-2);
+}
+.tx-detail__attachments > span {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+.tx-detail__attachments > div {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+}
+.tx-detail__attachments img {
+  display: block;
+  width: 76px;
+  height: 76px;
+  object-fit: cover;
+  border-radius: var(--radius-control);
 }
 .tx-detail__row--primary {
   align-items: baseline;

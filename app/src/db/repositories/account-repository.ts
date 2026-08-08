@@ -10,6 +10,11 @@ interface AccountRow extends Omit<AccountRecord, 'institution' | 'archivedAt'> {
 
 interface BalanceRow extends AccountRow {
   balanceMinor: number
+  brandKey: string | null
+  iconKey: string | null
+  color: string | null
+  includeInAssetStats: number
+  visibleInEntry: number
 }
 
 export class AccountRepository extends BaseRepository {
@@ -75,15 +80,21 @@ export class AccountRepository extends BaseRepository {
           accounts.archived_at AS archivedAt,
           accounts.created_at AS createdAt,
           accounts.updated_at AS updatedAt,
-          account_balances.balance_minor AS balanceMinor
+          account_balances.balance_minor AS balanceMinor,
+          account_preferences.brand_key AS brandKey,
+          account_preferences.icon_key AS iconKey,
+          account_preferences.color,
+          COALESCE(account_preferences.include_in_asset_stats, 1) AS includeInAssetStats,
+          COALESCE(account_preferences.visible_in_entry, 1) AS visibleInEntry
         FROM accounts
         JOIN account_balances ON account_balances.account_id = accounts.id
+        LEFT JOIN account_preferences ON account_preferences.account_id = accounts.id
         WHERE accounts.ledger_id = ?
         ORDER BY accounts.name
       `,
       [ledgerId],
     )
-    return rows.map((row) => ({ ...mapAccount(row), balanceMinor: row.balanceMinor }))
+    return rows.map(mapBalance)
   }
 
   async findBalance(id: string): Promise<AccountBalanceRecord | undefined> {
@@ -91,7 +102,7 @@ export class AccountRepository extends BaseRepository {
       `${BALANCE_SELECT} WHERE accounts.id = ? LIMIT 1`,
       [id],
     )
-    return rows[0] ? { ...mapAccount(rows[0]), balanceMinor: rows[0].balanceMinor } : undefined
+    return rows[0] ? mapBalance(rows[0]) : undefined
   }
 
   async rename(id: string, name: string, updatedAt: string): Promise<void> {
@@ -100,6 +111,30 @@ export class AccountRepository extends BaseRepository {
         {
           statement: `UPDATE accounts SET name = ?, updated_at = ? WHERE id = ?`,
           values: [name.trim(), updatedAt, id],
+        },
+      ],
+      true,
+    )
+  }
+
+  async updateDetails(
+    id: string,
+    fields: { name: string; type: AccountRecord['type']; institution?: string },
+    updatedAt: string,
+  ): Promise<void> {
+    await this.database.executeSet(
+      [
+        {
+          statement: `UPDATE accounts SET name = ?, type = ?, normal_balance = ?, institution = ?,
+            updated_at = ? WHERE id = ?`,
+          values: [
+            fields.name.trim(),
+            fields.type,
+            normalBalanceForAccountType(fields.type),
+            fields.institution?.trim() || null,
+            updatedAt,
+            id,
+          ],
         },
       ],
       true,
@@ -143,9 +178,15 @@ const BALANCE_SELECT = `
     accounts.archived_at AS archivedAt,
     accounts.created_at AS createdAt,
     accounts.updated_at AS updatedAt,
-    account_balances.balance_minor AS balanceMinor
+    account_balances.balance_minor AS balanceMinor,
+    account_preferences.brand_key AS brandKey,
+    account_preferences.icon_key AS iconKey,
+    account_preferences.color,
+    COALESCE(account_preferences.include_in_asset_stats, 1) AS includeInAssetStats,
+    COALESCE(account_preferences.visible_in_entry, 1) AS visibleInEntry
   FROM accounts
   JOIN account_balances ON account_balances.account_id = accounts.id
+  LEFT JOIN account_preferences ON account_preferences.account_id = accounts.id
 `
 
 const ACCOUNT_SELECT = `
@@ -168,5 +209,17 @@ function mapAccount(row: AccountRow): AccountRecord {
     ...row,
     institution: row.institution ?? undefined,
     archivedAt: row.archivedAt ?? undefined,
+  }
+}
+
+function mapBalance(row: BalanceRow): AccountBalanceRecord {
+  return {
+    ...mapAccount(row),
+    balanceMinor: row.balanceMinor,
+    brandKey: row.brandKey ?? undefined,
+    iconKey: row.iconKey ?? undefined,
+    color: row.color ?? undefined,
+    includeInAssetStats: row.includeInAssetStats === 1,
+    visibleInEntry: row.visibleInEntry === 1,
   }
 }

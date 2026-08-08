@@ -57,7 +57,7 @@ describe('BackupService', () => {
     const parsed = JSON.parse(json)
     expect(parsed.format).toBe('finance-manager-backup')
     expect(parsed.version).toBe(1)
-    expect(parsed.schemaVersion).toBe(8)
+    expect(parsed.schemaVersion).toBe(9)
     expect(parsed.appVersion).toBe('0.0.10')
     expect(parsed.checksum).toMatch(/^[0-9a-f]{64}$/)
     expect(parsed.recordCounts.transactions).toBeGreaterThanOrEqual(1)
@@ -73,7 +73,7 @@ describe('BackupService', () => {
     const result = await verifyBackupJson(json)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.schemaVersion).toBe(8)
+      expect(result.schemaVersion).toBe(9)
       expect(result.totalRestored).toBeGreaterThan(0)
     }
   })

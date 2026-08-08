@@ -11,6 +11,16 @@ interface LedgerRow {
   updatedAt: string
 }
 
+export interface LedgerSummary extends LedgerRow {
+  archivedAt?: string
+  transactionCount: number
+}
+
+interface LedgerSummaryRow extends LedgerRow {
+  archivedAt: string | null
+  transactionCount: number
+}
+
 export interface LedgerDefaults {
   ledger: LedgerRecord
   cashAccount: AccountRecord
@@ -18,6 +28,35 @@ export interface LedgerDefaults {
 }
 
 export class LedgerRepository extends BaseRepository {
+  async list(): Promise<LedgerSummary[]> {
+    const rows = await this.database.query<LedgerSummaryRow>(`
+      SELECT ledgers.id, ledgers.name, ledgers.base_currency AS baseCurrency,
+        ledgers.period_start_day AS periodStartDay, ledgers.created_at AS createdAt,
+        ledgers.updated_at AS updatedAt, ledger_preferences.archived_at AS archivedAt,
+        COUNT(transactions.id) AS transactionCount
+      FROM ledgers
+      LEFT JOIN ledger_preferences ON ledger_preferences.ledger_id = ledgers.id
+      LEFT JOIN transactions ON transactions.ledger_id = ledgers.id
+      GROUP BY ledgers.id
+      ORDER BY ledger_preferences.archived_at IS NOT NULL, ledgers.created_at ASC
+    `)
+    return rows.map((row) => ({
+      ...row,
+      archivedAt: row.archivedAt ?? undefined,
+    }))
+  }
+
+  async findById(id: string): Promise<LedgerRecord | undefined> {
+    const rows = await this.database.query<LedgerRow>(
+      `
+      SELECT id, name, base_currency AS baseCurrency, period_start_day AS periodStartDay,
+        created_at AS createdAt, updated_at AS updatedAt
+      FROM ledgers WHERE id = ? LIMIT 1
+    `,
+      [id],
+    )
+    return rows[0]
+  }
   async findFirst(): Promise<LedgerRecord | undefined> {
     const rows = await this.database.query<LedgerRow>(`
       SELECT
@@ -64,6 +103,33 @@ export class LedgerRepository extends BaseRepository {
       ...defaults.categories.map(categoryInsert),
     ]
     await this.database.executeSet(statements, true)
+  }
+
+  async rename(id: string, name: string, updatedAt: string): Promise<void> {
+    await this.database.executeSet(
+      [
+        {
+          statement: 'UPDATE ledgers SET name = ?, updated_at = ? WHERE id = ?',
+          values: [name.trim(), updatedAt, id],
+        },
+      ],
+      true,
+    )
+  }
+
+  async setArchived(id: string, archivedAt: string | undefined, updatedAt: string): Promise<void> {
+    await this.database.executeSet(
+      [
+        {
+          statement: `INSERT INTO ledger_preferences (ledger_id, archived_at, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(ledger_id) DO UPDATE SET archived_at = excluded.archived_at,
+            updated_at = excluded.updated_at`,
+          values: [id, archivedAt ?? null, updatedAt],
+        },
+      ],
+      true,
+    )
   }
 }
 

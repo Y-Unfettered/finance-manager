@@ -76,6 +76,16 @@ export interface CreditIncomeCommand extends BaseCommand {
   category: CategoryPostingRef
 }
 
+export interface RepaymentCommand extends BaseCommand {
+  sourceAccount: AccountPostingRef
+  liabilityAccount: AccountPostingRef
+}
+
+export interface RefundCommand extends BaseCommand {
+  refundAccount: AccountPostingRef
+  category: CategoryPostingRef
+}
+
 export interface AccountBalanceCommand extends BaseCommand {
   account: AccountPostingRef
   offsetCategory: CategoryPostingRef
@@ -154,6 +164,30 @@ export function createCreditIncome(command: CreditIncomeCommand): TransactionDra
 
   return createDraft('refund', command, [
     accountEntry(command.liabilityAccount.id, 'debit', command.amountMinor),
+    categoryEntry(command.category.id, 'credit', command.amountMinor),
+  ])
+}
+
+export function createRepayment(command: RepaymentCommand): TransactionDraft {
+  assertAccount(command.sourceAccount, 'debit', 'sourceAccount')
+  assertAccount(command.liabilityAccount, 'credit', 'liabilityAccount')
+  assertDifferentIds(command.sourceAccount.id, command.liabilityAccount.id)
+
+  return createDraft('repayment', command, [
+    accountEntry(command.liabilityAccount.id, 'debit', command.amountMinor),
+    accountEntry(command.sourceAccount.id, 'credit', command.amountMinor),
+  ])
+}
+
+/**
+ * 退款冲减原支出：退款账户增加（或信用账户负债减少），原支出分类减少。
+ */
+export function createRefund(command: RefundCommand): TransactionDraft {
+  assertId(command.refundAccount.id, 'refundAccount')
+  assertCategory(command.category, 'expense')
+
+  return createDraft('refund', command, [
+    accountEntry(command.refundAccount.id, 'debit', command.amountMinor),
     categoryEntry(command.category.id, 'credit', command.amountMinor),
   ])
 }

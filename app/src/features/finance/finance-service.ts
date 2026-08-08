@@ -3,22 +3,32 @@ import { inject, type InjectionKey } from 'vue'
 import {
   createBalanceAdjustment,
   createBorrowing,
+  createCreditPurchase,
   createExpense,
   createIncome,
   createLoanOut,
   createLoanRecovery,
   createOpeningBalance,
+  createRefund,
+  createRepayment,
   createRepayBorrowing,
   createTransfer,
   type CategoryKind,
   type CategoryPostingRef,
+  type TransactionDraft,
   type TransactionType,
 } from '@/domain/accounting'
-import { normalBalanceForAccountType, type AccountType } from '@/domain/accounts'
+import {
+  isLiabilityAccountType,
+  normalBalanceForAccountType,
+  type AccountType,
+} from '@/domain/accounts'
 import type {
   AccountBalanceRecord,
+  AccountDetailRecord,
   AccountRecord,
   CategoryRecord,
+  CategoryDetailRecord,
   PayableBalanceRecord,
   PayableRecord,
   ReceivableBalanceRecord,
@@ -28,11 +38,13 @@ import type { Clock } from '@/domain/time'
 import type { IdGenerator } from '@/domain/identity'
 import type { SqliteExecutor } from '@/db/core/types'
 import { AccountRepository } from '@/db/repositories/account-repository'
+import { AccountProfileRepository } from '@/db/repositories/account-profile-repository'
 import { CategoryRepository } from '@/db/repositories/category-repository'
 import {
   DashboardRepository,
   type LedgerListItem,
   type MonthlySummary,
+  type DailyFlowPoint,
 } from '@/db/repositories/dashboard-repository'
 import { TransactionRepository } from '@/db/repositories/transaction-repository'
 import type { AccountActivityRecord } from '@/db/repositories/transaction-repository'
@@ -47,6 +59,13 @@ export interface HomeSnapshot {
   transactions: readonly LedgerListItem[]
 }
 
+export interface RecentSummary {
+  label: string
+  incomeMinor: number
+  expenseMinor: number
+  points: readonly DailyFlowPoint[]
+}
+
 export interface CreateAccountInput {
   ledgerId: string
   name: string
@@ -54,6 +73,23 @@ export interface CreateAccountInput {
   institution?: string
   initialBalanceMinor?: number
   occurredAt?: string
+  brandKey?: string
+  iconKey?: string
+  color?: string
+  includeInAssetStats?: boolean
+  visibleInEntry?: boolean
+  creditLimitMinor?: number
+  billDay?: number
+  repaymentDay?: number
+  reminderDays?: number
+}
+
+export interface UpdateAccountInput extends Omit<
+  CreateAccountInput,
+  'ledgerId' | 'initialBalanceMinor' | 'occurredAt'
+> {
+  ledgerId: string
+  accountId: string
 }
 
 export interface CreateExpenseInput {
@@ -64,6 +100,7 @@ export interface CreateExpenseInput {
   occurredAt: string
   merchant?: string
   note?: string
+  attachmentDataUris?: readonly string[]
 }
 
 export interface CreateIncomeInput {
@@ -74,6 +111,7 @@ export interface CreateIncomeInput {
   occurredAt: string
   merchant?: string
   note?: string
+  attachmentDataUris?: readonly string[]
 }
 
 export interface CreateTransferInput {
@@ -83,14 +121,66 @@ export interface CreateTransferInput {
   targetAccountId: string
   occurredAt: string
   note?: string
+  attachmentDataUris?: readonly string[]
+}
+
+export interface CreateCreditPurchaseInput {
+  ledgerId: string
+  amountMinor: number
+  liabilityAccountId: string
+  categoryId: string
+  occurredAt: string
+  merchant?: string
+  note?: string
+  attachmentDataUris?: readonly string[]
+}
+
+export interface CreateRepaymentInput {
+  ledgerId: string
+  amountMinor: number
+  sourceAccountId: string
+  liabilityAccountId: string
+  occurredAt: string
+  merchant?: string
+  note?: string
+  attachmentDataUris?: readonly string[]
+}
+
+export interface CreateRefundInput {
+  ledgerId: string
+  amountMinor: number
+  refundAccountId: string
+  categoryId: string
+  occurredAt: string
+  merchant?: string
+  note?: string
+  originalTransactionId: string
+  attachmentDataUris?: readonly string[]
 }
 
 export interface ExpenseCategoryOption extends CategoryPostingRef {
   name: string
+  parentId?: string
+  iconKey?: string
+  color?: string
 }
 
 export interface IncomeCategoryOption extends CategoryPostingRef {
   name: string
+  parentId?: string
+  iconKey?: string
+  color?: string
+}
+
+export interface SaveCategoryInput {
+  ledgerId: string
+  categoryId?: string
+  kind: CategoryKind
+  name: string
+  parentId?: string
+  iconKey?: string
+  color?: string
+  sortOrder?: number
 }
 
 export interface AdjustAccountBalanceInput {
@@ -168,13 +258,15 @@ export interface EditTransactionInput {
 export interface EditTransactionFullInput {
   ledgerId: string
   transactionId: string
-  type: 'expense' | 'income'
+  type: 'expense' | 'income' | 'transfer' | 'credit_purchase' | 'repayment' | 'refund'
   amountMinor: number
   accountId: string
   categoryId: string
+  targetAccountId?: string
   occurredAt: string
   merchant?: string
   note?: string
+  attachmentDataUris?: readonly string[]
 }
 
 export interface TransactionMetadata {
@@ -187,22 +279,39 @@ export interface TransactionMetadata {
   createdAt: string
   merchant?: string
   note?: string
+  originalTransactionId?: string
+  attachmentDataUris: readonly string[]
   categoryId?: string
   categoryName?: string
   accountId?: string
   accountName?: string
+  sourceAccountId?: string
+  sourceAccountName?: string
+  targetAccountId?: string
+  targetAccountName?: string
 }
 
 export interface FinanceServicePort {
   loadHome(ledgerId: string, month: Date): Promise<HomeSnapshot>
+  loadRecentSummary(
+    ledgerId: string,
+    range: 'week' | '7d' | '15d',
+    now?: Date,
+  ): Promise<RecentSummary>
   listAccounts(ledgerId: string): Promise<AccountBalanceRecord[]>
   getAccount(accountId: string): Promise<AccountBalanceRecord | undefined>
+  getAccountDetail(accountId: string): Promise<AccountDetailRecord | undefined>
   listAccountActivity(accountId: string): Promise<AccountActivityRecord[]>
   listExpenseCategories(ledgerId: string): Promise<ExpenseCategoryOption[]>
   listIncomeCategories(ledgerId: string): Promise<IncomeCategoryOption[]>
+  listCategories(ledgerId: string): Promise<CategoryDetailRecord[]>
+  saveCategory(input: SaveCategoryInput): Promise<string>
+  archiveCategory(ledgerId: string, categoryId: string): Promise<void>
+  unarchiveCategory(ledgerId: string, categoryId: string): Promise<void>
   createExpenseCategory(ledgerId: string, name: string): Promise<string>
   createIncomeCategory(ledgerId: string, name: string): Promise<string>
   createAccount(input: CreateAccountInput): Promise<AccountRecord>
+  updateAccount(input: UpdateAccountInput): Promise<void>
   adjustAccountBalance(input: AdjustAccountBalanceInput): Promise<void>
   renameAccount(input: RenameAccountInput): Promise<void>
   archiveAccount(ledgerId: string, accountId: string): Promise<void>
@@ -220,6 +329,9 @@ export interface FinanceServicePort {
   createExpense(input: CreateExpenseInput): Promise<string>
   createIncome(input: CreateIncomeInput): Promise<string>
   createTransfer(input: CreateTransferInput): Promise<string>
+  createCreditPurchase(input: CreateCreditPurchaseInput): Promise<string>
+  createRepayment(input: CreateRepaymentInput): Promise<string>
+  createRefund(input: CreateRefundInput): Promise<string>
   listRecentTransactions(ledgerId: string, limit: number): Promise<LedgerListItem[]>
   voidTransaction(ledgerId: string, transactionId: string): Promise<void>
   editTransaction(input: EditTransactionInput): Promise<void>
@@ -231,6 +343,7 @@ export const financeServiceKey: InjectionKey<FinanceServicePort> = Symbol('finan
 
 export class FinanceService implements FinanceServicePort {
   private readonly accounts: AccountRepository
+  private readonly accountProfiles: AccountProfileRepository
   private readonly categories: CategoryRepository
   private readonly dashboard: DashboardRepository
   private readonly transactions: TransactionRepository
@@ -243,6 +356,7 @@ export class FinanceService implements FinanceServicePort {
     private readonly clock: Clock,
   ) {
     this.accounts = new AccountRepository(database)
+    this.accountProfiles = new AccountProfileRepository(database)
     this.categories = new CategoryRepository(database)
     this.dashboard = new DashboardRepository(database)
     this.transactions = new TransactionRepository(database, ids, clock)
@@ -263,6 +377,31 @@ export class FinanceService implements FinanceServicePort {
     }
   }
 
+  async loadRecentSummary(
+    ledgerId: string,
+    range: 'week' | '7d' | '15d',
+    now: Date = new Date(),
+  ): Promise<RecentSummary> {
+    const dates = recentSummaryDateRange(range, now)
+    const rows = await this.dashboard.getDailyFlow(ledgerId, dates.startUtc, dates.endUtc)
+    const byDate = new Map(rows.map((row) => [row.date, row]))
+    const points: DailyFlowPoint[] = []
+    for (
+      let cursor = new Date(dates.startLocal);
+      cursor < dates.endLocal;
+      cursor.setDate(cursor.getDate() + 1)
+    ) {
+      const key = localDateKey(cursor)
+      points.push(byDate.get(key) ?? { date: key, incomeMinor: 0, expenseMinor: 0 })
+    }
+    return {
+      label: range === 'week' ? '本周汇总' : `最近 ${range === '7d' ? 7 : 15} 日汇总`,
+      incomeMinor: points.reduce((sum, point) => sum + point.incomeMinor, 0),
+      expenseMinor: points.reduce((sum, point) => sum + point.expenseMinor, 0),
+      points,
+    }
+  }
+
   listAccounts(ledgerId: string): Promise<AccountBalanceRecord[]> {
     return this.accounts.listBalances(ledgerId)
   }
@@ -271,22 +410,132 @@ export class FinanceService implements FinanceServicePort {
     return this.accounts.findBalance(accountId)
   }
 
+  async getAccountDetail(accountId: string): Promise<AccountDetailRecord | undefined> {
+    const account = await this.accounts.findBalance(accountId)
+    if (!account) return undefined
+    const [preference, creditProfile] = await Promise.all([
+      this.accountProfiles.getPreference(accountId),
+      this.accountProfiles.getCreditProfile(accountId),
+    ])
+    return {
+      ...account,
+      preference: preference ?? {
+        accountId,
+        includeInAssetStats: true,
+        visibleInEntry: true,
+        updatedAt: account.updatedAt,
+      },
+      creditProfile,
+    }
+  }
+
   listAccountActivity(accountId: string): Promise<AccountActivityRecord[]> {
     return this.transactions.listByAccount(accountId)
   }
 
   async listExpenseCategories(ledgerId: string): Promise<ExpenseCategoryOption[]> {
-    const categories = await this.categories.listByLedger(ledgerId)
+    const categories = await this.categories.listDetailsByLedger(ledgerId)
     return categories
       .filter((category) => category.kind === 'expense' && !category.archivedAt)
-      .map(({ id, kind, name }) => ({ id, kind, name }))
+      .map(({ id, kind, name, parentId, iconKey, color }) => ({
+        id,
+        kind,
+        name,
+        parentId,
+        iconKey,
+        color,
+      }))
   }
 
   async listIncomeCategories(ledgerId: string): Promise<IncomeCategoryOption[]> {
-    const categories = await this.categories.listByLedger(ledgerId)
+    const categories = await this.categories.listDetailsByLedger(ledgerId)
     return categories
       .filter((category) => category.kind === 'income' && !category.archivedAt)
-      .map(({ id, kind, name }) => ({ id, kind, name }))
+      .map(({ id, kind, name, parentId, iconKey, color }) => ({
+        id,
+        kind,
+        name,
+        parentId,
+        iconKey,
+        color,
+      }))
+  }
+
+  listCategories(ledgerId: string): Promise<CategoryDetailRecord[]> {
+    return this.categories.listDetailsByLedger(ledgerId)
+  }
+
+  async saveCategory(input: SaveCategoryInput): Promise<string> {
+    const name = requiredText(input.name, '请输入分类名称')
+    const all = await this.categories.listDetailsByLedger(input.ledgerId)
+    const parent = input.parentId
+      ? all.find((category) => category.id === input.parentId)
+      : undefined
+    if (input.parentId && !parent) throw new Error('父分类不存在')
+    if (parent?.kind !== undefined && parent.kind !== input.kind)
+      throw new Error('父子分类收支类型必须一致')
+    if (parent?.parentId) throw new Error('最多只支持两级分类')
+    if (input.categoryId === input.parentId) throw new Error('分类不能作为自己的父分类')
+    if (
+      input.categoryId &&
+      input.parentId &&
+      all.some((item) => item.parentId === input.categoryId)
+    ) {
+      throw new Error('该一级分类仍有二级分类，请先迁移二级分类')
+    }
+    const duplicate = all.find(
+      (category) =>
+        category.id !== input.categoryId && category.kind === input.kind && category.name === name,
+    )
+    if (duplicate) throw new Error('同名分类已存在')
+    const now = this.clock.nowIso()
+    if (input.categoryId) {
+      const existing = all.find((category) => category.id === input.categoryId)
+      if (!existing) throw new Error('分类不存在')
+      await this.categories.update(
+        input.categoryId,
+        {
+          name,
+          parentId: input.parentId,
+          sortOrder: input.sortOrder ?? existing.sortOrder,
+          iconKey: input.iconKey,
+          color: input.color,
+        },
+        now,
+      )
+      return input.categoryId
+    }
+    const id = this.ids.next('category')
+    await this.categories.create(
+      {
+        id,
+        ledgerId: input.ledgerId,
+        parentId: input.parentId,
+        kind: input.kind,
+        name,
+        sortOrder: input.sortOrder ?? all.filter((item) => item.kind === input.kind).length,
+        createdAt: now,
+        updatedAt: now,
+      },
+      { iconKey: input.iconKey, color: input.color },
+    )
+    return id
+  }
+
+  async archiveCategory(ledgerId: string, categoryId: string): Promise<void> {
+    const category = (await this.categories.listByLedger(ledgerId)).find(
+      (item) => item.id === categoryId,
+    )
+    if (!category) throw new Error('分类不存在')
+    await this.categories.archive(categoryId, this.clock.nowIso())
+  }
+
+  async unarchiveCategory(ledgerId: string, categoryId: string): Promise<void> {
+    const category = (await this.categories.listByLedger(ledgerId)).find(
+      (item) => item.id === categoryId,
+    )
+    if (!category) throw new Error('分类不存在')
+    await this.categories.unarchive(categoryId, this.clock.nowIso())
   }
 
   async createExpenseCategory(ledgerId: string, name: string): Promise<string> {
@@ -331,6 +580,7 @@ export class FinanceService implements FinanceServicePort {
     const now = this.clock.nowIso()
     const initialBalanceMinor = input.initialBalanceMinor ?? 0
     assertNonNegativeMinorUnits(initialBalanceMinor, '期初余额')
+    assertCreditFields(input)
     const record: AccountRecord = {
       id: this.ids.next('account'),
       ledgerId: input.ledgerId,
@@ -343,6 +593,27 @@ export class FinanceService implements FinanceServicePort {
       updatedAt: now,
     }
     await this.accounts.create(record)
+    await this.accountProfiles.savePreference({
+      accountId: record.id,
+      brandKey: optionalText(input.brandKey),
+      iconKey: optionalText(input.iconKey),
+      color: optionalText(input.color),
+      includeInAssetStats: input.includeInAssetStats ?? true,
+      visibleInEntry: input.visibleInEntry ?? true,
+      updatedAt: now,
+    })
+    if (isLiabilityAccountType(record.type)) {
+      await this.accountProfiles.saveCreditProfile({
+        accountId: record.id,
+        creditLimitMinor: input.creditLimitMinor ?? 0,
+        billDay: input.billDay,
+        repaymentDay: input.repaymentDay,
+        reminderDays: input.reminderDays ?? 3,
+        effectiveFrom: input.occurredAt ?? now,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
     if (initialBalanceMinor > 0) {
       const offsetCategory = await this.ensureBalanceOffsetCategory(input.ledgerId)
       await this.transactions.create(
@@ -358,6 +629,49 @@ export class FinanceService implements FinanceServicePort {
       )
     }
     return record
+  }
+
+  async updateAccount(input: UpdateAccountInput): Promise<void> {
+    const account = await this.accounts.findBalance(input.accountId)
+    if (!account || account.ledgerId !== input.ledgerId) throw new Error('账户不存在')
+    assertCreditFields(input)
+    if (input.type !== account.type && account.balanceMinor !== 0) {
+      throw new Error('账户余额或欠款非零时不能修改账户类型')
+    }
+    const now = this.clock.nowIso()
+    await this.accounts.updateDetails(
+      input.accountId,
+      {
+        name: requiredText(input.name, '请输入账户名称'),
+        type: input.type,
+        institution: optionalText(input.institution),
+      },
+      now,
+    )
+    await this.accountProfiles.savePreference({
+      accountId: input.accountId,
+      brandKey: optionalText(input.brandKey),
+      iconKey: optionalText(input.iconKey),
+      color: optionalText(input.color),
+      includeInAssetStats: input.includeInAssetStats ?? true,
+      visibleInEntry: input.visibleInEntry ?? true,
+      updatedAt: now,
+    })
+    if (isLiabilityAccountType(input.type)) {
+      const existing = await this.accountProfiles.getCreditProfile(input.accountId)
+      await this.accountProfiles.saveCreditProfile({
+        accountId: input.accountId,
+        creditLimitMinor: input.creditLimitMinor ?? 0,
+        billDay: input.billDay,
+        repaymentDay: input.repaymentDay,
+        reminderDays: input.reminderDays ?? 3,
+        effectiveFrom: existing?.effectiveFrom ?? now,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      })
+    } else {
+      await this.accountProfiles.deleteCreditProfile(input.accountId)
+    }
   }
 
   async adjustAccountBalance(input: AdjustAccountBalanceInput): Promise<void> {
@@ -628,6 +942,8 @@ export class FinanceService implements FinanceServicePort {
         merchant: input.merchant,
         note: input.note,
       }),
+      undefined,
+      input.attachmentDataUris,
     )
     return transaction.id
   }
@@ -654,6 +970,8 @@ export class FinanceService implements FinanceServicePort {
         merchant: input.merchant,
         note: input.note,
       }),
+      undefined,
+      input.attachmentDataUris,
     )
     return transaction.id
   }
@@ -679,6 +997,97 @@ export class FinanceService implements FinanceServicePort {
         targetAccount,
         note: input.note,
       }),
+      undefined,
+      input.attachmentDataUris,
+    )
+    return transaction.id
+  }
+
+  async createCreditPurchase(input: CreateCreditPurchaseInput): Promise<string> {
+    const [liabilityAccount, category] = await Promise.all([
+      this.accounts.findPostingRef(input.liabilityAccountId),
+      this.categories.findPostingRef(input.categoryId),
+    ])
+    if (!liabilityAccount) throw new Error('信用账户不存在')
+    if (!category) throw new Error('支出分类不存在')
+
+    const transaction = await this.transactions.create(
+      input.ledgerId,
+      createCreditPurchase({
+        amountMinor: input.amountMinor,
+        occurredAt: input.occurredAt,
+        liabilityAccount,
+        category,
+        merchant: input.merchant,
+        note: input.note,
+      }),
+      undefined,
+      input.attachmentDataUris,
+    )
+    return transaction.id
+  }
+
+  async createRepayment(input: CreateRepaymentInput): Promise<string> {
+    const [sourceAccount, liabilityAccount] = await Promise.all([
+      this.accounts.findPostingRef(input.sourceAccountId),
+      this.accounts.findPostingRef(input.liabilityAccountId),
+    ])
+    if (!sourceAccount) throw new Error('还款账户不存在')
+    if (!liabilityAccount) throw new Error('信用账户不存在')
+
+    const transaction = await this.transactions.create(
+      input.ledgerId,
+      createRepayment({
+        amountMinor: input.amountMinor,
+        occurredAt: input.occurredAt,
+        sourceAccount,
+        liabilityAccount,
+        merchant: input.merchant,
+        note: input.note,
+      }),
+      undefined,
+      input.attachmentDataUris,
+    )
+    return transaction.id
+  }
+
+  async createRefund(input: CreateRefundInput): Promise<string> {
+    const [refundAccount, category] = await Promise.all([
+      this.accounts.findPostingRef(input.refundAccountId),
+      this.categories.findPostingRef(input.categoryId),
+    ])
+    if (!refundAccount) throw new Error('退款账户不存在')
+    if (!category) throw new Error('原支出分类不存在')
+    const original = await this.transactions.findById(input.originalTransactionId)
+    if (
+      !original ||
+      original.ledgerId !== input.ledgerId ||
+      !['expense', 'credit_purchase'].includes(original.type)
+    ) {
+      throw new Error('原支出不存在')
+    }
+    if (!original.entries.some((entry) => entry.categoryId === input.categoryId)) {
+      throw new Error('退款分类必须与原支出一致')
+    }
+    const refunded = await this.transactions.refundedAmount(original.id)
+    if (refunded + input.amountMinor > original.amountMinor) {
+      throw new Error(
+        `退款金额不能超过剩余可退金额 ¥${((original.amountMinor - refunded) / 100).toFixed(2)}`,
+      )
+    }
+
+    const transaction = await this.transactions.create(
+      input.ledgerId,
+      createRefund({
+        amountMinor: input.amountMinor,
+        occurredAt: input.occurredAt,
+        refundAccount,
+        category,
+        merchant: input.merchant,
+        note: input.note,
+      }),
+      { originalTransactionId: input.originalTransactionId, relationType: 'refund' },
+      input.attachmentDataUris,
     )
     return transaction.id
   }
@@ -697,6 +1106,12 @@ export class FinanceService implements FinanceServicePort {
     }
     if (transaction.type === 'opening_balance') {
       throw new Error('期初余额不能撤销，请通过余额调整修正')
+    }
+    if (
+      ['expense', 'credit_purchase'].includes(transaction.type) &&
+      (await this.transactions.refundedAmount(transaction.id)) > 0
+    ) {
+      throw new Error('该支出已有退款，请先删除关联退款')
     }
     await this.transactions.voidTransaction(transactionId, this.clock.nowIso())
   }
@@ -728,42 +1143,175 @@ export class FinanceService implements FinanceServicePort {
     if (oldTransaction.status === 'void') {
       throw new Error('已撤销的交易不能编辑')
     }
-    await this.transactions.voidTransaction(input.transactionId, this.clock.nowIso())
-    if (input.type === 'expense') {
-      return this.createExpense({
-        ledgerId: input.ledgerId,
-        amountMinor: input.amountMinor,
-        accountId: input.accountId,
-        categoryId: input.categoryId,
-        occurredAt: input.occurredAt,
-        merchant: input.merchant,
-        note: input.note,
-      })
+    if (
+      ['expense', 'credit_purchase'].includes(oldTransaction.type) &&
+      (await this.transactions.refundedAmount(oldTransaction.id)) > 0
+    ) {
+      throw new Error('该支出已有退款，请先删除关联退款后再修改')
     }
-    return this.createIncome({
-      ledgerId: input.ledgerId,
-      amountMinor: input.amountMinor,
-      accountId: input.accountId,
-      categoryId: input.categoryId,
-      occurredAt: input.occurredAt,
-      merchant: input.merchant,
-      note: input.note,
-    })
+    let draft: TransactionDraft
+    let link: { originalTransactionId: string; relationType: 'refund' } | undefined
+    switch (input.type) {
+      case 'expense': {
+        const [account, category] = await Promise.all([
+          this.accounts.findPostingRef(input.accountId),
+          this.categories.findPostingRef(input.categoryId),
+        ])
+        if (!account) throw new Error('付款账户不存在')
+        if (!category) throw new Error('支出分类不存在')
+        draft = createExpense({
+          amountMinor: input.amountMinor,
+          occurredAt: input.occurredAt,
+          paymentAccount: account,
+          category,
+          merchant: input.merchant,
+          note: input.note,
+        })
+        break
+      }
+      case 'income': {
+        const [account, category] = await Promise.all([
+          this.accounts.findPostingRef(input.accountId),
+          this.categories.findPostingRef(input.categoryId),
+        ])
+        if (!account) throw new Error('收款账户不存在')
+        if (!category) throw new Error('收入分类不存在')
+        draft = createIncome({
+          amountMinor: input.amountMinor,
+          occurredAt: input.occurredAt,
+          depositAccount: account,
+          category,
+          merchant: input.merchant,
+          note: input.note,
+        })
+        break
+      }
+      case 'credit_purchase': {
+        const [account, category] = await Promise.all([
+          this.accounts.findPostingRef(input.accountId),
+          this.categories.findPostingRef(input.categoryId),
+        ])
+        if (!account) throw new Error('信用账户不存在')
+        if (!category) throw new Error('支出分类不存在')
+        draft = createCreditPurchase({
+          amountMinor: input.amountMinor,
+          occurredAt: input.occurredAt,
+          liabilityAccount: account,
+          category,
+          merchant: input.merchant,
+          note: input.note,
+        })
+        break
+      }
+      case 'refund': {
+        const [account, category, originalTransactionId] = await Promise.all([
+          this.accounts.findPostingRef(input.accountId),
+          this.categories.findPostingRef(input.categoryId),
+          this.transactions.originalTransactionId(input.transactionId),
+        ])
+        if (!account) throw new Error('退款账户不存在')
+        if (!category) throw new Error('原支出分类不存在')
+        if (originalTransactionId) {
+          const original = await this.transactions.findById(originalTransactionId)
+          if (!original) throw new Error('原支出不存在')
+          const refunded = await this.transactions.refundedAmount(originalTransactionId)
+          const otherRefunds = refunded - oldTransaction.amountMinor
+          if (otherRefunds + input.amountMinor > original.amountMinor) {
+            throw new Error(
+              `退款金额不能超过剩余可退金额 ¥${((original.amountMinor - otherRefunds) / 100).toFixed(2)}`,
+            )
+          }
+          link = { originalTransactionId, relationType: 'refund' }
+        }
+        draft = createRefund({
+          amountMinor: input.amountMinor,
+          occurredAt: input.occurredAt,
+          refundAccount: account,
+          category,
+          merchant: input.merchant,
+          note: input.note,
+        })
+        break
+      }
+      case 'transfer': {
+        const targetId = requiredText(input.targetAccountId ?? '', '请选择转入账户')
+        const [sourceAccount, targetAccount] = await Promise.all([
+          this.accounts.findPostingRef(input.accountId),
+          this.accounts.findPostingRef(targetId),
+        ])
+        if (!sourceAccount) throw new Error('转出账户不存在')
+        if (!targetAccount) throw new Error('转入账户不存在')
+        draft = createTransfer({
+          amountMinor: input.amountMinor,
+          occurredAt: input.occurredAt,
+          sourceAccount,
+          targetAccount,
+          note: input.note,
+        })
+        break
+      }
+      case 'repayment': {
+        const targetId = requiredText(input.targetAccountId ?? '', '请选择信用账户')
+        const [sourceAccount, liabilityAccount] = await Promise.all([
+          this.accounts.findPostingRef(input.accountId),
+          this.accounts.findPostingRef(targetId),
+        ])
+        if (!sourceAccount) throw new Error('还款账户不存在')
+        if (!liabilityAccount) throw new Error('信用账户不存在')
+        draft = createRepayment({
+          amountMinor: input.amountMinor,
+          occurredAt: input.occurredAt,
+          sourceAccount,
+          liabilityAccount,
+          merchant: input.merchant,
+          note: input.note,
+        })
+        break
+      }
+    }
+    const replacement = await this.transactions.replace(
+      input.ledgerId,
+      input.transactionId,
+      draft,
+      link,
+      input.attachmentDataUris,
+    )
+    return replacement.id
   }
 
   async getTransaction(transactionId: string): Promise<TransactionMetadata | undefined> {
     const transaction = await this.transactions.findById(transactionId)
     if (!transaction) return undefined
+    const originalTransactionId =
+      transaction.type === 'refund'
+        ? await this.transactions.originalTransactionId(transaction.id)
+        : undefined
+    const attachmentDataUris = await this.transactions.listAttachmentDataUris(transaction.id)
 
-    const accountEntry = transaction.entries.find((e) => e.accountId)
+    const accountEntries = transaction.entries.filter((e) => e.accountId)
     const categoryEntry = transaction.entries.find((e) => e.categoryId)
 
-    let accountName: string | undefined
+    const accountIds = accountEntries
+      .map((entry) => entry.accountId)
+      .filter((id): id is string => Boolean(id))
+    const accountRows = await Promise.all(accountIds.map((id) => this.accounts.findBalance(id)))
+    const accountsById = new Map(
+      accountRows
+        .filter((account): account is AccountBalanceRecord => Boolean(account))
+        .map((account) => [account.id, account]),
+    )
+    const isDualAccount = transaction.type === 'transfer' || transaction.type === 'repayment'
+    const sourceEntry = isDualAccount
+      ? accountEntries.find((entry) => entry.side === 'credit')
+      : undefined
+    const targetEntry = isDualAccount
+      ? accountEntries.find((entry) => entry.side === 'debit')
+      : undefined
+    const accountEntry = sourceEntry ?? accountEntries[0]
+    const accountName = accountEntry?.accountId
+      ? accountsById.get(accountEntry.accountId)?.name
+      : undefined
     let categoryName: string | undefined
-    if (accountEntry?.accountId) {
-      const account = await this.accounts.findBalance(accountEntry.accountId)
-      accountName = account?.name
-    }
     if (categoryEntry?.categoryId) {
       const categories = await this.categories.listByLedger(transaction.ledgerId)
       categoryName = categories.find((c) => c.id === categoryEntry.categoryId)?.name
@@ -779,10 +1327,20 @@ export class FinanceService implements FinanceServicePort {
       createdAt: transaction.createdAt,
       merchant: transaction.merchant,
       note: transaction.note,
+      originalTransactionId,
+      attachmentDataUris,
       categoryId: categoryEntry?.categoryId,
       categoryName,
       accountId: accountEntry?.accountId,
       accountName,
+      sourceAccountId: sourceEntry?.accountId,
+      sourceAccountName: sourceEntry?.accountId
+        ? accountsById.get(sourceEntry.accountId)?.name
+        : undefined,
+      targetAccountId: targetEntry?.accountId,
+      targetAccountName: targetEntry?.accountId
+        ? accountsById.get(targetEntry.accountId)?.name
+        : undefined,
     }
   }
 
@@ -827,6 +1385,57 @@ function requiredText(value: string, message: string): string {
 function optionalText(value: string | undefined): string | undefined {
   const text = value?.trim()
   return text ? text : undefined
+}
+
+export function recentSummaryDateRange(
+  range: 'week' | '7d' | '15d',
+  now: Date,
+): { startUtc: string; endUtc: string; startLocal: Date; endLocal: Date } {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const startLocal = new Date(today)
+  if (range === 'week') {
+    const mondayOffset = (today.getDay() + 6) % 7
+    startLocal.setDate(today.getDate() - mondayOffset)
+  } else {
+    startLocal.setDate(today.getDate() - (range === '7d' ? 6 : 14))
+  }
+  const endLocal = new Date(today)
+  endLocal.setDate(today.getDate() + 1)
+  return {
+    startUtc: startLocal.toISOString(),
+    endUtc: endLocal.toISOString(),
+    startLocal,
+    endLocal,
+  }
+}
+
+function localDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+function assertCreditFields(input: {
+  type: AccountType
+  creditLimitMinor?: number
+  billDay?: number
+  repaymentDay?: number
+  reminderDays?: number
+}): void {
+  if (!isLiabilityAccountType(input.type)) return
+  assertNonNegativeMinorUnits(input.creditLimitMinor ?? 0, '总额度')
+  for (const [label, value] of [
+    ['出账日', input.billDay],
+    ['还款日', input.repaymentDay],
+  ] as const) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > 31)) {
+      throw new Error(`${label}必须是 1 至 31`)
+    }
+  }
+  if (
+    input.reminderDays !== undefined &&
+    (!Number.isInteger(input.reminderDays) || input.reminderDays < 0)
+  ) {
+    throw new Error('提醒提前天数格式不正确')
+  }
 }
 
 function assertNonNegativeMinorUnits(value: number, label: string): void {

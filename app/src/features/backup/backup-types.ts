@@ -12,13 +12,26 @@ export const BACKUP_FORMAT_VERSION = 1
 export const BACKUP_TABLES = [
   'schema_migrations',
   'ledgers',
+  'ledger_preferences',
   'accounts',
+  'account_preferences',
+  'credit_profiles',
   'categories',
+  'category_preferences',
+  'app_settings',
   'import_batches',
   'transactions',
+  'transaction_links',
+  'transaction_attachments',
   'entries',
   'receivables',
   'payables',
+  'budgets',
+  'budget_policies',
+  'category_budgets',
+  'transaction_templates',
+  'recurring_transactions',
+  'reminders',
 ] as const
 
 export type BackupTableName = (typeof BACKUP_TABLES)[number]

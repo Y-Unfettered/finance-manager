@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import type { TransactionType } from '@/domain/accounting'
 import { parseCnyInputToMinor } from '@/domain/money'
@@ -43,7 +44,8 @@ const TYPE_LABELS: { value: TransactionType; label: string }[] = [
   { value: 'loan_out', label: '借出' },
   { value: 'loan_recovery', label: '借出收回' },
   { value: 'borrowing', label: '借入' },
-  { value: 'repayment', label: '退款' },
+  { value: 'repayment', label: '信用卡还款' },
+  { value: 'refund', label: '退款' },
 ]
 
 const router = useRouter()
@@ -59,6 +61,8 @@ const searching = ref(false)
 const errorMessage = ref('')
 const hasSearched = ref(false)
 const results = ref<readonly TransactionSearchResultItem[]>([])
+const activeTransactionId = ref<string>()
+const showDetail = ref(false)
 
 const showFilter = ref(true)
 const form = ref<FilterFormState>(defaultForm())
@@ -85,6 +89,31 @@ const currentCategoryOptions = computed(() => {
 })
 
 const resultCount = computed(() => results.value.length)
+const groupedResults = computed(() => {
+  const groups = new Map<string, TransactionSearchResultItem[]>()
+  for (const item of results.value) {
+    const date = new Date(item.occurredAt)
+    const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+      date.getDate(),
+    ).padStart(2, '0')}`
+    const group = groups.get(key) ?? []
+    group.push(item)
+    groups.set(key, group)
+  }
+  return [...groups.entries()].map(([date, items]) => ({ date, items }))
+})
+const resultSummary = computed(() =>
+  results.value.reduce(
+    (summary, item) => {
+      if (item.type === 'income') summary.income += item.amountMinor
+      if (item.type === 'expense' || item.type === 'credit_purchase')
+        summary.expense += item.amountMinor
+      if (item.type === 'refund') summary.expense -= item.amountMinor
+      return summary
+    },
+    { income: 0, expense: 0 },
+  ),
+)
 
 async function loadOptions(): Promise<void> {
   if (!finance || !appStore.ledgerId) {
@@ -178,13 +207,18 @@ function signedAmount(item: TransactionSearchResultItem): number {
   return negativeTypes.includes(item.type) ? -item.amountMinor : item.amountMinor
 }
 
+function openDetail(item: TransactionSearchResultItem): void {
+  activeTransactionId.value = item.id
+  showDetail.value = true
+}
+
 onMounted(loadOptions)
 </script>
 
 <template>
   <main class="search-page">
     <div class="search-page__safe-top">
-      <AppTopBar title="流水搜索" @back="router.replace({ name: 'profile' })" />
+      <AppTopBar title="流水搜索" @back="router.back()" />
     </div>
 
     <div class="search-page__content">
@@ -286,27 +320,41 @@ onMounted(loadOptions)
       <section v-else-if="hasSearched" class="results">
         <div class="results__head">
           <span>共 {{ resultCount }} 条结果</span>
+          <span
+            >收入 ¥{{ (resultSummary.income / 100).toFixed(2) }} · 支出 ¥{{
+              (resultSummary.expense / 100).toFixed(2)
+            }}</span
+          >
         </div>
         <div v-if="results.length === 0" class="empty-state">
           <Search :size="32" :stroke-width="1.5" aria-hidden="true" />
           <strong>没有匹配的流水</strong>
           <span>调整筛选条件后再试。</span>
         </div>
-        <BaseCard v-for="item in results" :key="item.id" class="result-item" variant="compact">
-          <div class="result-item__head">
-            <strong>{{
-              item.merchant || item.counterparty || item.primaryAccountName || '未命名'
-            }}</strong>
-            <MoneyText :amount-minor="signedAmount(item)" />
-          </div>
-          <div class="result-item__meta">
-            <span class="result-item__type">{{ typeLabel(item.type) }}</span>
-            <span>{{ formatDateTime(item.occurredAt) }}</span>
-            <span v-if="item.categoryName">{{ item.categoryName }}</span>
-            <span v-if="item.primaryAccountName">{{ item.primaryAccountName }}</span>
-          </div>
-          <div v-if="item.note" class="result-item__note">{{ item.note }}</div>
-        </BaseCard>
+        <section v-for="group in groupedResults" :key="group.date" class="result-group">
+          <h3>{{ group.date }}</h3>
+          <BaseCard
+            v-for="item in group.items"
+            :key="item.id"
+            class="result-item"
+            variant="compact"
+            @click="openDetail(item)"
+          >
+            <div class="result-item__head">
+              <strong>{{
+                item.merchant || item.counterparty || item.primaryAccountName || '未命名'
+              }}</strong>
+              <MoneyText :amount-minor="signedAmount(item)" />
+            </div>
+            <div class="result-item__meta">
+              <span class="result-item__type">{{ typeLabel(item.type) }}</span>
+              <span>{{ formatDateTime(item.occurredAt) }}</span>
+              <span v-if="item.categoryName">{{ item.categoryName }}</span>
+              <span v-if="item.primaryAccountName">{{ item.primaryAccountName }}</span>
+            </div>
+            <div v-if="item.note" class="result-item__note">{{ item.note }}</div>
+          </BaseCard>
+        </section>
       </section>
 
       <div v-else class="empty-state">
@@ -315,6 +363,12 @@ onMounted(loadOptions)
         <span>支持按关键词、日期、账户、分类、金额等多维度筛选流水。</span>
       </div>
     </div>
+    <TransactionDetailSheet
+      :show="showDetail"
+      :transaction-id="activeTransactionId"
+      @update:show="showDetail = $event"
+      @updated="runSearch"
+    />
   </main>
 </template>
 
@@ -456,9 +510,21 @@ onMounted(loadOptions)
   opacity: 0.5;
 }
 .results__head {
+  display: flex;
+  justify-content: space-between;
   padding: var(--space-1) var(--space-2);
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
+}
+.result-group {
+  display: grid;
+  gap: var(--space-2);
+}
+.result-group h3 {
+  margin: var(--space-2) var(--space-2) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
 }
 .result-item {
   display: grid;

@@ -9,6 +9,8 @@ import {
   createLoanOut,
   createLoanRecovery,
   createOpeningBalance,
+  createRefund,
+  createRepayment,
   createRepayBorrowing,
   createTransfer,
   entryTotals,
@@ -119,6 +121,37 @@ describe('accounting rules', () => {
       { side: 'credit', amountMinor: 8800, target: { kind: 'category', categoryId: 'salary' } },
     ])
     expect(entryTotals(draft.entries)).toEqual({ debitMinor: 8800, creditMinor: 8800 })
+  })
+
+  it('creates a credit card repayment without affecting income or expense categories', () => {
+    const draft = createRepayment({
+      amountMinor: 12_000,
+      occurredAt,
+      sourceAccount: bank,
+      liabilityAccount: creditCard,
+    })
+
+    expect(draft.type).toBe('repayment')
+    expect(draft.entries).toEqual([
+      { side: 'debit', amountMinor: 12_000, target: { kind: 'account', accountId: 'credit-1' } },
+      { side: 'credit', amountMinor: 12_000, target: { kind: 'account', accountId: 'bank-1' } },
+    ])
+  })
+
+  it('creates a refund that increases an asset and reverses the expense category', () => {
+    const draft = createRefund({
+      amountMinor: 3_200,
+      occurredAt,
+      refundAccount: bank,
+      category: food,
+      merchant: '商家退款',
+    })
+
+    expect(draft.type).toBe('refund')
+    expect(draft.entries).toEqual([
+      { side: 'debit', amountMinor: 3_200, target: { kind: 'account', accountId: 'bank-1' } },
+      { side: 'credit', amountMinor: 3_200, target: { kind: 'category', categoryId: 'food' } },
+    ])
   })
 
   it('creates opening balances and downward balance adjustments for assets and liabilities', () => {

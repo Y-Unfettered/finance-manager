@@ -32,6 +32,26 @@ describe('summarizeAssets', () => {
       count: 1,
     })
   })
+
+  it('excludes archived accounts and accounts disabled for asset statistics', () => {
+    const archived = account('archived', 'bank', 'debit', 80_000)
+    archived.archivedAt = '2026-08-04T00:00:00.000Z'
+    const excluded = account('excluded', 'cash', 'debit', 60_000)
+    excluded.includeInAssetStats = false
+
+    const overview = summarizeAssets([
+      account('included', 'cash', 'debit', 40_000),
+      archived,
+      excluded,
+    ])
+
+    expect(overview.totalAssetsMinor).toBe(40_000)
+    expect(overview.assetCount).toBe(1)
+    expect(overview.sections.find((section) => section.id === 'funds')).toMatchObject({
+      amountMinor: 40_000,
+      count: 1,
+    })
+  })
 })
 
 function account(

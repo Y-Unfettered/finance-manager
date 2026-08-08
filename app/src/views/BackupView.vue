@@ -34,7 +34,7 @@ const DISPLAY_TABLES: readonly BackupTableName[] = [
   'payables',
 ] as const
 
-const TABLE_LABELS: Record<BackupTableName, string> = {
+const TABLE_LABELS: Partial<Record<BackupTableName, string>> = {
   schema_migrations: '数据库版本',
   ledgers: '账本',
   accounts: '账户',

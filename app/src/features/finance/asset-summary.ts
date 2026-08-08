@@ -42,7 +42,9 @@ const SECTION_DEFINITIONS: readonly Omit<AssetSectionSummary, 'amountMinor' | 'c
 ]
 
 export function summarizeAssets(accounts: readonly AccountBalanceRecord[]): AssetOverview {
-  const active = accounts.filter((account) => !account.archivedAt)
+  const active = accounts.filter(
+    (account) => !account.archivedAt && account.includeInAssetStats !== false,
+  )
   const assets = active.filter((account) => account.normalBalance === 'debit')
   const liabilities = active.filter((account) => account.normalBalance === 'credit')
   const totalAssetsMinor = sumBalances(assets)

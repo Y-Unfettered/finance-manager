@@ -289,6 +289,176 @@ describe('FinanceService', () => {
     })
   })
 
+  it('records credit purchases, repayments, and refunds with correct balances and summaries', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+    const bank = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'bank',
+      name: '还款银行卡',
+      initialBalanceMinor: 100_000,
+      occurredAt: clock.nowIso(),
+    })
+    const creditCard = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'credit_card',
+      name: '信用卡',
+    })
+    const food = (await service.listExpenseCategories(ledger.id)).find(
+      (category) => category.name === '餐饮',
+    )!
+
+    const purchaseId = await service.createCreditPurchase({
+      ledgerId: ledger.id,
+      amountMinor: 20_000,
+      liabilityAccountId: creditCard.id,
+      categoryId: food.id,
+      occurredAt: clock.nowIso(),
+      merchant: '餐厅',
+      attachmentDataUris: ['data:image/png;base64,dGVzdA=='],
+    })
+    const repaymentId = await service.createRepayment({
+      ledgerId: ledger.id,
+      amountMinor: 8_000,
+      sourceAccountId: bank.id,
+      liabilityAccountId: creditCard.id,
+      occurredAt: clock.nowIso(),
+    })
+    const refundId = await service.createRefund({
+      ledgerId: ledger.id,
+      amountMinor: 5_000,
+      refundAccountId: creditCard.id,
+      categoryId: food.id,
+      occurredAt: clock.nowIso(),
+      merchant: '餐厅退款',
+      originalTransactionId: purchaseId,
+    })
+
+    expect((await service.getAccount(bank.id))?.balanceMinor).toBe(92_000)
+    expect((await service.getAccount(creditCard.id))?.balanceMinor).toBe(7_000)
+    expect((await service.loadHome(ledger.id, new Date(2026, 7, 1))).summary).toEqual({
+      incomeMinor: 0,
+      expenseMinor: 15_000,
+      balanceMinor: -15_000,
+    })
+    expect(await service.getTransaction(purchaseId)).toMatchObject({
+      type: 'credit_purchase',
+      accountId: creditCard.id,
+      categoryId: food.id,
+      attachmentDataUris: ['data:image/png;base64,dGVzdA=='],
+    })
+    expect(await service.getTransaction(repaymentId)).toMatchObject({
+      type: 'repayment',
+      sourceAccountId: bank.id,
+      targetAccountId: creditCard.id,
+    })
+    expect(await service.getTransaction(refundId)).toMatchObject({
+      type: 'refund',
+      originalTransactionId: purchaseId,
+    })
+  })
+
+  it('edits a transfer as a transfer instead of converting it into an expense', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+    const bank = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'bank',
+      name: '银行卡',
+      initialBalanceMinor: 100_000,
+      occurredAt: clock.nowIso(),
+    })
+    const wallet = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'platform',
+      name: '平台余额',
+    })
+    const transactionId = await service.createTransfer({
+      ledgerId: ledger.id,
+      amountMinor: 20_000,
+      sourceAccountId: bank.id,
+      targetAccountId: wallet.id,
+      occurredAt: clock.nowIso(),
+    })
+
+    const editedId = await service.editTransactionFull({
+      ledgerId: ledger.id,
+      transactionId,
+      type: 'transfer',
+      amountMinor: 30_000,
+      accountId: bank.id,
+      targetAccountId: wallet.id,
+      categoryId: '',
+      occurredAt: clock.nowIso(),
+    })
+
+    expect((await service.getTransaction(transactionId))?.status).toBe('void')
+    expect(await service.getTransaction(editedId)).toMatchObject({ type: 'transfer' })
+    expect((await service.getAccount(bank.id))?.balanceMinor).toBe(70_000)
+    expect((await service.getAccount(wallet.id))?.balanceMinor).toBe(30_000)
+  })
+
+  it('keeps the original transaction posted when replacement validation fails', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+    const bank = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'bank',
+      name: '银行卡',
+      initialBalanceMinor: 100_000,
+      occurredAt: clock.nowIso(),
+    })
+    const wallet = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'platform',
+      name: '钱包',
+    })
+    const transactionId = await service.createTransfer({
+      ledgerId: ledger.id,
+      amountMinor: 20_000,
+      sourceAccountId: bank.id,
+      targetAccountId: wallet.id,
+      occurredAt: clock.nowIso(),
+    })
+
+    await expect(
+      service.editTransactionFull({
+        ledgerId: ledger.id,
+        transactionId,
+        type: 'transfer',
+        amountMinor: 30_000,
+        accountId: bank.id,
+        targetAccountId: bank.id,
+        categoryId: '',
+        occurredAt: clock.nowIso(),
+      }),
+    ).rejects.toThrow()
+    expect((await service.getTransaction(transactionId))?.status).toBe('posted')
+    expect((await service.getAccount(bank.id))?.balanceMinor).toBe(80_000)
+    expect((await service.getAccount(wallet.id))?.balanceMinor).toBe(20_000)
+  })
+
   it('tracks a payable through partial and final repayment', async () => {
     const database = new NodeSqliteExecutor()
     const ids = new SequenceIdGenerator()

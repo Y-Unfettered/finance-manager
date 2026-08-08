@@ -14,7 +14,9 @@ describe('database migrations', () => {
   it('creates the latest schema in an empty SQLite database and is idempotent', async () => {
     const executor = new NodeSqliteExecutor()
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([1, 2, 3, 4, 5, 6, 7, 8])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9,
+    ])
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([])
 
     const objects = await executor.query<{ name: string; type: string }>(
@@ -24,12 +26,17 @@ describe('database migrations', () => {
       expect.arrayContaining([
         'account_balances',
         'accounts',
+        'account_preferences',
         'budgets',
+        'budget_policies',
         'categories',
         'category_budgets',
+        'category_preferences',
+        'credit_profiles',
         'entries',
         'import_batches',
         'ledgers',
+        'ledger_preferences',
         'payables',
         'receivables',
         'recurring_transactions',
@@ -38,6 +45,8 @@ describe('database migrations', () => {
         'transaction_balances',
         'transaction_templates',
         'transactions',
+        'transaction_links',
+        'transaction_attachments',
       ]),
     )
 
@@ -53,6 +62,7 @@ describe('database migrations', () => {
       { version: 6 },
       { version: 7 },
       { version: 8 },
+      { version: 9 },
     ])
   })
 
@@ -100,7 +110,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '原有账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '原有账本' },
     ])
@@ -123,7 +133,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '升级账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '升级账本' },
     ])
@@ -208,7 +218,7 @@ describe('database migrations', () => {
     )
 
     // 升级到 v5/v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9])
 
     // 旧数据保留
     const rows = await executor.query<{ id: string; source: string; record_count: number }>(
@@ -279,7 +289,7 @@ describe('database migrations', () => {
     `)
 
     // 升级到 v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9])
 
     // 旧数据保留
     const tx = await executor.query<{ id: string; type: string }>(

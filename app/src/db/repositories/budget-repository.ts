@@ -3,8 +3,10 @@ import type { BudgetRecord, CategoryBudgetWithCategory } from '@/domain/entities
 import type { SqlValue } from '../core/types'
 import { BaseRepository } from './base-repository'
 
-interface BudgetRow extends Omit<BudgetRecord, 'note'> {
+interface BudgetRow extends Omit<BudgetRecord, 'note' | 'autoCopy' | 'sourcePeriodKey'> {
   note: string | null
+  autoCopy: number
+  sourcePeriodKey: string | null
 }
 
 interface CategoryBudgetRow extends Omit<CategoryBudgetWithCategory, 'categoryName'> {
@@ -41,6 +43,19 @@ export class BudgetRepository extends BaseRepository {
           record.updatedAt,
         ] as SqlValue[],
       },
+      {
+        statement: `
+          INSERT INTO budget_policies (budget_id, mode, auto_copy, source_period_key, updated_at)
+          VALUES (?, ?, ?, ?, ?)
+        `,
+        values: [
+          record.id,
+          record.mode,
+          record.autoCopy ? 1 : 0,
+          record.sourcePeriodKey ?? null,
+          now,
+        ] as SqlValue[],
+      },
     ]
     for (const cb of categoryBudgets) {
       statements.push({
@@ -63,7 +78,13 @@ export class BudgetRepository extends BaseRepository {
 
   async update(
     id: string,
-    fields: { totalLimitMinor?: number; note?: string },
+    fields: {
+      totalLimitMinor?: number
+      note?: string
+      mode?: BudgetRecord['mode']
+      autoCopy?: boolean
+      sourcePeriodKey?: string
+    },
     categoryBudgets: readonly CategoryBudgetInput[] | undefined,
     updatedAt: string,
   ): Promise<void> {
@@ -105,6 +126,31 @@ export class BudgetRepository extends BaseRepository {
       statement: `UPDATE budgets SET ${setClauses.join(', ')} WHERE id = ?`,
       values,
     })
+    if (
+      fields.mode !== undefined ||
+      fields.autoCopy !== undefined ||
+      fields.sourcePeriodKey !== undefined
+    ) {
+      const policySet: string[] = ['updated_at = ?']
+      const policyValues: SqlValue[] = [updatedAt]
+      if (fields.mode !== undefined) {
+        policySet.unshift('mode = ?')
+        policyValues.unshift(fields.mode)
+      }
+      if (fields.autoCopy !== undefined) {
+        policySet.unshift('auto_copy = ?')
+        policyValues.unshift(fields.autoCopy ? 1 : 0)
+      }
+      if (fields.sourcePeriodKey !== undefined) {
+        policySet.unshift('source_period_key = ?')
+        policyValues.unshift(fields.sourcePeriodKey || null)
+      }
+      policyValues.push(id)
+      statements.push({
+        statement: `UPDATE budget_policies SET ${policySet.join(', ')} WHERE budget_id = ?`,
+        values: policyValues,
+      })
+    }
     await this.database.executeSet(statements, true)
   }
 
@@ -131,6 +177,19 @@ export class BudgetRepository extends BaseRepository {
       [ledgerId],
     )
     return rows.map(mapBudget)
+  }
+
+  async findLatestAutoCopyBefore(
+    ledgerId: string,
+    periodKey: string,
+  ): Promise<BudgetRecord | undefined> {
+    const rows = await this.database.query<BudgetRow>(
+      `${BUDGET_SELECT}
+       WHERE budgets.ledger_id = ? AND budgets.period_key < ? AND budget_policies.auto_copy = 1
+       ORDER BY budgets.period_key DESC LIMIT 1`,
+      [ledgerId, periodKey],
+    )
+    return rows[0] ? mapBudget(rows[0]) : undefined
   }
 
   async listCategoryBudgets(budgetId: string): Promise<CategoryBudgetWithCategory[]> {
@@ -164,17 +223,26 @@ export class BudgetRepository extends BaseRepository {
 
 const BUDGET_SELECT = `
   SELECT
-    id,
-    ledger_id AS ledgerId,
-    period_type AS periodType,
-    period_key AS periodKey,
-    total_limit_minor AS totalLimitMinor,
-    note,
-    created_at AS createdAt,
-    updated_at AS updatedAt
+    budgets.id,
+    budgets.ledger_id AS ledgerId,
+    budgets.period_type AS periodType,
+    budgets.period_key AS periodKey,
+    budgets.total_limit_minor AS totalLimitMinor,
+    COALESCE(budget_policies.mode, 'total_only') AS mode,
+    COALESCE(budget_policies.auto_copy, 1) AS autoCopy,
+    budget_policies.source_period_key AS sourcePeriodKey,
+    budgets.note,
+    budgets.created_at AS createdAt,
+    budgets.updated_at AS updatedAt
   FROM budgets
+  LEFT JOIN budget_policies ON budget_policies.budget_id = budgets.id
 `
 
 function mapBudget(row: BudgetRow): BudgetRecord {
-  return { ...row, note: row.note ?? undefined }
+  return {
+    ...row,
+    note: row.note ?? undefined,
+    autoCopy: row.autoCopy === 1,
+    sourcePeriodKey: row.sourcePeriodKey ?? undefined,
+  }
 }

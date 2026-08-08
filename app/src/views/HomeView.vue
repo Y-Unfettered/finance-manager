@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { CalendarDays, ChevronLeft, ChevronRight, ListFilter, Menu, Plus } from '@lucide/vue'
+import {
+  CalendarDays,
+  ChartNoAxesColumn,
+  ChevronLeft,
+  ChevronRight,
+  Menu,
+  Plus,
+  WalletCards,
+} from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -9,14 +17,23 @@ import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import DailyLedgerCard from '@/components/DailyLedgerCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import RecentSummaryCard from '@/components/RecentSummaryCard.vue'
 import SideDrawer from '@/components/SideDrawer.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
 import type { LedgerListItem } from '@/db/repositories/dashboard-repository'
 import type { BudgetWithProgress } from '@/domain/entities'
-import { useFinanceService, type HomeSnapshot } from '@/features/finance/finance-service'
+import {
+  useFinanceService,
+  type HomeSnapshot,
+  type RecentSummary,
+} from '@/features/finance/finance-service'
 import { useBudgetService } from '@/features/budget/budget-service'
 import { currentMonthPeriodKey } from '@/features/budget/budget-service'
 import { useAppStore } from '@/stores/app'
+import {
+  useHomePreferencesService,
+  type HomePreferences,
+} from '@/features/preferences/home-preferences-service'
 
 interface DailyGroup {
   key: string
@@ -30,14 +47,24 @@ const router = useRouter()
 const appStore = useAppStore()
 const finance = useFinanceService()
 const budgetService = useBudgetService()
+const homePreferencesService = useHomePreferencesService()
 const currentMonth = ref(new Date())
 const snapshot = ref<HomeSnapshot>()
 const budget = ref<BudgetWithProgress>()
+const recentSummary = ref<RecentSummary>()
+const homePreferences = ref<HomePreferences>({
+  summaryDisplayType: 'income_expense',
+  summaryRangeType: '7d',
+  amountsHidden: false,
+  rememberLastAccount: true,
+  appearance: 'system',
+})
 const loading = ref(true)
 const errorMessage = ref('')
 const showDrawer = ref(false)
 const showPeriod = ref(false)
 const showTxDetail = ref(false)
+const showSummarySettings = ref(false)
 const activeTxId = ref<string>()
 
 const monthTitle = computed(
@@ -69,6 +96,7 @@ const dailyGroups = computed<DailyGroup[]>(() => {
     if (item.type === 'expense' || item.type === 'credit_purchase') {
       group.expenseMinor += item.amountMinor
     }
+    if (item.type === 'refund') group.expenseMinor -= item.amountMinor
   }
   return [...groups.values()]
 })
@@ -99,12 +127,19 @@ async function loadHome(): Promise<void> {
   errorMessage.value = ''
   try {
     const periodKey = currentMonthPeriodKey(currentMonth.value)
+    if (homePreferencesService) {
+      homePreferences.value = await homePreferencesService.get(appStore.ledgerId)
+    }
     const [homeSnapshot, budgetSnapshot] = await Promise.all([
       finance.loadHome(appStore.ledgerId, currentMonth.value),
       budgetService ? budgetService.getBudgetForPeriod(appStore.ledgerId, periodKey) : undefined,
     ])
     snapshot.value = homeSnapshot
     budget.value = budgetSnapshot
+    recentSummary.value =
+      homePreferences.value.summaryRangeType === 'hidden'
+        ? undefined
+        : await finance.loadRecentSummary(appStore.ledgerId, homePreferences.value.summaryRangeType)
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -135,8 +170,21 @@ function pickToday(): void {
   showPeriod.value = false
 }
 
-function goSearch(): void {
-  void router.push({ name: 'search' })
+function goBills(): void {
+  void router.push({ name: 'bills' })
+}
+function goAssets(): void {
+  void router.push({ name: 'accounts' })
+}
+function goAssetStatistics(): void {
+  void router.push({ name: 'asset-statistics' })
+}
+
+async function saveSummaryPreferences(): Promise<void> {
+  if (!homePreferencesService || !appStore.ledgerId) return
+  await homePreferencesService.save(appStore.ledgerId, homePreferences.value)
+  showSummarySettings.value = false
+  await loadHome()
 }
 
 function goBudget(): void {
@@ -166,7 +214,7 @@ onMounted(loadHome)
 </script>
 
 <template>
-  <main class="home-page">
+  <main class="home-page" :class="{ 'home-page--amounts-hidden': homePreferences.amountsHidden }">
     <section class="home-hero">
       <div class="home-hero__shade" />
       <div class="home-hero__safe-top">
@@ -183,8 +231,14 @@ onMounted(loadHome)
             </AppIconButton>
           </template>
           <template #right>
-            <AppIconButton label="筛选流水" variant="on-dark" @click="goSearch">
-              <ListFilter :size="24" :stroke-width="1.75" aria-hidden="true" />
+            <AppIconButton label="日历账单" variant="on-dark" @click="goBills">
+              <CalendarDays :size="22" :stroke-width="1.75" aria-hidden="true" />
+            </AppIconButton>
+            <AppIconButton label="资产统计" variant="on-dark" @click="goAssetStatistics">
+              <ChartNoAxesColumn :size="22" :stroke-width="1.75" aria-hidden="true" />
+            </AppIconButton>
+            <AppIconButton label="资产" variant="on-dark" @click="goAssets">
+              <WalletCards :size="22" :stroke-width="1.75" aria-hidden="true" />
             </AppIconButton>
           </template>
         </AppTopBar>
@@ -237,6 +291,13 @@ onMounted(loadHome)
         </div>
       </BaseCard>
 
+      <RecentSummaryCard
+        v-if="recentSummary"
+        :summary="recentSummary"
+        :display-type="homePreferences.summaryDisplayType"
+        @settings="showSummarySettings = true"
+      />
+
       <div v-if="loading" class="page-state">正在读取本地账本…</div>
       <div v-else-if="errorMessage" class="page-state page-state--error">
         <span>{{ errorMessage }}</span>
@@ -282,6 +343,45 @@ onMounted(loadHome)
       @update:show="showTxDetail = $event"
       @updated="handleTxUpdated"
     />
+
+    <AppBottomSheet v-model:show="showSummarySettings" title="最近汇总设置">
+      <form class="summary-settings" @submit.prevent="saveSummaryPreferences">
+        <fieldset>
+          <legend>显示类型</legend>
+          <label
+            ><input
+              v-model="homePreferences.summaryDisplayType"
+              type="radio"
+              value="expense"
+            />仅支出</label
+          ><label
+            ><input
+              v-model="homePreferences.summaryDisplayType"
+              type="radio"
+              value="income_expense"
+            />收入与支出</label
+          >
+        </fieldset>
+        <fieldset>
+          <legend>日期范围</legend>
+          <label
+            v-for="option in [
+              { value: 'week', label: '本周' },
+              { value: '7d', label: '最近 7 日' },
+              { value: '15d', label: '最近 15 日' },
+              { value: 'hidden', label: '不显示' },
+            ]"
+            :key="option.value"
+            ><input
+              v-model="homePreferences.summaryRangeType"
+              type="radio"
+              :value="option.value"
+            />{{ option.label }}</label
+          >
+        </fieldset>
+        <button class="primary-button" type="submit">保存</button>
+      </form>
+    </AppBottomSheet>
   </main>
 </template>
 
@@ -525,5 +625,30 @@ onMounted(loadHome)
   font-size: var(--type-caption-size);
   line-height: var(--type-caption-line);
   text-align: center;
+}
+.summary-settings {
+  display: grid;
+  gap: var(--space-4);
+}
+.summary-settings fieldset {
+  display: grid;
+  padding: 0;
+  gap: var(--space-2);
+  border: 0;
+}
+.summary-settings legend {
+  margin-bottom: var(--space-2);
+  font-weight: 600;
+}
+.summary-settings label {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: var(--space-2);
+}
+.home-page--amounts-hidden :deep(.money-text),
+.home-page--amounts-hidden :deep(.recent-summary-card__amount) {
+  filter: blur(7px);
+  user-select: none;
 }
 </style>

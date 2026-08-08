@@ -17,11 +17,17 @@ export const useAppStore = defineStore('app', {
       this.databaseStatus = 'initializing'
       this.databaseError = undefined
     },
-    markDatabaseReady(schemaVersion: number, ledgerId?: string) {
+    markDatabaseReady(schemaVersion: number, ledgerId?: string, ledgerName?: string) {
       this.databaseStatus = 'ready'
       this.schemaVersion = schemaVersion
       this.ledgerId = ledgerId
+      if (ledgerName) this.ledgerName = ledgerName
       this.databaseError = undefined
+    },
+    selectLedger(ledgerId: string, ledgerName: string) {
+      this.ledgerId = ledgerId
+      this.ledgerName = ledgerName
+      localStorage.setItem('finance-manager:selected-ledger', ledgerId)
     },
     markDatabaseError(error: unknown) {
       this.databaseStatus = 'error'

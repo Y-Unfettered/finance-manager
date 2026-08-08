@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChartNoAxesColumn, Home, Plus, UserRound, WalletCards } from '@lucide/vue'
+import { Home, Plus, WalletCards } from '@lucide/vue'
 import { RouterLink } from 'vue-router'
 </script>
 
@@ -9,20 +9,12 @@ import { RouterLink } from 'vue-router'
       <Home :size="24" :stroke-width="1.75" aria-hidden="true" />
       <span>首页</span>
     </RouterLink>
-    <RouterLink class="bottom-nav__item" :to="{ name: 'accounts' }">
-      <WalletCards :size="24" :stroke-width="1.75" aria-hidden="true" />
-      <span>资产</span>
-    </RouterLink>
     <RouterLink class="bottom-nav__create" :to="{ name: 'new-expense' }" aria-label="记一笔">
       <Plus :size="26" :stroke-width="2" aria-hidden="true" />
     </RouterLink>
-    <RouterLink class="bottom-nav__item" :to="{ name: 'analysis' }">
-      <ChartNoAxesColumn :size="24" :stroke-width="1.75" aria-hidden="true" />
-      <span>分析</span>
-    </RouterLink>
-    <RouterLink class="bottom-nav__item" :to="{ name: 'profile' }">
-      <UserRound :size="24" :stroke-width="1.75" aria-hidden="true" />
-      <span>我的</span>
+    <RouterLink class="bottom-nav__item" :to="{ name: 'accounts' }">
+      <WalletCards :size="24" :stroke-width="1.75" aria-hidden="true" />
+      <span>资产</span>
     </RouterLink>
   </nav>
 </template>
@@ -38,7 +30,7 @@ import { RouterLink } from 'vue-router'
   height: calc(var(--size-bottom-nav) + env(safe-area-inset-bottom));
   padding: 0 max(var(--space-2), env(safe-area-inset-right)) env(safe-area-inset-bottom)
     max(var(--space-2), env(safe-area-inset-left));
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   background: rgb(255 255 255 / 96%);
   border-top: 1px solid var(--color-divider);

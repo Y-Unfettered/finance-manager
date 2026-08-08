@@ -22,7 +22,7 @@ function displayAmount(item: LedgerListItem): number {
 }
 
 function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
-  if (item.type === 'income') return 'income'
+  if (item.type === 'income' || item.type === 'refund') return 'income'
   if (item.type === 'expense' || item.type === 'credit_purchase') return 'expense'
   return 'default'
 }
@@ -55,7 +55,7 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
           class="transaction-row__amount"
           :amount-minor="displayAmount(item)"
           :tone="amountTone(item)"
-          :show-plus="item.type === 'income'"
+          :show-plus="item.type === 'income' || item.type === 'refund'"
         />
       </button>
     </div>

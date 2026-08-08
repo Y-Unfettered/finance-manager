@@ -84,6 +84,32 @@
   --van-popup-round-radius: var(--radius-sheet);
 }
 
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --color-background: #121715;
+  --color-surface: #1b221f;
+  --color-text-primary: #edf3f0;
+  --color-text-secondary: #b1bdb8;
+  --color-text-tertiary: #7f8c87;
+  --color-divider: #303a36;
+  --color-primary-50: #18322d;
+  --color-primary-100: #21483f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --color-background: #121715;
+    --color-surface: #1b221f;
+    --color-text-primary: #edf3f0;
+    --color-text-secondary: #b1bdb8;
+    --color-text-tertiary: #7f8c87;
+    --color-divider: #303a36;
+    --color-primary-50: #18322d;
+    --color-primary-100: #21483f;
+  }
+}
+
 @media (min-width: 412px) {
   :root {
     --page-gutter: 20px;

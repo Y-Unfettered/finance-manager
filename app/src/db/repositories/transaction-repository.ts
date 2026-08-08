@@ -30,12 +30,14 @@ export interface AccountActivityRecord {
   amountMinor: number
   changeMinor: number
   occurredAt: string
+  originalOccurredAt?: string
   title: string
   note?: string
 }
 
-interface AccountActivityRow extends Omit<AccountActivityRecord, 'note'> {
+interface AccountActivityRow extends Omit<AccountActivityRecord, 'note' | 'originalOccurredAt'> {
   note: string | null
+  originalOccurredAt: string | null
 }
 
 export interface TransactionSearchFilter {
@@ -85,7 +87,32 @@ export class TransactionRepository extends BaseRepository {
     super(database)
   }
 
-  async create(ledgerId: string, draft: TransactionDraft): Promise<TransactionWithEntries> {
+  async create(
+    ledgerId: string,
+    draft: TransactionDraft,
+    link?: { originalTransactionId: string; relationType: 'refund' },
+    attachmentDataUris: readonly string[] = [],
+  ): Promise<TransactionWithEntries> {
+    return this.write(ledgerId, draft, link, undefined, attachmentDataUris)
+  }
+
+  async replace(
+    ledgerId: string,
+    replacedTransactionId: string,
+    draft: TransactionDraft,
+    link?: { originalTransactionId: string; relationType: 'refund' },
+    attachmentDataUris: readonly string[] = [],
+  ): Promise<TransactionWithEntries> {
+    return this.write(ledgerId, draft, link, replacedTransactionId, attachmentDataUris)
+  }
+
+  private async write(
+    ledgerId: string,
+    draft: TransactionDraft,
+    link?: { originalTransactionId: string; relationType: 'refund' },
+    replacedTransactionId?: string,
+    attachmentDataUris: readonly string[] = [],
+  ): Promise<TransactionWithEntries> {
     assertBalanced(draft.entries)
     const transactionId = this.ids.next('transaction')
     const createdAt = this.clock.nowIso()
@@ -141,6 +168,36 @@ export class TransactionRepository extends BaseRepository {
       },
       ...entries.map(entryInsert),
     ]
+    if (replacedTransactionId) {
+      statements.unshift({
+        statement: `UPDATE transactions SET status = 'void', updated_at = ?
+          WHERE id = ? AND ledger_id = ? AND status = 'posted'`,
+        values: [createdAt, replacedTransactionId, ledgerId],
+      })
+    }
+    if (link) {
+      statements.push({
+        statement: `INSERT INTO transaction_links (
+          transaction_id, original_transaction_id, relation_type, created_at
+        ) VALUES (?, ?, ?, ?)`,
+        values: [transaction.id, link.originalTransactionId, link.relationType, createdAt],
+      })
+    }
+    attachmentDataUris.forEach((dataUri, index) => {
+      const mimeType = /^data:([^;,]+)[;,]/.exec(dataUri)?.[1] ?? 'application/octet-stream'
+      statements.push({
+        statement: `INSERT INTO transaction_attachments (
+          id, transaction_id, mime_type, data_uri, created_at
+        ) VALUES (?, ?, ?, ?, ?)`,
+        values: [
+          `${transaction.id}_attachment_${index}`,
+          transaction.id,
+          mimeType,
+          dataUri,
+          createdAt,
+        ],
+      })
+    })
     await this.database.executeSet(statements, true)
 
     return { ...transaction, entries }
@@ -188,6 +245,53 @@ export class TransactionRepository extends BaseRepository {
     )
   }
 
+  async linkRefund(
+    transactionId: string,
+    originalTransactionId: string,
+    createdAt: string,
+  ): Promise<void> {
+    await this.database.executeSet(
+      [
+        {
+          statement: `INSERT INTO transaction_links (transaction_id, original_transaction_id, relation_type, created_at)
+        VALUES (?, ?, 'refund', ?)`,
+          values: [transactionId, originalTransactionId, createdAt],
+        },
+      ],
+      true,
+    )
+  }
+
+  async refundedAmount(originalTransactionId: string): Promise<number> {
+    const rows = await this.database.query<{ amountMinor: number }>(
+      `SELECT COALESCE(SUM(transactions.amount_minor), 0) AS amountMinor
+       FROM transaction_links JOIN transactions ON transactions.id = transaction_links.transaction_id
+       WHERE transaction_links.original_transaction_id = ?
+         AND transaction_links.relation_type = 'refund' AND transactions.status = 'posted'`,
+      [originalTransactionId],
+    )
+    return rows[0]?.amountMinor ?? 0
+  }
+
+  async originalTransactionId(transactionId: string): Promise<string | undefined> {
+    const rows = await this.database.query<{ originalTransactionId: string }>(
+      `SELECT original_transaction_id AS originalTransactionId
+       FROM transaction_links
+       WHERE transaction_id = ? AND relation_type = 'refund' LIMIT 1`,
+      [transactionId],
+    )
+    return rows[0]?.originalTransactionId
+  }
+
+  async listAttachmentDataUris(transactionId: string): Promise<string[]> {
+    const rows = await this.database.query<{ dataUri: string }>(
+      `SELECT data_uri AS dataUri FROM transaction_attachments
+       WHERE transaction_id = ? ORDER BY created_at, id`,
+      [transactionId],
+    )
+    return rows.map((row) => row.dataUri)
+  }
+
   async updateMetadata(
     id: string,
     fields: { occurredAt?: string; merchant?: string; note?: string },
@@ -232,6 +336,7 @@ export class TransactionRepository extends BaseRepository {
             ELSE -entries.amount_minor
           END AS changeMinor,
           transactions.occurred_at AS occurredAt,
+          original_transactions.occurred_at AS originalOccurredAt,
           COALESCE(transactions.counterparty, transactions.merchant, categories.name,
             CASE transactions.type
               WHEN 'opening_balance' THEN '期初余额'
@@ -251,17 +356,25 @@ export class TransactionRepository extends BaseRepository {
           ON category_entries.transaction_id = transactions.id
           AND category_entries.category_id IS NOT NULL
         LEFT JOIN categories ON categories.id = category_entries.category_id
+        LEFT JOIN transaction_links ON transaction_links.transaction_id = transactions.id
+          AND transaction_links.relation_type = 'refund'
+        LEFT JOIN transactions AS original_transactions
+          ON original_transactions.id = transaction_links.original_transaction_id
         WHERE entries.account_id = ? AND transactions.status = 'posted'
         ORDER BY transactions.occurred_at DESC, transactions.created_at DESC
       `,
       [accountId],
     )
-    return rows.map((row) => ({ ...row, note: row.note ?? undefined }))
+    return rows.map((row) => ({
+      ...row,
+      note: row.note ?? undefined,
+      originalOccurredAt: row.originalOccurredAt ?? undefined,
+    }))
   }
 
   /**
    * 多维度搜索筛选：关键词、日期范围、账户、分类、类型、金额区间。
-   * 关键词匹配 merchant / counterparty / note / category.name。
+   * 关键词匹配 merchant / counterparty / note / category.name / account.name。
    * 账户/分类筛选命中任一相关分录。
    */
   async search(filter: TransactionSearchFilter): Promise<TransactionSearchResultItem[]> {
@@ -272,10 +385,10 @@ export class TransactionRepository extends BaseRepository {
     }
     if (filter.keyword && filter.keyword.trim() !== '') {
       where.push(
-        `(transactions.merchant LIKE ? OR transactions.counterparty LIKE ? OR transactions.note LIKE ? OR categories.name LIKE ?)`,
+        `(transactions.merchant LIKE ? OR transactions.counterparty LIKE ? OR transactions.note LIKE ? OR categories.name LIKE ? OR accounts.name LIKE ?)`,
       )
       const kw = `%${filter.keyword.trim()}%`
-      values.push(kw, kw, kw, kw)
+      values.push(kw, kw, kw, kw, kw)
     }
     if (filter.startUtc) {
       where.push('transactions.occurred_at >= ?')
@@ -305,9 +418,12 @@ export class TransactionRepository extends BaseRepository {
     }
     if (filter.categoryId) {
       where.push(
-        `EXISTS (SELECT 1 FROM entries AS e_cat WHERE e_cat.transaction_id = transactions.id AND e_cat.category_id = ?)`,
+        `EXISTS (SELECT 1 FROM entries AS e_cat
+          LEFT JOIN categories AS filter_category ON filter_category.id = e_cat.category_id
+          WHERE e_cat.transaction_id = transactions.id
+            AND (e_cat.category_id = ? OR filter_category.parent_id = ?))`,
       )
-      values.push(filter.categoryId)
+      values.push(filter.categoryId, filter.categoryId)
     }
 
     const limitClause = filter.limit ? `LIMIT ${Math.max(1, Math.min(filter.limit, 1000))}` : ''

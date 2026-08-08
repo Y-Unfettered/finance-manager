@@ -17,6 +17,12 @@ export interface LedgerListItem {
   accountLabel: string
 }
 
+export interface DailyFlowPoint {
+  date: string
+  incomeMinor: number
+  expenseMinor: number
+}
+
 interface SummaryRow {
   incomeMinor: number
   expenseMinor: number
@@ -36,6 +42,26 @@ interface LedgerItemRow {
 }
 
 export class DashboardRepository extends BaseRepository {
+  async getDailyFlow(
+    ledgerId: string,
+    startUtc: string,
+    endUtc: string,
+  ): Promise<DailyFlowPoint[]> {
+    return this.database.query<DailyFlowPoint>(
+      `
+        SELECT date(occurred_at, 'localtime') AS date,
+          COALESCE(SUM(CASE WHEN type = 'income' THEN amount_minor ELSE 0 END), 0) AS incomeMinor,
+          COALESCE(SUM(CASE
+            WHEN type IN ('expense', 'credit_purchase') THEN amount_minor
+            WHEN type = 'refund' THEN -amount_minor ELSE 0 END), 0) AS expenseMinor
+        FROM transactions
+        WHERE ledger_id = ? AND status = 'posted' AND occurred_at >= ? AND occurred_at < ?
+        GROUP BY date(occurred_at, 'localtime')
+        ORDER BY date ASC
+      `,
+      [ledgerId, startUtc, endUtc],
+    )
+  }
   async getMonthlySummary(
     ledgerId: string,
     startUtc: string,
@@ -46,7 +72,11 @@ export class DashboardRepository extends BaseRepository {
         SELECT
           COALESCE(SUM(CASE WHEN type = 'income' THEN amount_minor ELSE 0 END), 0) AS incomeMinor,
           COALESCE(SUM(
-            CASE WHEN type IN ('expense', 'credit_purchase') THEN amount_minor ELSE 0 END
+            CASE
+              WHEN type IN ('expense', 'credit_purchase') THEN amount_minor
+              WHEN type = 'refund' THEN -amount_minor
+              ELSE 0
+            END
           ), 0) AS expenseMinor
         FROM transactions
         WHERE ledger_id = ?
@@ -77,15 +107,15 @@ export class DashboardRepository extends BaseRepository {
           transactions.counterparty,
           MAX(categories.name) AS categoryName,
           MAX(CASE
-            WHEN transactions.type NOT IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+            WHEN transactions.type NOT IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
               AND accounts.id IS NOT NULL THEN accounts.name
           END) AS primaryAccount,
           MAX(CASE
-            WHEN transactions.type IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+            WHEN transactions.type IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
               AND entries.side = 'credit' THEN accounts.name
           END) AS sourceAccount,
           MAX(CASE
-            WHEN transactions.type IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+            WHEN transactions.type IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
               AND entries.side = 'debit' THEN accounts.name
           END) AS targetAccount
         FROM transactions
@@ -116,15 +146,15 @@ export class DashboardRepository extends BaseRepository {
           transactions.counterparty,
           MAX(categories.name) AS categoryName,
           MAX(CASE
-            WHEN transactions.type NOT IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+            WHEN transactions.type NOT IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
               AND accounts.id IS NOT NULL THEN accounts.name
           END) AS primaryAccount,
           MAX(CASE
-            WHEN transactions.type IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+            WHEN transactions.type IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
               AND entries.side = 'credit' THEN accounts.name
           END) AS sourceAccount,
           MAX(CASE
-            WHEN transactions.type IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+            WHEN transactions.type IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
               AND entries.side = 'debit' THEN accounts.name
           END) AS targetAccount
         FROM transactions
@@ -158,6 +188,7 @@ function mapLedgerItem(row: LedgerItemRow): LedgerListItem {
       row.merchant ?? row.counterparty ?? row.categoryName ?? transactionFallbackTitle(row.type),
     accountLabel: [
       'transfer',
+      'repayment',
       'loan_out',
       'loan_recovery',
       'borrowing',

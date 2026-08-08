@@ -1,35 +1,8 @@
 <script setup lang="ts">
-import {
-  ArrowLeftRight,
-  Award,
-  BookOpen,
-  Bus,
-  Car,
-  ChevronLeft,
-  Coins,
-  Dumbbell,
-  Edit3,
-  Gamepad2,
-  Gift,
-  HeartPulse,
-  Home,
-  Laptop,
-  LayoutGrid,
-  Package,
-  Phone,
-  Plus,
-  Shirt,
-  ShoppingCart,
-  Sparkles,
-  TrendingUp,
-  Utensils,
-  UtensilsCrossed,
-  Wallet,
-  X,
-  Zap,
-} from '@lucide/vue'
+import { ArrowLeftRight, ChevronLeft, Edit3, Plus, X } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import CategoryIcon from '@/components/CategoryIcon.vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import { formatMinorToCny, parseCnyInputToMinor } from '@/domain/money'
 import {
@@ -40,58 +13,25 @@ import {
   type TransactionMetadata,
 } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
+import {
+  useHomePreferencesService,
+  type HomePreferences,
+} from '@/features/preferences/home-preferences-service'
 import AccountPicker from './AccountPicker.vue'
 import DatePicker from './DatePicker.vue'
 
-type EntryMode = 'expense' | 'income' | 'transfer'
+type EntryMode = 'expense' | 'income' | 'transfer' | 'credit_purchase' | 'repayment' | 'refund'
 
-interface CategoryIcon {
-  name: string
-  icon: typeof Wallet
-}
-
-const EXPENSE_ICONS: readonly CategoryIcon[] = [
-  { name: '餐饮', icon: UtensilsCrossed },
-  { name: '三餐', icon: Utensils },
-  { name: '零食', icon: Sparkles },
-  { name: '交通', icon: Bus },
-  { name: '购物', icon: ShoppingCart },
-  { name: '居住', icon: Home },
-  { name: '医疗', icon: HeartPulse },
-  { name: '娱乐', icon: Gamepad2 },
-  { name: '人情往来', icon: Gift },
-  { name: '其他支出', icon: LayoutGrid },
-  { name: '日用品', icon: Package },
-  { name: '水电煤', icon: Zap },
-  { name: '电器数码', icon: Laptop },
-  { name: '话费网费', icon: Phone },
-  { name: '衣服', icon: Shirt },
-  { name: '汽车/加油', icon: Car },
-  { name: '旅行', icon: Sparkles },
-  { name: '学习', icon: BookOpen },
-  { name: '运动', icon: Dumbbell },
-  { name: '宠物', icon: Sparkles },
-  { name: '孩子', icon: Gift },
-  { name: '其它', icon: LayoutGrid },
-] as const
-
-const INCOME_ICONS: readonly CategoryIcon[] = [
-  { name: '工资', icon: Coins },
-  { name: '奖金', icon: Award },
-  { name: '红包', icon: Gift },
-  { name: '投资收益', icon: TrendingUp },
-  { name: '其他收入', icon: Plus },
-  { name: '生活费', icon: Home },
-  { name: '收红包', icon: Gift },
-  { name: '外快', icon: Sparkles },
-  { name: '股票基金', icon: TrendingUp },
-] as const
+const MODE_OPTIONS: readonly { value: EntryMode; label: string }[] = [
+  { value: 'expense', label: '支出' },
+  { value: 'income', label: '收入' },
+  { value: 'transfer', label: '转账' },
+]
 
 const EXPENSE_QUICK_TAGS = [
   { label: '美团月付', action: 'account' },
   { label: '今天', action: 'date' },
-  { label: '报销', action: 'disabled' },
-  { label: '图片', action: 'disabled' },
+  { label: '图片', action: 'image' },
   { label: '优惠', action: 'discount' },
   { label: '备注', action: 'note' },
 ] as const
@@ -99,19 +39,19 @@ const EXPENSE_QUICK_TAGS = [
 const INCOME_QUICK_TAGS = [
   { label: '微信(大号)', action: 'account' },
   { label: '今天', action: 'date' },
-  { label: '图片', action: 'disabled' },
+  { label: '图片', action: 'image' },
   { label: '备注', action: 'note' },
 ] as const
 
 const TRANSFER_QUICK_TAGS = [
   { label: '今天', action: 'date' },
-  { label: '图片', action: 'disabled' },
+  { label: '图片', action: 'image' },
   { label: '手续费', action: 'note' },
   { label: '优惠', action: 'discount' },
   { label: '备注', action: 'note' },
 ] as const
 
-type QuickTagAction = 'account' | 'date' | 'disabled' | 'discount' | 'note'
+type QuickTagAction = 'account' | 'date' | 'image' | 'discount' | 'note'
 
 interface QuickTagDef {
   label: string
@@ -122,6 +62,14 @@ const route = useRoute()
 const router = useRouter()
 const appStore = useAppStore()
 const finance = useFinanceService()
+const preferencesService = useHomePreferencesService()
+const preferences = ref<HomePreferences>({
+  summaryDisplayType: 'income_expense',
+  summaryRangeType: '7d',
+  amountsHidden: false,
+  rememberLastAccount: true,
+  appearance: 'system',
+})
 
 const mode = ref<EntryMode>('expense')
 const accounts = ref<AccountBalanceRecord[]>([])
@@ -136,6 +84,8 @@ const selectedCategoryId = ref('')
 const selectedCategoryName = ref('')
 const merchant = ref('')
 const note = ref('')
+const attachmentDataUris = ref<string[]>([])
+const fileInput = ref<HTMLInputElement>()
 
 const sourceAccountId = ref('')
 const targetAccountId = ref('')
@@ -153,32 +103,63 @@ const editTransactionId = ref('')
 const isEditMode = ref(false)
 const isCopyMode = ref(false)
 const originalOccurredAt = ref('')
+const originalRefundTransactionId = ref('')
 
-const debitAccounts = computed(() => accounts.value.filter((a) => a.normalBalance === 'debit'))
-
-const expenseIconMap = computed<Record<string, CategoryIcon>>(() => {
-  const map: Record<string, CategoryIcon> = {}
-  for (const item of EXPENSE_ICONS) map[item.name] = item
-  return map
-})
-
-const incomeIconMap = computed<Record<string, CategoryIcon>>(() => {
-  const map: Record<string, CategoryIcon> = {}
-  for (const item of INCOME_ICONS) map[item.name] = item
-  return map
-})
-
-const expenseGridIcons = computed(() =>
-  expenseCategories.value.map((c) => expenseIconMap.value[c.name]?.icon ?? LayoutGrid),
+const activeAccounts = computed(() =>
+  accounts.value.filter((a) => !a.archivedAt && a.visibleInEntry !== false),
 )
-const incomeGridIcons = computed(() =>
-  incomeCategories.value.map((c) => incomeIconMap.value[c.name]?.icon ?? LayoutGrid),
+const debitAccounts = computed(() =>
+  activeAccounts.value.filter((a) => a.normalBalance === 'debit'),
+)
+const creditAccounts = computed(() =>
+  activeAccounts.value.filter((a) => a.normalBalance === 'credit'),
 )
 
 const quickTags = computed<readonly QuickTagDef[]>(() => {
-  if (mode.value === 'expense') return EXPENSE_QUICK_TAGS
   if (mode.value === 'income') return INCOME_QUICK_TAGS
-  return TRANSFER_QUICK_TAGS
+  if (mode.value === 'transfer' || mode.value === 'repayment') return TRANSFER_QUICK_TAGS
+  return EXPENSE_QUICK_TAGS
+})
+
+const usesExpenseCategory = computed(() =>
+  ['expense', 'credit_purchase', 'refund'].includes(mode.value),
+)
+const usesIncomeCategory = computed(() => mode.value === 'income')
+const hasCategory = computed(() => usesExpenseCategory.value || usesIncomeCategory.value)
+const activeCategories = computed(() =>
+  usesIncomeCategory.value ? incomeCategories.value : expenseCategories.value,
+)
+const activeRootCategories = computed(() =>
+  activeCategories.value.filter((category) => !category.parentId),
+)
+const selectedRootId = computed(() => {
+  const selected = activeCategories.value.find(
+    (category) => category.id === selectedCategoryId.value,
+  )
+  return selected?.parentId ?? selected?.id ?? ''
+})
+const activeChildCategories = computed(() =>
+  selectedRootId.value
+    ? activeCategories.value.filter((category) => category.parentId === selectedRootId.value)
+    : [],
+)
+const pickerAccounts = computed(() => {
+  if (accountPickerContext.value === 'target') {
+    return mode.value === 'repayment' ? creditAccounts.value : debitAccounts.value
+  }
+  if (mode.value === 'expense' || mode.value === 'credit_purchase') return activeAccounts.value
+  if (mode.value === 'refund') return activeAccounts.value
+  return debitAccounts.value
+})
+
+const pickerTitle = computed(() => {
+  if (accountPickerContext.value === 'target') {
+    return mode.value === 'repayment' ? '选择信用账户' : '选择转入账户'
+  }
+  if (mode.value === 'credit_purchase') return '选择信用账户'
+  if (mode.value === 'refund') return '选择退款到账账户'
+  if (mode.value === 'repayment') return '选择还款账户'
+  return '选择支付账户'
 })
 
 const selectedSourceAccount = computed(() =>
@@ -192,7 +173,8 @@ const canSubmit = computed(() => {
   if (loading.value || saving.value) return false
   if (amountDisplay.value === '' || amountDisplay.value === '0' || amountDisplay.value === '0.0')
     return false
-  if (mode.value === 'expense' || mode.value === 'income') {
+  if (mode.value === 'refund' && originalRefundTransactionId.value === '') return false
+  if (hasCategory.value) {
     return sourceAccountId.value !== '' && selectedCategoryId.value !== ''
   }
   return sourceAccountId.value !== '' && targetAccountId.value !== ''
@@ -220,10 +202,12 @@ const actualSpending = computed(() => {
 const isExpense = computed(() => mode.value === 'expense')
 const isIncome = computed(() => mode.value === 'income')
 const isTransfer = computed(() => mode.value === 'transfer')
+const isRepayment = computed(() => mode.value === 'repayment')
+const isDualAccountMode = computed(() => isTransfer.value || isRepayment.value)
 
 const themeColor = computed(() => {
-  if (isExpense.value) return 'var(--color-danger)'
-  if (isIncome.value) return 'var(--color-primary-500)'
+  if (isExpense.value || mode.value === 'credit_purchase') return 'var(--color-danger)'
+  if (isIncome.value || mode.value === 'refund') return 'var(--color-primary-500)'
   return 'var(--color-primary-400)'
 })
 
@@ -241,15 +225,19 @@ async function loadOptions(): Promise<void> {
   }
   loading.value = true
   try {
-    const [accRows, expCats, incCats] = await Promise.all([
+    const [accRows, expCats, incCats, savedPreferences] = await Promise.all([
       finance.listAccounts(appStore.ledgerId),
       finance.listExpenseCategories(appStore.ledgerId),
       finance.listIncomeCategories(appStore.ledgerId),
+      preferencesService
+        ? preferencesService.get(appStore.ledgerId)
+        : Promise.resolve(preferences.value),
     ])
     accounts.value = accRows
     expenseCategories.value = expCats
     incomeCategories.value = incCats
-    if (sourceAccountId.value === '') sourceAccountId.value = debitAccounts.value[0]?.id ?? ''
+    preferences.value = savedPreferences
+    if (sourceAccountId.value === '') resetAccountsForMode(mode.value)
     if (targetAccountId.value === '' && mode.value === 'transfer')
       targetAccountId.value = debitAccounts.value[1]?.id ?? debitAccounts.value[0]?.id ?? ''
     if (selectedCategoryId.value === '' && expCats.length > 0) {
@@ -275,13 +263,17 @@ async function loadTransactionForEdit(txId: string): Promise<void> {
 }
 
 function applyTransactionToForm(tx: TransactionMetadata): void {
-  if (tx.type === 'income') mode.value = 'income'
-  else if (tx.type === 'transfer') mode.value = 'transfer'
+  if (['expense', 'income', 'transfer', 'credit_purchase', 'repayment', 'refund'].includes(tx.type))
+    mode.value = tx.type as EntryMode
   else mode.value = 'expense'
   amountDisplay.value = formatMinorToCny(tx.amountMinor)
   merchant.value = tx.merchant ?? ''
   note.value = tx.note ?? ''
-  if (tx.accountId) sourceAccountId.value = tx.accountId
+  attachmentDataUris.value = [...tx.attachmentDataUris]
+  occurredAt.value = tx.occurredAt
+  if (tx.sourceAccountId || tx.accountId)
+    sourceAccountId.value = tx.sourceAccountId ?? tx.accountId ?? ''
+  targetAccountId.value = tx.targetAccountId ?? ''
   if (tx.categoryId) selectedCategoryId.value = tx.categoryId
   if (tx.categoryName) selectedCategoryName.value = tx.categoryName
   originalOccurredAt.value = tx.occurredAt
@@ -291,7 +283,7 @@ function switchMode(next: EntryMode): void {
   if (mode.value === next || saving.value) return
   mode.value = next
   errorMessage.value = ''
-  if (next === 'expense') {
+  if (next === 'expense' || next === 'credit_purchase' || next === 'refund') {
     if (expenseCategories.value.length > 0) {
       selectedCategoryId.value = expenseCategories.value[0]!.id
       selectedCategoryName.value = expenseCategories.value[0]!.name
@@ -301,15 +293,48 @@ function switchMode(next: EntryMode): void {
       selectedCategoryId.value = incomeCategories.value[0]!.id
       selectedCategoryName.value = incomeCategories.value[0]!.name
     }
-  } else if (next === 'transfer') {
+  } else {
     selectedCategoryId.value = ''
     selectedCategoryName.value = ''
-    const sources = debitAccounts.value
-    if (sourceAccountId.value === '' && sources.length > 0) sourceAccountId.value = sources[0]!.id
-    if (targetAccountId.value === '' && sources.length > 1) targetAccountId.value = sources[1]!.id
-    else if (targetAccountId.value === '' && sources.length > 0)
-      targetAccountId.value = sources[0]!.id
   }
+  resetAccountsForMode(next)
+}
+
+function resetAccountsForMode(next: EntryMode): void {
+  const sourceOptions =
+    next === 'expense' || next === 'credit_purchase'
+      ? activeAccounts.value
+      : next === 'refund'
+        ? activeAccounts.value
+        : debitAccounts.value
+  const lastAccountId =
+    preferences.value.rememberLastAccount && appStore.ledgerId
+      ? localStorage.getItem(
+          `finance-manager:last-account:${appStore.ledgerId}:${visibleMode(next)}`,
+        )
+      : undefined
+  const defaultAccountId =
+    next === 'income'
+      ? preferences.value.defaultIncomeAccountId
+      : preferences.value.defaultExpenseAccountId
+  sourceAccountId.value =
+    sourceOptions.find((item) => item.id === lastAccountId)?.id ??
+    sourceOptions.find((item) => item.id === defaultAccountId)?.id ??
+    sourceOptions[0]?.id ??
+    ''
+  if (next === 'transfer') {
+    targetAccountId.value = debitAccounts.value[1]?.id ?? debitAccounts.value[0]?.id ?? ''
+  } else if (next === 'repayment') {
+    targetAccountId.value = creditAccounts.value[0]?.id ?? ''
+  } else {
+    targetAccountId.value = ''
+  }
+}
+
+function visibleMode(value: EntryMode): 'expense' | 'income' | 'transfer' {
+  if (value === 'credit_purchase' || value === 'refund') return 'expense'
+  if (value === 'repayment') return 'transfer'
+  return value
 }
 
 function selectCategory(cat: ExpenseCategoryOption | IncomeCategoryOption): void {
@@ -335,7 +360,8 @@ function pickQuickTag(tag: QuickTagDef): void {
     toggleDiscountMode()
     return
   }
-  if (tag.action === 'disabled') {
+  if (tag.action === 'image') {
+    fileInput.value?.click()
     return
   }
   if (tag.action === 'note') {
@@ -345,10 +371,46 @@ function pickQuickTag(tag: QuickTagDef): void {
   }
 }
 
+async function handleImageSelect(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const files = [...(input.files ?? [])]
+  input.value = ''
+  for (const file of files) {
+    if (attachmentDataUris.value.length >= 3) {
+      errorMessage.value = '每笔交易最多添加 3 张图片'
+      break
+    }
+    if (!file.type.startsWith('image/')) {
+      errorMessage.value = '只能添加图片文件'
+      continue
+    }
+    if (file.size > 3 * 1024 * 1024) {
+      errorMessage.value = '单张图片不能超过 3 MB'
+      continue
+    }
+    attachmentDataUris.value.push(await readFileAsDataUri(file))
+  }
+}
+
+function readFileAsDataUri(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
+    reader.onerror = () => reject(new Error('图片读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
 function handleAccountSelect(acc: AccountBalanceRecord | null): void {
   if (!acc) return
   if (accountPickerContext.value === 'source') {
     sourceAccountId.value = acc.id
+    if (preferences.value.rememberLastAccount && appStore.ledgerId) {
+      localStorage.setItem(
+        `finance-manager:last-account:${appStore.ledgerId}:${visibleMode(mode.value)}`,
+        acc.id,
+      )
+    }
   } else {
     targetAccountId.value = acc.id
   }
@@ -439,32 +501,57 @@ async function submit(): Promise<void> {
   saving.value = true
   errorMessage.value = ''
   try {
-    const amountMinor = parseCnyInputToMinor(amountDisplay.value)
+    const amountMinor = parseCnyInputToMinor(
+      (mode.value === 'expense' || mode.value === 'credit_purchase') && hasDiscount.value
+        ? actualSpending.value
+        : amountDisplay.value,
+    )
+    if (amountMinor <= 0) throw new Error('优惠后金额必须大于 0')
     if (isEditMode.value && editTransactionId.value) {
+      const selectedType =
+        mode.value === 'expense' && selectedSourceAccount.value?.normalBalance === 'credit'
+          ? 'credit_purchase'
+          : mode.value
       const input: EditTransactionFullInput = {
         ledgerId: appStore.ledgerId,
         transactionId: editTransactionId.value,
-        type: mode.value === 'income' ? 'income' : 'expense',
+        type: selectedType,
         amountMinor,
         accountId: sourceAccountId.value,
         categoryId: selectedCategoryId.value,
-        occurredAt: originalOccurredAt.value || new Date().toISOString(),
+        targetAccountId: targetAccountId.value || undefined,
+        occurredAt: occurredAt.value || originalOccurredAt.value || new Date().toISOString(),
         merchant: merchant.value || undefined,
         note: note.value || undefined,
+        attachmentDataUris: attachmentDataUris.value,
       }
       await finance.editTransactionFull(input)
     } else {
       const occurredAtValue = occurredAt.value || new Date().toISOString()
       if (mode.value === 'expense') {
-        await finance.createExpense({
-          ledgerId: appStore.ledgerId,
-          amountMinor,
-          accountId: sourceAccountId.value,
-          categoryId: selectedCategoryId.value,
-          occurredAt: occurredAtValue,
-          merchant: merchant.value || undefined,
-          note: note.value || undefined,
-        })
+        if (selectedSourceAccount.value?.normalBalance === 'credit') {
+          await finance.createCreditPurchase({
+            ledgerId: appStore.ledgerId,
+            amountMinor,
+            liabilityAccountId: sourceAccountId.value,
+            categoryId: selectedCategoryId.value,
+            occurredAt: occurredAtValue,
+            merchant: merchant.value || undefined,
+            note: note.value || undefined,
+            attachmentDataUris: attachmentDataUris.value,
+          })
+        } else {
+          await finance.createExpense({
+            ledgerId: appStore.ledgerId,
+            amountMinor,
+            accountId: sourceAccountId.value,
+            categoryId: selectedCategoryId.value,
+            occurredAt: occurredAtValue,
+            merchant: merchant.value || undefined,
+            note: note.value || undefined,
+            attachmentDataUris: attachmentDataUris.value,
+          })
+        }
       } else if (mode.value === 'income') {
         await finance.createIncome({
           ledgerId: appStore.ledgerId,
@@ -474,8 +561,9 @@ async function submit(): Promise<void> {
           occurredAt: occurredAtValue,
           merchant: merchant.value || undefined,
           note: note.value || undefined,
+          attachmentDataUris: attachmentDataUris.value,
         })
-      } else {
+      } else if (mode.value === 'transfer') {
         await finance.createTransfer({
           ledgerId: appStore.ledgerId,
           amountMinor,
@@ -483,6 +571,41 @@ async function submit(): Promise<void> {
           targetAccountId: targetAccountId.value,
           occurredAt: occurredAtValue,
           note: note.value || undefined,
+          attachmentDataUris: attachmentDataUris.value,
+        })
+      } else if (mode.value === 'credit_purchase') {
+        await finance.createCreditPurchase({
+          ledgerId: appStore.ledgerId,
+          amountMinor,
+          liabilityAccountId: sourceAccountId.value,
+          categoryId: selectedCategoryId.value,
+          occurredAt: occurredAtValue,
+          merchant: merchant.value || undefined,
+          note: note.value || undefined,
+          attachmentDataUris: attachmentDataUris.value,
+        })
+      } else if (mode.value === 'repayment') {
+        await finance.createRepayment({
+          ledgerId: appStore.ledgerId,
+          amountMinor,
+          sourceAccountId: sourceAccountId.value,
+          liabilityAccountId: targetAccountId.value,
+          occurredAt: occurredAtValue,
+          merchant: merchant.value || undefined,
+          note: note.value || undefined,
+          attachmentDataUris: attachmentDataUris.value,
+        })
+      } else {
+        await finance.createRefund({
+          ledgerId: appStore.ledgerId,
+          amountMinor,
+          refundAccountId: sourceAccountId.value,
+          categoryId: selectedCategoryId.value,
+          occurredAt: occurredAtValue,
+          merchant: merchant.value || undefined,
+          note: note.value || undefined,
+          originalTransactionId: originalRefundTransactionId.value,
+          attachmentDataUris: attachmentDataUris.value,
         })
       }
     }
@@ -495,29 +618,19 @@ async function submit(): Promise<void> {
 }
 
 async function addNewCategory(): Promise<void> {
-  const name = prompt('输入新分类名称')
-  if (!name || !finance || !appStore.ledgerId) return
-  try {
-    if (mode.value === 'expense') {
-      const id = await finance.createExpenseCategory(appStore.ledgerId, name)
-      expenseCategories.value = await finance.listExpenseCategories(appStore.ledgerId)
-      selectedCategoryId.value = id
-      selectedCategoryName.value = name
-    } else if (mode.value === 'income') {
-      const id = await finance.createIncomeCategory(appStore.ledgerId, name)
-      incomeCategories.value = await finance.listIncomeCategories(appStore.ledgerId)
-      selectedCategoryId.value = id
-      selectedCategoryName.value = name
-    }
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
-  }
+  await router.push({
+    name: 'categories',
+    query: { kind: usesIncomeCategory.value ? 'income' : 'expense' },
+  })
 }
 
 onMounted(async () => {
   await loadOptions()
   const editId = route.query.edit
   const copyId = route.query.copy
+  const refundId = route.query.refund
+  const requestedMode = route.query.mode
+  const requestedAccountId = route.query.accountId
   if (typeof editId === 'string' && editId) {
     editTransactionId.value = editId
     isEditMode.value = true
@@ -527,15 +640,35 @@ onMounted(async () => {
     isCopyMode.value = true
     await loadTransactionForEdit(copyId)
     amountDisplay.value = '0.0'
+    occurredAt.value = new Date().toISOString()
+  } else if (typeof refundId === 'string' && refundId) {
+    originalRefundTransactionId.value = refundId
+    await loadTransactionForEdit(refundId)
+    mode.value = 'refund'
+    amountDisplay.value = '0.0'
+    occurredAt.value = new Date().toISOString()
+    attachmentDataUris.value = []
+    merchant.value = ''
+    note.value = '关联原支出退款'
+  } else if (requestedMode === 'repayment') {
+    mode.value = 'repayment'
+    sourceAccountId.value = debitAccounts.value[0]?.id ?? ''
+    targetAccountId.value =
+      typeof requestedAccountId === 'string'
+        ? requestedAccountId
+        : (creditAccounts.value[0]?.id ?? '')
+  } else if (
+    typeof requestedAccountId === 'string' &&
+    activeAccounts.value.some((item) => item.id === requestedAccountId)
+  ) {
+    sourceAccountId.value = requestedAccountId
   }
 })
 
 watch(
-  () => [debitAccounts.value.length, sourceAccountId.value],
+  () => [activeAccounts.value.length, sourceAccountId.value, targetAccountId.value, mode.value],
   () => {
-    if (!loading.value && sourceAccountId.value === '' && debitAccounts.value.length > 0) {
-      sourceAccountId.value = debitAccounts.value[0]!.id
-    }
+    if (!loading.value && sourceAccountId.value === '') resetAccountsForMode(mode.value)
   },
 )
 </script>
@@ -548,63 +681,63 @@ watch(
       </button>
       <nav class="mode-tabs">
         <button
+          v-for="option in MODE_OPTIONS"
+          :key="option.value"
           type="button"
-          :class="['mode-tab', { active: isExpense }]"
+          :class="['mode-tab', { active: visibleMode(mode) === option.value }]"
           :disabled="isEditMode || isCopyMode"
-          @click="switchMode('expense')"
+          @click="switchMode(option.value)"
         >
-          支出
-        </button>
-        <button
-          type="button"
-          :class="['mode-tab', { active: isIncome }]"
-          :disabled="isEditMode || isCopyMode"
-          @click="switchMode('income')"
-        >
-          收入
-        </button>
-        <button
-          type="button"
-          :class="['mode-tab', { active: isTransfer }]"
-          :disabled="isEditMode || isCopyMode"
-          @click="switchMode('transfer')"
-        >
-          转账
+          {{ option.label }}
         </button>
       </nav>
-      <button class="header-btn" type="button" aria-label="添加分类" @click="addNewCategory">
+      <button
+        class="header-btn"
+        type="button"
+        aria-label="添加分类"
+        :disabled="!hasCategory"
+        @click="addNewCategory"
+      >
         <Plus :size="22" :stroke-width="2" />
       </button>
     </header>
 
     <section class="record-body">
       <!-- 分类网格 -->
-      <div v-if="isExpense || isIncome" class="category-grid">
+      <div v-if="hasCategory" class="category-grid">
         <div
-          v-for="(cat, idx) in isExpense ? expenseCategories : incomeCategories"
+          v-for="cat in activeRootCategories"
           :key="cat.id"
-          :class="['category-item', { active: selectedCategoryId === cat.id }]"
+          :class="['category-item', { active: selectedRootId === cat.id }]"
           @click="selectCategory(cat)"
         >
-          <div class="category-item__icon">
-            <component
-              :is="(isExpense ? expenseGridIcons : incomeGridIcons)[idx]"
-              :size="24"
-              :stroke-width="1.75"
-            />
-          </div>
+          <CategoryIcon :icon-key="cat.iconKey" :color="cat.color" :size="48" :label="cat.name" />
           <span class="category-item__label">{{ cat.name }}</span>
         </div>
       </div>
+      <div v-if="hasCategory && activeChildCategories.length" class="category-children">
+        <span>二级分类</span>
+        <div>
+          <button
+            v-for="child in activeChildCategories"
+            :key="child.id"
+            type="button"
+            :class="{ active: selectedCategoryId === child.id }"
+            @click="selectCategory(child)"
+          >
+            {{ child.name }}
+          </button>
+        </div>
+      </div>
 
-      <!-- 转账模式账户选择 -->
-      <div v-else class="transfer-panel">
+      <!-- 转账/还款模式账户选择 -->
+      <div v-else-if="isDualAccountMode" class="transfer-panel">
         <button
           class="transfer-row transfer-row--clickable"
           type="button"
           @click="openAccountPicker('source')"
         >
-          <div class="transfer-row__label">转出账户</div>
+          <div class="transfer-row__label">{{ isRepayment ? '还款账户' : '转出账户' }}</div>
           <div class="transfer-row__value">
             <template v-if="selectedSourceAccount">
               <span class="transfer-row__name">{{ selectedSourceAccount.name }}</span>
@@ -612,10 +745,18 @@ watch(
                 {{ formatMinorToCny(selectedSourceAccount.balanceMinor) }}
               </span>
             </template>
-            <span v-else class="transfer-row__placeholder">点击选择转出账户</span>
+            <span v-else class="transfer-row__placeholder">
+              {{ isRepayment ? '点击选择还款账户' : '点击选择转出账户' }}
+            </span>
           </div>
         </button>
-        <button class="swap-btn" type="button" aria-label="交换账户" @click="swapAccounts">
+        <button
+          v-if="isTransfer"
+          class="swap-btn"
+          type="button"
+          aria-label="交换账户"
+          @click="swapAccounts"
+        >
           <ArrowLeftRight :size="28" :stroke-width="1.75" />
         </button>
         <button
@@ -623,7 +764,7 @@ watch(
           type="button"
           @click="openAccountPicker('target')"
         >
-          <div class="transfer-row__label">转入账户</div>
+          <div class="transfer-row__label">{{ isRepayment ? '信用账户' : '转入账户' }}</div>
           <div class="transfer-row__value">
             <template v-if="selectedTargetAccount">
               <span class="transfer-row__name">{{ selectedTargetAccount.name }}</span>
@@ -631,7 +772,9 @@ watch(
                 {{ formatMinorToCny(selectedTargetAccount.balanceMinor) }}
               </span>
             </template>
-            <span v-else class="transfer-row__placeholder">点击选择转入账户</span>
+            <span v-else class="transfer-row__placeholder">
+              {{ isRepayment ? '点击选择信用账户' : '点击选择转入账户' }}
+            </span>
           </div>
         </button>
       </div>
@@ -683,12 +826,11 @@ watch(
             {
               active:
                 (tag.action === 'account' && !!selectedSourceAccount) ||
-                (tag.action === 'discount' && hasDiscount),
+                (tag.action === 'discount' && hasDiscount) ||
+                (tag.action === 'image' && attachmentDataUris.length > 0),
               'quick-tag--discount-edit': tag.action === 'discount' && discountMode,
-              disabled: tag.action === 'disabled',
             },
           ]"
-          :disabled="tag.action === 'disabled'"
           @click="pickQuickTag(tag)"
         >
           <template v-if="tag.action === 'account' && selectedSourceAccount">
@@ -713,6 +855,27 @@ watch(
           <template v-else>{{ tag.label }}</template>
         </button>
       </div>
+
+      <div v-if="attachmentDataUris.length" class="attachment-preview">
+        <div v-for="(dataUri, index) in attachmentDataUris" :key="`${index}-${dataUri.length}`">
+          <img :src="dataUri" :alt="`凭证图片 ${index + 1}`" />
+          <button
+            type="button"
+            :aria-label="`移除图片 ${index + 1}`"
+            @click="attachmentDataUris.splice(index, 1)"
+          >
+            ×
+          </button>
+        </div>
+      </div>
+      <input
+        ref="fileInput"
+        class="visually-hidden"
+        type="file"
+        accept="image/*"
+        multiple
+        @change="handleImageSelect"
+      />
 
       <!-- 数字键盘 -->
       <div class="numpad">
@@ -757,9 +920,9 @@ watch(
     <!-- 账户选择弹窗 -->
     <AccountPicker
       v-model:show="accountPickerShow"
-      :accounts="accounts"
+      :accounts="pickerAccounts"
       :selected-id="accountPickerContext === 'source' ? sourceAccountId : targetAccountId"
-      :title="accountPickerContext === 'source' ? '选择支付账户' : '选择收款账户'"
+      :title="pickerTitle"
       :show-no-selection="false"
       @select="handleAccountSelect"
     />
@@ -802,20 +965,33 @@ watch(
   border-radius: 50%;
 }
 
+.header-btn:disabled {
+  opacity: 0.35;
+}
+
 .mode-tabs {
   display: flex;
-  gap: var(--space-4);
-  justify-content: center;
+  min-width: 0;
+  gap: var(--space-3);
+  justify-content: flex-start;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.mode-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .mode-tab {
   position: relative;
+  flex-shrink: 0;
   padding: var(--space-3) 0;
   color: var(--color-text-tertiary);
-  font-size: 17px;
+  font-size: 15px;
   font-weight: 500;
   background: transparent;
   border: 0;
+  white-space: nowrap;
 }
 
 .mode-tab.active {
@@ -883,6 +1059,11 @@ watch(
   border-color: var(--color-primary-500);
 }
 
+.category-item.active :deep(.category-icon) {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+}
+
 .category-item__label {
   color: var(--color-text-secondary);
   font-size: var(--type-caption-size);
@@ -893,6 +1074,40 @@ watch(
 .category-item.active .category-item__label {
   color: var(--color-primary-600);
   font-weight: 600;
+}
+
+.category-children {
+  display: grid;
+  margin-top: var(--space-4);
+  gap: var(--space-2);
+}
+
+.category-children > span {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.category-children > div {
+  display: flex;
+  overflow-x: auto;
+  gap: var(--space-2);
+  scrollbar-width: none;
+}
+
+.category-children button {
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  flex: none;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-pill);
+}
+
+.category-children button.active {
+  color: var(--color-primary-700);
+  background: var(--color-primary-50);
+  border-color: var(--color-primary-500);
 }
 
 .transfer-panel {
@@ -1063,6 +1278,51 @@ watch(
   color: var(--color-text-tertiary);
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.attachment-preview {
+  display: flex;
+  padding: 0 var(--space-4) var(--space-2);
+  gap: var(--space-2);
+  overflow-x: auto;
+}
+
+.attachment-preview > div {
+  position: relative;
+  flex: none;
+}
+
+.attachment-preview img {
+  display: block;
+  width: 54px;
+  height: 54px;
+  object-fit: cover;
+  border-radius: var(--radius-control);
+}
+
+.attachment-preview button {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  place-items: center;
+  color: white;
+  background: var(--color-danger);
+  border: 0;
+  border-radius: 50%;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
 .note-row--discount {

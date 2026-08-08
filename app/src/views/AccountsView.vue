@@ -17,6 +17,7 @@ import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import { isLiabilityAccountType } from '@/domain/accounts'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import { parseCnyInputToMinor } from '@/domain/money'
 import {
@@ -44,16 +45,34 @@ const formError = ref('')
 const saving = ref(false)
 const amountsVisible = ref(true)
 const showCatalog = ref(false)
+const showQuickActions = ref(false)
+const showGroupManagement = ref(false)
+const showArchivedAccounts = ref(false)
+const hiddenSectionIds = ref<AssetSectionId[]>([])
 const showBanks = ref(false)
 const showForm = ref(false)
 const expandedSectionId = ref<AssetSectionId | null>(null)
 const bankQuery = ref('')
 const pendingItem = ref<AccountCatalogItem>()
 const selectedBank = ref<BankCatalogItem>()
-const form = ref({ name: '', institution: '', initialBalance: '' })
+const form = ref({
+  name: '',
+  institution: '',
+  initialBalance: '',
+  creditLimit: '',
+  billDay: '20',
+  repaymentDay: '10',
+  reminderDays: '3',
+  includeInAssetStats: true,
+  visibleInEntry: true,
+})
 
-const overview = computed(() => summarizeAssets(accounts.value))
-const visibleSections = computed(() => overview.value.sections)
+const overview = computed(() =>
+  summarizeAssets(accounts.value.filter((account) => !account.archivedAt)),
+)
+const visibleSections = computed(() =>
+  overview.value.sections.filter((section) => !hiddenSectionIds.value.includes(section.id)),
+)
 const filteredBanks = computed(() => {
   const query = bankQuery.value.trim().toLowerCase()
   if (!query) return BANK_CATALOG
@@ -63,7 +82,10 @@ const filteredBanks = computed(() => {
 })
 const sectionAccounts = computed(() => {
   const types = expandedSection.value?.accountTypes ?? []
-  return accounts.value.filter((account) => types.includes(account.type))
+  return accounts.value.filter(
+    (account) =>
+      types.includes(account.type) && (showArchivedAccounts.value || !account.archivedAt),
+  )
 })
 const expandedSection = computed(() =>
   expandedSectionId.value
@@ -71,6 +93,9 @@ const expandedSection = computed(() =>
     : undefined,
 )
 const liabilityRatioLabel = computed(() => `${(overview.value.liabilityRatio * 100).toFixed(2)}%`)
+const pendingIsLiability = computed(() =>
+  pendingItem.value ? isLiabilityAccountType(pendingItem.value.type) : false,
+)
 
 async function loadAccounts(): Promise<void> {
   if (!finance || !appStore.ledgerId) {
@@ -111,7 +136,17 @@ function chooseBank(bank: BankCatalogItem): void {
 }
 
 function beginAccountForm(name: string, institution: string): void {
-  form.value = { name, institution, initialBalance: '' }
+  form.value = {
+    name,
+    institution,
+    initialBalance: '',
+    creditLimit: '',
+    billDay: '20',
+    repaymentDay: '10',
+    reminderDays: '3',
+    includeInAssetStats: true,
+    visibleInEntry: true,
+  }
   formError.value = ''
   showForm.value = true
 }
@@ -127,9 +162,21 @@ async function submitAccount(): Promise<void> {
       name: form.value.name,
       type: item.type,
       institution: form.value.institution,
+      brandKey: selectedBank.value?.id ?? item.id,
+      iconKey: selectedBank.value?.symbol ?? item.symbol,
+      color: selectedBank.value?.color ?? item.color,
+      includeInAssetStats: form.value.includeInAssetStats,
+      visibleInEntry: form.value.visibleInEntry,
       initialBalanceMinor: form.value.initialBalance.trim()
         ? parseCnyInputToMinor(form.value.initialBalance)
         : 0,
+      creditLimitMinor:
+        pendingIsLiability.value && form.value.creditLimit.trim()
+          ? parseCnyInputToMinor(form.value.creditLimit)
+          : undefined,
+      billDay: pendingIsLiability.value ? Number(form.value.billDay) : undefined,
+      repaymentDay: pendingIsLiability.value ? Number(form.value.repaymentDay) : undefined,
+      reminderDays: pendingIsLiability.value ? Number(form.value.reminderDays) : undefined,
       occurredAt: new Date().toISOString(),
     })
     showForm.value = false
@@ -156,14 +203,55 @@ function iconForAccount(account: AccountBalanceRecord): AccountCatalogItem {
   return findAccountCatalogItem(account.name, account.institution)
 }
 
-onMounted(loadAccounts)
+function openCatalog(): void {
+  showQuickActions.value = false
+  showCatalog.value = true
+}
+
+function toggleArchivedAccounts(): void {
+  showArchivedAccounts.value = !showArchivedAccounts.value
+  showQuickActions.value = false
+}
+
+function openGroupManagement(): void {
+  showQuickActions.value = false
+  showGroupManagement.value = true
+}
+
+function toggleSectionVisibility(sectionId: AssetSectionId): void {
+  hiddenSectionIds.value = hiddenSectionIds.value.includes(sectionId)
+    ? hiddenSectionIds.value.filter((id) => id !== sectionId)
+    : [...hiddenSectionIds.value, sectionId]
+  if (appStore.ledgerId) {
+    localStorage.setItem(
+      `finance-manager:asset-sections:${appStore.ledgerId}`,
+      JSON.stringify(hiddenSectionIds.value),
+    )
+  }
+}
+
+onMounted(() => {
+  if (appStore.ledgerId) {
+    const stored = localStorage.getItem(`finance-manager:asset-sections:${appStore.ledgerId}`)
+    try {
+      hiddenSectionIds.value = stored ? (JSON.parse(stored) as AssetSectionId[]) : []
+    } catch {
+      hiddenSectionIds.value = []
+    }
+  }
+  void loadAccounts()
+})
 </script>
 
 <template>
   <main class="assets-page">
     <section class="assets-hero">
       <div class="assets-hero__safe-top">
-        <AppIconButton class="assets-hero__more" label="资产设置">
+        <AppIconButton
+          class="assets-hero__more"
+          label="资产设置"
+          @click="router.push({ name: 'settings' })"
+        >
           <MoreHorizontal :size="24" :stroke-width="1.75" aria-hidden="true" />
         </AppIconButton>
       </div>
@@ -209,19 +297,25 @@ onMounted(loadAccounts)
       </div>
       <template v-else>
         <BaseCard class="trend-card">
-          <header>
-            <strong>资产趋势</strong>
-            <MoreHorizontal :size="20" :stroke-width="1.75" aria-hidden="true" />
-          </header>
-          <div class="trend-card__track">
-            <span :style="{ width: `${Math.min(100, overview.liabilityRatio * 100)}%` }" />
-          </div>
-          <div class="trend-card__footer">
-            <span>{{ overview.assetCount }} 项资产｜{{ overview.liabilityCount }} 项负债</span>
-            <span
-              >负债率 <strong>{{ liabilityRatioLabel }}</strong></span
-            >
-          </div>
+          <button
+            class="trend-card__button"
+            type="button"
+            @click="router.push({ name: 'asset-statistics' })"
+          >
+            <header>
+              <strong>资产趋势</strong>
+              <ChevronRight :size="20" :stroke-width="1.75" aria-hidden="true" />
+            </header>
+            <div class="trend-card__track">
+              <span :style="{ width: `${Math.min(100, overview.liabilityRatio * 100)}%` }" />
+            </div>
+            <div class="trend-card__footer">
+              <span>{{ overview.assetCount }} 项资产｜{{ overview.liabilityCount }} 项负债</span>
+              <span
+                >负债率 <strong>{{ liabilityRatioLabel }}</strong></span
+              >
+            </div>
+          </button>
         </BaseCard>
 
         <BaseCard class="borrow-card">
@@ -291,8 +385,8 @@ onMounted(loadAccounts)
             >
               <AccountBrandIcon
                 :label="account.name"
-                :symbol="iconForAccount(account).symbol"
-                :color="iconForAccount(account).color"
+                :symbol="account.iconKey ?? iconForAccount(account).symbol"
+                :color="account.color ?? iconForAccount(account).color"
               />
               <span
                 ><strong>{{ account.name }}</strong
@@ -306,14 +400,49 @@ onMounted(loadAccounts)
       </template>
     </div>
 
+    <div v-if="showQuickActions" class="asset-quick-actions">
+      <button type="button" @click="openCatalog"><span>添加账户</span><Plus :size="20" /></button>
+      <button type="button" @click="openGroupManagement">
+        <span>账户分组管理</span><MoreHorizontal :size="20" />
+      </button>
+      <button type="button" @click="toggleArchivedAccounts">
+        <span>{{ showArchivedAccounts ? '隐藏已归档账户' : '显示已归档账户' }}</span>
+        <EyeOff v-if="showArchivedAccounts" :size="20" />
+        <Eye v-else :size="20" />
+      </button>
+    </div>
+
     <button
       class="asset-add-button"
       type="button"
-      aria-label="添加资产"
-      @click="showCatalog = true"
+      aria-label="资产快捷操作"
+      :aria-expanded="showQuickActions"
+      @click="showQuickActions = !showQuickActions"
     >
-      <Plus :size="28" :stroke-width="2" aria-hidden="true" />
+      <Plus
+        :size="28"
+        :stroke-width="2"
+        aria-hidden="true"
+        :class="{ 'asset-add-button__icon--open': showQuickActions }"
+      />
     </button>
+
+    <AppBottomSheet v-model:show="showGroupManagement" title="账户分组管理">
+      <div class="group-management">
+        <p>关闭后该分组只从资产首页隐藏，不影响账户、流水和统计数据。</p>
+        <label v-for="section in overview.sections" :key="section.id">
+          <span
+            ><strong>{{ section.label }}</strong
+            ><small>{{ section.count }} 个账户</small></span
+          >
+          <input
+            type="checkbox"
+            :checked="!hiddenSectionIds.includes(section.id)"
+            @change="toggleSectionVisibility(section.id)"
+          />
+        </label>
+      </div>
+    </AppBottomSheet>
 
     <AppBottomSheet v-model:show="showCatalog" title="选择账户分类">
       <div class="catalog-picker">
@@ -381,7 +510,7 @@ onMounted(loadAccounts)
           <input v-model="form.institution" maxlength="30" placeholder="例如：招商银行" />
         </label>
         <label>
-          <span>当前余额</span>
+          <span>{{ pendingIsLiability ? '当前欠款' : '当前余额' }}</span>
           <input
             v-model="form.initialBalance"
             type="text"
@@ -389,6 +518,40 @@ onMounted(loadAccounts)
             autocomplete="off"
             placeholder="0.00"
           />
+        </label>
+        <template v-if="pendingIsLiability">
+          <label>
+            <span>总额度</span>
+            <input
+              v-model="form.creditLimit"
+              type="text"
+              inputmode="decimal"
+              autocomplete="off"
+              placeholder="0.00"
+            />
+          </label>
+          <div class="account-form__credit-days">
+            <label>
+              <span>出账日</span>
+              <input v-model="form.billDay" type="number" min="1" max="31" required />
+            </label>
+            <label>
+              <span>还款日</span>
+              <input v-model="form.repaymentDay" type="number" min="1" max="31" required />
+            </label>
+            <label>
+              <span>提前提醒</span>
+              <input v-model="form.reminderDays" type="number" min="0" max="30" required />
+            </label>
+          </div>
+        </template>
+        <label class="account-form__switch">
+          <span><strong>计入资产统计</strong><small>关闭后不参与总资产和资产趋势</small></span>
+          <input v-model="form.includeInAssetStats" type="checkbox" />
+        </label>
+        <label class="account-form__switch">
+          <span><strong>记账时显示</strong><small>关闭后不会出现在账户选择器</small></span>
+          <input v-model="form.visibleInEntry" type="checkbox" />
         </label>
         <div v-if="formError" class="form-error" role="alert">{{ formError }}</div>
         <button class="primary-button" type="submit" :disabled="saving">
@@ -478,6 +641,16 @@ onMounted(loadAccounts)
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.trend-card__button {
+  display: block;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
 }
 
 .trend-card header strong {
@@ -665,6 +838,75 @@ onMounted(loadAccounts)
   box-shadow: 0 8px 24px rgb(23 107 93 / 22%);
 }
 
+.asset-add-button svg {
+  transition: transform var(--motion-fast) var(--ease-standard);
+}
+
+.asset-add-button__icon--open {
+  transform: rotate(45deg);
+}
+
+.asset-quick-actions {
+  position: fixed;
+  z-index: 17;
+  right: var(--space-5);
+  bottom: calc(var(--size-bottom-nav) + 88px + env(safe-area-inset-bottom));
+  display: grid;
+  justify-items: end;
+  gap: var(--space-2);
+}
+
+.asset-quick-actions button {
+  display: flex;
+  min-height: 42px;
+  padding: var(--space-2) var(--space-3);
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-card);
+}
+
+.asset-quick-actions svg {
+  color: var(--color-primary-600);
+}
+
+.group-management {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.group-management > p {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--type-caption-size);
+}
+
+.group-management label {
+  display: flex;
+  min-height: 52px;
+  padding: var(--space-2) 0;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.group-management label span {
+  display: grid;
+  gap: 2px;
+}
+
+.group-management label small {
+  color: var(--color-text-tertiary);
+}
+
+.group-management input {
+  width: 22px;
+  height: 22px;
+}
+
 .page-state {
   display: grid;
   min-height: 120px;
@@ -830,6 +1072,42 @@ onMounted(loadAccounts)
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-control);
   outline: 0;
+}
+
+.account-form__credit-days {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.account-form__credit-days input {
+  padding: 0 var(--space-2);
+  text-align: center;
+}
+
+.account-form label.account-form__switch {
+  display: flex;
+  min-height: 54px;
+  padding: var(--space-2) 0;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid var(--color-divider);
+}
+
+.account-form__switch > span {
+  display: grid;
+  gap: 2px;
+}
+
+.account-form__switch small {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.account-form .account-form__switch input {
+  width: 42px;
+  height: 24px;
+  accent-color: var(--color-primary-600);
 }
 
 .primary-button {

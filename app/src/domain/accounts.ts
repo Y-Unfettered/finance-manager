@@ -24,6 +24,10 @@ export function normalBalanceForAccountType(type: AccountType): NormalBalance {
   return LIABILITY_TYPES.has(type) ? 'credit' : 'debit'
 }
 
+export function isLiabilityAccountType(type: AccountType): boolean {
+  return LIABILITY_TYPES.has(type)
+}
+
 export interface AccountPostingRef {
   id: string
   type: AccountType

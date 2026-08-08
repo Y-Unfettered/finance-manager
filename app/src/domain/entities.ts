@@ -2,6 +2,7 @@ import type { AccountType, NormalBalance } from './accounts'
 import type { CategoryKind, CurrencyCode, EntrySide, TransactionType } from './accounting'
 
 export type BudgetPeriodType = 'monthly'
+export type BudgetMode = 'total_and_categories' | 'total_only' | 'categories_only'
 
 export interface BudgetRecord {
   id: string
@@ -9,6 +10,9 @@ export interface BudgetRecord {
   periodType: BudgetPeriodType
   periodKey: string
   totalLimitMinor: number
+  mode: BudgetMode
+  autoCopy: boolean
+  sourcePeriodKey?: string
   note?: string
   createdAt: string
   updatedAt: string
@@ -31,11 +35,15 @@ export interface BudgetWithProgress extends BudgetRecord {
   spentMinor: number
   remainingMinor: number
   overspent: boolean
+  categoryBudgetTotalMinor: number
+  unallocatedBudgetMinor: number
+  unallocatedSpentMinor: number
   categoryBudgets: readonly CategoryBudgetProgress[]
 }
 
 export interface CategoryBudgetProgress extends CategoryBudgetWithCategory {
   spentMinor: number
+  transactionCount: number
   remainingMinor: number
   overspent: boolean
 }
@@ -145,6 +153,37 @@ export interface AccountRecord {
 
 export interface AccountBalanceRecord extends AccountRecord {
   balanceMinor: number
+  brandKey?: string
+  iconKey?: string
+  color?: string
+  includeInAssetStats?: boolean
+  visibleInEntry?: boolean
+}
+
+export interface AccountPreferenceRecord {
+  accountId: string
+  brandKey?: string
+  iconKey?: string
+  color?: string
+  includeInAssetStats: boolean
+  visibleInEntry: boolean
+  updatedAt: string
+}
+
+export interface CreditProfileRecord {
+  accountId: string
+  creditLimitMinor: number
+  billDay?: number
+  repaymentDay?: number
+  reminderDays: number
+  effectiveFrom: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface AccountDetailRecord extends AccountBalanceRecord {
+  preference: AccountPreferenceRecord
+  creditProfile?: CreditProfileRecord
 }
 
 export interface CategoryRecord {
@@ -157,6 +196,11 @@ export interface CategoryRecord {
   archivedAt?: string
   createdAt: string
   updatedAt: string
+}
+
+export interface CategoryDetailRecord extends CategoryRecord {
+  iconKey?: string
+  color?: string
 }
 
 export interface StoredTransaction {
