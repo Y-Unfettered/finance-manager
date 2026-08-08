@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
+import { Plus } from '@lucide/vue'
 import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
-import { RouterView, useRoute } from 'vue-router'
+import { RouterLink, RouterView, useRoute } from 'vue-router'
 
-import AppBottomNav from '@/components/AppBottomNav.vue'
 import PinUnlockView from '@/views/PinUnlockView.vue'
 import { appLockServiceKey } from '@/features/app-lock/app-lock-service'
 import { useAppLockStore } from '@/features/app-lock/app-lock-store'
 import { useAppStore } from '@/stores/app'
 
-const route = useRoute()
 const appStore = useAppStore()
+const route = useRoute()
 const lockStore = useAppLockStore()
 const appLockService = inject(appLockServiceKey)
 
@@ -61,7 +61,14 @@ onUnmounted(() => {
         <component :is="Component" />
       </Transition>
     </RouterView>
-    <AppBottomNav v-if="route.meta.bottomNav" />
+    <RouterLink
+      v-if="route.name === 'home'"
+      class="home-create-fab"
+      :to="{ name: 'new-expense' }"
+      aria-label="记一笔"
+    >
+      <Plus :size="30" :stroke-width="2" aria-hidden="true" />
+    </RouterLink>
   </template>
 
   <!-- 隐私遮挡：切到后台时覆盖内容，防止任务列表预览泄露账目 -->
@@ -112,5 +119,29 @@ onUnmounted(() => {
   font-size: var(--type-title-size);
   font-weight: 600;
   color: var(--color-text-tertiary);
+}
+
+.home-create-fab {
+  position: fixed;
+  z-index: 20;
+  bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
+  left: 50%;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  color: white;
+  background: var(--color-primary-600);
+  border-radius: var(--radius-pill);
+  box-shadow: 0 10px 28px rgb(23 107 93 / 28%);
+  transform: translateX(-50%);
+  transition:
+    box-shadow var(--motion-fast) var(--ease-standard),
+    transform var(--motion-instant) var(--ease-standard);
+}
+
+.home-create-fab:active {
+  box-shadow: 0 6px 18px rgb(23 107 93 / 22%);
+  transform: translateX(-50%) scale(0.96);
 }
 </style>

@@ -566,7 +566,7 @@ onMounted(() => {
 <style scoped>
 .assets-page {
   min-height: 100dvh;
-  padding-bottom: calc(var(--size-bottom-nav) + var(--space-8) + env(safe-area-inset-bottom));
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
   background: var(--color-background);
 }
 
@@ -825,7 +825,7 @@ onMounted(() => {
   position: fixed;
   z-index: 18;
   right: var(--space-5);
-  bottom: calc(var(--size-bottom-nav) + var(--space-5) + env(safe-area-inset-bottom));
+  bottom: calc(var(--space-5) + env(safe-area-inset-bottom));
   display: grid;
   width: 56px;
   height: 56px;
@@ -850,7 +850,7 @@ onMounted(() => {
   position: fixed;
   z-index: 17;
   right: var(--space-5);
-  bottom: calc(var(--size-bottom-nav) + 88px + env(safe-area-inset-bottom));
+  bottom: calc(88px + env(safe-area-inset-bottom));
   display: grid;
   justify-items: end;
   gap: var(--space-2);

@@ -30,13 +30,11 @@ const router = createRouter({
       path: '/',
       name: 'home',
       component: OverviewSwipeView,
-      meta: { bottomNav: true },
     },
     {
       path: '/accounts',
       name: 'accounts',
       component: OverviewSwipeView,
-      meta: { bottomNav: true },
     },
     {
       path: '/transactions/new',

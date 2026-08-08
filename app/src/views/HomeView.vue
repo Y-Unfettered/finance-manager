@@ -388,7 +388,7 @@ onMounted(loadHome)
 <style scoped>
 .home-page {
   min-height: 100dvh;
-  padding-bottom: calc(var(--size-bottom-nav) + var(--space-6) + env(safe-area-inset-bottom));
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
   background: var(--color-background);
 }
 
