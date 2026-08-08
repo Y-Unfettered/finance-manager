@@ -5,7 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Menu,
-  Plus,
+  MoreHorizontal,
   WalletCards,
 } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
@@ -68,9 +68,7 @@ const showSummarySettings = ref(false)
 const activeTxId = ref<string>()
 
 const monthTitle = computed(
-  () =>
-    snapshot.value?.monthLabel ??
-    `${currentMonth.value.getFullYear()}年${currentMonth.value.getMonth() + 1}月`,
+  () => `${currentMonth.value.getFullYear()}-${pad(currentMonth.value.getMonth() + 1)}`,
 )
 const monthLabelShort = computed(
   () => `${currentMonth.value.getFullYear()}.${pad(currentMonth.value.getMonth() + 1)}`,
@@ -150,6 +148,8 @@ async function loadHome(): Promise<void> {
 function openDrawer(): void {
   showDrawer.value = true
 }
+
+defineExpose({ openDrawer })
 
 function shiftMonth(delta: number): void {
   const date = new Date(currentMonth.value)
@@ -271,7 +271,7 @@ onMounted(loadHome)
         <div class="budget-card__header">
           <strong>预算 · {{ monthLabelShort }}</strong>
           <AppIconButton label="预算管理">
-            <Plus :size="20" :stroke-width="1.75" aria-hidden="true" />
+            <MoreHorizontal :size="22" :stroke-width="1.75" aria-hidden="true" />
           </AppIconButton>
         </div>
         <div class="budget-card__track">

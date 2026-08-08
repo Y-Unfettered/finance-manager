@@ -58,7 +58,7 @@ defineEmits<{
 <style scoped>
 .app-top-bar {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 56px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   width: 100%;
   height: var(--size-app-bar);
@@ -72,11 +72,14 @@ defineEmits<{
 }
 
 .app-top-bar__slot {
-  display: grid;
-  place-items: center;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-self: start;
 }
 
 .app-top-bar__slot--right {
+  flex-wrap: nowrap;
   justify-self: end;
 }
 
