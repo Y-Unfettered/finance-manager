@@ -20,7 +20,8 @@
 ### 验证
 
 - TypeScript、ESLint、Web 生产构建和 22 个测试文件共 182 个测试用例全部通过。
-- 按用户要求，本轮暂不执行 Android 构建；需在下一步完成 Capacitor 同步、Debug 构建和真机验收。
+- Capacitor 同步和 Android Debug 构建通过；APK 已安装至设备 `2509FPN0BC`，系统确认 `versionCode 30 / versionName 0.3.0`，启动及旧数据展示正常。
+- Debug APK SHA256：`3849C448EB6401669CE78D46AB3EDF4C8456B4DE37519A9D1E0A7893F1AB1FFB`；完整交互仍需用户继续体验。
 
 完整记录：[版本记录/v0.3.0.md](版本记录/v0.3.0.md)
 
