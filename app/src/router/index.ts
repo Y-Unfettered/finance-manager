@@ -22,6 +22,7 @@ import ReceivablesView from '@/views/ReceivablesView.vue'
 import RemindersView from '@/views/RemindersView.vue'
 import TemplatesView from '@/views/TemplatesView.vue'
 import TransactionSearchView from '@/views/TransactionSearchView.vue'
+import MonthlyReportView from '@/views/MonthlyReportView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -73,6 +74,7 @@ const router = createRouter({
       component: AccountStatisticsView,
     },
     { path: '/assets/statistics', name: 'asset-statistics', component: AssetStatisticsView },
+    { path: '/reports/monthly', name: 'monthly-report', component: MonthlyReportView },
     {
       path: '/import',
       name: 'import',

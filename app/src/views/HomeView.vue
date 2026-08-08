@@ -6,7 +6,10 @@ import {
   ChevronRight,
   Menu,
   MoreHorizontal,
+  Pencil,
+  Trash2,
   WalletCards,
+  X,
 } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -48,7 +51,7 @@ const appStore = useAppStore()
 const finance = useFinanceService()
 const budgetService = useBudgetService()
 const homePreferencesService = useHomePreferencesService()
-const currentMonth = ref(new Date())
+const currentMonth = ref(periodKeyToDate(appStore.selectedHomePeriod))
 const snapshot = ref<HomeSnapshot>()
 const budget = ref<BudgetWithProgress>()
 const recentSummary = ref<RecentSummary>()
@@ -66,6 +69,14 @@ const showPeriod = ref(false)
 const showTxDetail = ref(false)
 const showSummarySettings = ref(false)
 const activeTxId = ref<string>()
+const selectedIds = ref<string[]>([])
+const showBulkDelete = ref(false)
+const showBulkEdit = ref(false)
+const bulkDeleting = ref(false)
+const bulkEditing = ref(false)
+const bulkEditDate = ref('')
+const bulkEditNote = ref('')
+const selectionMode = computed(() => selectedIds.value.length > 0)
 
 const monthTitle = computed(
   () => `${currentMonth.value.getFullYear()}-${pad(currentMonth.value.getMonth() + 1)}`,
@@ -155,7 +166,6 @@ function shiftMonth(delta: number): void {
   const date = new Date(currentMonth.value)
   date.setMonth(date.getMonth() + delta)
   currentMonth.value = date
-  void loadHome()
 }
 
 function pickToday(): void {
@@ -165,19 +175,21 @@ function pickToday(): void {
     today.getMonth() !== currentMonth.value.getMonth()
   ) {
     currentMonth.value = today
-    void loadHome()
   }
   showPeriod.value = false
 }
 
 function goBills(): void {
-  void router.push({ name: 'bills' })
+  void router.push({
+    name: 'bills',
+    query: { view: 'calendar', month: appStore.selectedHomePeriod },
+  })
 }
 function goAssets(): void {
   void router.push({ name: 'accounts' })
 }
-function goAssetStatistics(): void {
-  void router.push({ name: 'asset-statistics' })
+function goMonthlyReport(): void {
+  void router.push({ name: 'monthly-report', query: { month: appStore.selectedHomePeriod } })
 }
 
 async function saveSummaryPreferences(): Promise<void> {
@@ -196,6 +208,79 @@ function openTransaction(tx: LedgerListItem): void {
   showTxDetail.value = true
 }
 
+function startSelection(tx: LedgerListItem): void {
+  selectedIds.value = [tx.id]
+  appStore.homeFabVisible = false
+}
+
+function toggleSelection(tx: LedgerListItem): void {
+  selectedIds.value = selectedIds.value.includes(tx.id)
+    ? selectedIds.value.filter((id) => id !== tx.id)
+    : [...selectedIds.value, tx.id]
+  if (!selectedIds.value.length) appStore.homeFabVisible = true
+}
+
+function cancelSelection(): void {
+  selectedIds.value = []
+  showBulkDelete.value = false
+  showBulkEdit.value = false
+  bulkEditDate.value = ''
+  bulkEditNote.value = ''
+  appStore.homeFabVisible = true
+}
+
+function editSelection(): void {
+  const id = selectedIds.value[0]
+  if (!id) return
+  if (selectedIds.value.length === 1) {
+    cancelSelection()
+    void router.push({ name: 'new-expense', query: { edit: id } })
+    return
+  }
+  showBulkEdit.value = true
+}
+
+async function applyBulkEdit(): Promise<void> {
+  if (
+    !finance ||
+    !appStore.ledgerId ||
+    bulkEditing.value ||
+    (!bulkEditDate.value && !bulkEditNote.value.trim())
+  )
+    return
+  bulkEditing.value = true
+  try {
+    const occurredAt = bulkEditDate.value
+      ? new Date(`${bulkEditDate.value}T12:00:00`).toISOString()
+      : undefined
+    const note = bulkEditNote.value.trim() || undefined
+    for (const transactionId of selectedIds.value) {
+      await finance.editTransaction({
+        ledgerId: appStore.ledgerId,
+        transactionId,
+        occurredAt,
+        note,
+      })
+    }
+    cancelSelection()
+    await loadHome()
+  } finally {
+    bulkEditing.value = false
+  }
+}
+
+async function deleteSelection(): Promise<void> {
+  if (!finance || !appStore.ledgerId || bulkDeleting.value) return
+  bulkDeleting.value = true
+  try {
+    for (const id of selectedIds.value) await finance.voidTransaction(appStore.ledgerId, id)
+    cancelSelection()
+    await loadHome()
+  } finally {
+    bulkDeleting.value = false
+  }
+}
+
 function handleTxUpdated(): void {
   void loadHome()
 }
@@ -208,42 +293,49 @@ function weekday(date: Date): string {
   return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()] ?? ''
 }
 
-watch(currentMonth, () => void loadHome())
+function periodKeyToDate(periodKey: string): Date {
+  const [year, month] = periodKey.split('-').map(Number)
+  return new Date(year!, month! - 1, 1)
+}
+
+watch(currentMonth, (value) => {
+  appStore.selectHomePeriod(currentMonthPeriodKey(value))
+  void loadHome()
+})
 
 onMounted(loadHome)
 </script>
 
 <template>
   <main class="home-page" :class="{ 'home-page--amounts-hidden': homePreferences.amountsHidden }">
+    <div class="home-topbar">
+      <AppTopBar
+        :title="monthTitle"
+        :show-back="false"
+        period-switchable
+        variant="transparent"
+        @select-period="showPeriod = true"
+      >
+        <template #left>
+          <AppIconButton label="菜单" variant="on-dark" @click="openDrawer">
+            <Menu :size="26" :stroke-width="2.4" aria-hidden="true" />
+          </AppIconButton>
+        </template>
+        <template #right>
+          <AppIconButton label="日历视图" variant="on-dark" @click="goBills">
+            <CalendarDays :size="23" :stroke-width="2.3" aria-hidden="true" />
+          </AppIconButton>
+          <AppIconButton label="月报表" variant="on-dark" @click="goMonthlyReport">
+            <ChartNoAxesColumn :size="23" :stroke-width="2.3" aria-hidden="true" />
+          </AppIconButton>
+          <AppIconButton label="资产管理" variant="on-dark" @click="goAssets">
+            <WalletCards :size="23" :stroke-width="2.3" aria-hidden="true" />
+          </AppIconButton>
+        </template>
+      </AppTopBar>
+    </div>
     <section class="home-hero">
       <div class="home-hero__shade" />
-      <div class="home-hero__safe-top">
-        <AppTopBar
-          :title="monthTitle"
-          :show-back="false"
-          period-switchable
-          variant="transparent"
-          @select-period="showPeriod = true"
-        >
-          <template #left>
-            <AppIconButton label="打开菜单" variant="on-dark" @click="openDrawer">
-              <Menu :size="24" :stroke-width="1.75" aria-hidden="true" />
-            </AppIconButton>
-          </template>
-          <template #right>
-            <AppIconButton label="日历账单" variant="on-dark" @click="goBills">
-              <CalendarDays :size="22" :stroke-width="1.75" aria-hidden="true" />
-            </AppIconButton>
-            <AppIconButton label="资产统计" variant="on-dark" @click="goAssetStatistics">
-              <ChartNoAxesColumn :size="22" :stroke-width="1.75" aria-hidden="true" />
-            </AppIconButton>
-            <AppIconButton label="资产" variant="on-dark" @click="goAssets">
-              <WalletCards :size="22" :stroke-width="1.75" aria-hidden="true" />
-            </AppIconButton>
-          </template>
-        </AppTopBar>
-      </div>
-
       <div class="home-hero__summary">
         <div class="home-hero__expense">
           <span>月支出</span>
@@ -315,7 +407,11 @@ onMounted(loadHome)
         :income-minor="group.incomeMinor"
         :expense-minor="group.expenseMinor"
         :items="group.items"
+        :selected-ids="selectedIds"
+        :selection-mode="selectionMode"
         @select="openTransaction"
+        @longpress="startSelection"
+        @toggle="toggleSelection"
       />
     </div>
 
@@ -382,6 +478,54 @@ onMounted(loadHome)
         <button class="primary-button" type="submit">保存</button>
       </form>
     </AppBottomSheet>
+
+    <div v-if="selectionMode" class="bulk-actions" role="toolbar" aria-label="批量操作">
+      <button type="button" @click="cancelSelection">
+        <X :size="20" aria-hidden="true" /><span>取消</span>
+      </button>
+      <strong>已选 {{ selectedIds.length }} 笔</strong>
+      <button type="button" @click="editSelection">
+        <Pencil :size="19" aria-hidden="true" /><span>修改</span>
+      </button>
+      <button type="button" class="bulk-actions__danger" @click="showBulkDelete = true">
+        <Trash2 :size="19" aria-hidden="true" /><span>删除</span>
+      </button>
+    </div>
+
+    <AppBottomSheet v-model:show="showBulkDelete" title="批量删除">
+      <div class="bulk-confirm">
+        <p>确定删除选中的 {{ selectedIds.length }} 笔账目吗？删除后相关余额会同步回退。</p>
+        <div>
+          <button type="button" class="ghost-button" @click="showBulkDelete = false">取消</button>
+          <button
+            type="button"
+            class="danger-button"
+            :disabled="bulkDeleting"
+            @click="deleteSelection"
+          >
+            {{ bulkDeleting ? '删除中…' : '确认删除' }}
+          </button>
+        </div>
+      </div>
+    </AppBottomSheet>
+
+    <AppBottomSheet v-model:show="showBulkEdit" title="批量修改">
+      <form class="bulk-edit" @submit.prevent="applyBulkEdit">
+        <p>只会修改已填写的字段，留空的内容保持原样。</p>
+        <label><span>统一日期</span><input v-model="bulkEditDate" type="date" /></label>
+        <label
+          ><span>统一备注</span
+          ><input v-model="bulkEditNote" type="text" placeholder="留空则不修改"
+        /></label>
+        <button
+          class="primary-button"
+          type="submit"
+          :disabled="bulkEditing || (!bulkEditDate && !bulkEditNote.trim())"
+        >
+          {{ bulkEditing ? '修改中…' : `修改 ${selectedIds.length} 笔` }}
+        </button>
+      </form>
+    </AppBottomSheet>
   </main>
 </template>
 
@@ -390,6 +534,17 @@ onMounted(loadHome)
   min-height: 100dvh;
   padding-bottom: calc(96px + env(safe-area-inset-bottom));
   background: var(--color-background);
+}
+
+.home-topbar {
+  position: sticky;
+  z-index: 30;
+  top: 0;
+  height: calc(var(--size-app-bar) + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  margin-bottom: calc((var(--size-app-bar) + env(safe-area-inset-top)) * -1);
+  background: linear-gradient(180deg, rgb(7 20 18 / 52%), rgb(7 20 18 / 12%));
+  backdrop-filter: blur(4px);
 }
 
 .home-hero {
@@ -411,13 +566,8 @@ onMounted(loadHome)
   );
 }
 
-.home-hero__safe-top,
 .home-hero__summary {
   position: relative;
-}
-
-.home-hero__safe-top {
-  padding-top: env(safe-area-inset-top);
 }
 
 .home-hero__summary {
@@ -645,6 +795,102 @@ onMounted(loadHome)
   min-height: 40px;
   align-items: center;
   gap: var(--space-2);
+}
+.bulk-actions {
+  position: fixed;
+  z-index: 45;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom));
+  left: 12px;
+  display: grid;
+  min-height: 62px;
+  padding: 7px 10px;
+  grid-template-columns: 54px 1fr 54px 54px;
+  align-items: center;
+  gap: 4px;
+  color: var(--color-text-primary);
+  background: rgb(255 255 255 / 96%);
+  border: 1px solid rgb(23 33 30 / 8%);
+  border-radius: 20px;
+  box-shadow: 0 10px 32px rgb(20 32 28 / 18%);
+  backdrop-filter: blur(16px);
+}
+.bulk-actions button {
+  display: grid;
+  min-height: 48px;
+  place-items: center;
+  gap: 1px;
+  color: var(--color-text-secondary);
+  font-size: 10px;
+  background: transparent;
+  border: 0;
+}
+.bulk-actions button:disabled {
+  opacity: 0.35;
+}
+.bulk-actions strong {
+  font-size: 14px;
+  text-align: center;
+}
+.bulk-actions .bulk-actions__danger {
+  color: var(--color-danger);
+}
+.bulk-confirm {
+  display: grid;
+  gap: 20px;
+}
+.bulk-confirm p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  line-height: 1.65;
+}
+.bulk-confirm > div {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.bulk-edit {
+  display: grid;
+  gap: 14px;
+}
+.bulk-edit p {
+  margin: 0 0 2px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+.bulk-edit label {
+  display: grid;
+  gap: 7px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+.bulk-edit input {
+  width: 100%;
+  height: 46px;
+  padding: 0 12px;
+  color: var(--color-text-primary);
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+  border-radius: 12px;
+}
+.bulk-edit .primary-button:disabled {
+  opacity: 0.4;
+}
+.ghost-button,
+.danger-button {
+  height: 46px;
+  font-weight: 600;
+  border-radius: 12px;
+}
+.ghost-button {
+  color: var(--color-text-primary);
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+}
+.danger-button {
+  color: white;
+  background: var(--color-danger);
+  border: 0;
 }
 .home-page--amounts-hidden :deep(.money-text),
 .home-page--amounts-hidden :deep(.recent-summary-card__amount) {

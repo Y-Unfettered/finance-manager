@@ -3,7 +3,6 @@ import { MoreHorizontal } from '@lucide/vue'
 import { computed } from 'vue'
 
 import BaseCard from './BaseCard.vue'
-import MoneyText from './MoneyText.vue'
 import type { RecentSummary } from '@/features/finance/finance-service'
 
 const props = defineProps<{ summary: RecentSummary; displayType: 'expense' | 'income_expense' }>()
@@ -23,15 +22,25 @@ function height(value: number) {
 }
 function dayLabel(date: string) {
   const value = new Date(`${date}T00:00:00`)
-  return ['日', '一', '二', '三', '四', '五', '六'][value.getDay()]
+  if (props.summary.points.length <= 7) {
+    return `周${['日', '一', '二', '三', '四', '五', '六'][value.getDay()]}`
+  }
+  return String(value.getDate())
 }
 </script>
 
 <template>
   <BaseCard class="summary-card"
     ><header>
-      <strong>{{ summary.label }}</strong
-      ><button type="button" aria-label="设置最近汇总" @click="$emit('settings')">
+      <div>
+        <strong>{{ summary.label }}</strong>
+        <small>
+          收入：{{ (summary.incomeMinor / 100).toFixed(2) }}，支出：{{
+            (summary.expenseMinor / 100).toFixed(2)
+          }}
+        </small>
+      </div>
+      <button type="button" aria-label="设置最近汇总" @click="$emit('settings')">
         <MoreHorizontal :size="22" />
       </button>
     </header>
@@ -47,12 +56,7 @@ function dayLabel(date: string) {
         <small>{{ dayLabel(point.date) }}</small>
       </div>
     </div>
-    <footer>
-      <div><span>收入</span><MoneyText :amount-minor="summary.incomeMinor" tone="income" /></div>
-      <div>
-        <span>支出</span><MoneyText :amount-minor="summary.expenseMinor" tone="expense" />
-      </div></footer
-  ></BaseCard>
+  </BaseCard>
 </template>
 
 <style scoped>
@@ -68,6 +72,16 @@ header {
 }
 header strong {
   font-size: var(--type-section-title-size);
+  font-weight: 700;
+}
+header > div {
+  display: grid;
+  gap: 1px;
+}
+header small {
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 header button {
   display: grid;
@@ -84,7 +98,6 @@ header button {
   align-items: flex-end;
   justify-content: space-around;
   gap: 3px;
-  border-bottom: 1px solid var(--color-divider);
 }
 .bar-group {
   display: grid;
@@ -104,7 +117,7 @@ header button {
 }
 .bar {
   display: block;
-  width: 5px;
+  width: 7px;
   min-height: 0;
   border-radius: 4px 4px 0 0;
 }
@@ -116,24 +129,6 @@ header button {
 }
 .bar-group small {
   color: var(--color-text-tertiary);
-  font-size: 9px;
-}
-footer {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
-}
-footer div {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-footer span {
-  color: var(--color-text-tertiary);
-  font-size: var(--type-caption-size);
-}
-footer :deep(.money-text) {
-  font-weight: 600;
+  font-size: 10px;
 }
 </style>

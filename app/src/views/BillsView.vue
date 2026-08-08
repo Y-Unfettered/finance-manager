@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { CalendarDays, List, SlidersHorizontal } from '@lucide/vue'
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import AppTopBar from '@/components/AppTopBar.vue'
+import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import DailyLedgerCard from '@/components/DailyLedgerCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
@@ -27,10 +28,14 @@ type BillTypeFilter =
 type CalendarMetric = 'flow' | 'balance' | 'income' | 'expense'
 
 const router = useRouter()
+const route = useRoute()
 const appStore = useAppStore()
 const finance = useFinanceService()
 const search = useSearchService()
-const month = ref(toMonthValue(new Date()))
+const queryMonth = typeof route.query.month === 'string' ? route.query.month : ''
+const month = ref(
+  /^\d{4}-(0[1-9]|1[0-2])$/.test(queryMonth) ? queryMonth : appStore.selectedHomePeriod,
+)
 const items = ref<readonly LedgerListItem[]>([])
 const accounts = ref<readonly AccountBalanceRecord[]>([])
 const expenseCategories = ref<readonly ExpenseCategoryOption[]>([])
@@ -39,11 +44,12 @@ const loading = ref(true)
 const typeFilter = ref<BillTypeFilter>('all')
 const accountId = ref('')
 const categoryId = ref('')
-const view = ref<'list' | 'calendar'>('list')
+const view = ref<'list' | 'calendar'>(route.query.view === 'calendar' ? 'calendar' : 'list')
 const calendarMetric = ref<CalendarMetric>('flow')
 const selectedDate = ref('')
 const activeTransactionId = ref<string>()
 const showDetail = ref(false)
+const showPeriod = ref(false)
 
 const categoryOptions = computed(() => [
   ...expenseCategories.value.map((item) => ({ ...item, group: '支出分类' })),
@@ -177,11 +183,10 @@ function open(item: LedgerListItem): void {
   showDetail.value = true
 }
 
-function toMonthValue(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-}
-
-watch([month, typeFilter, accountId, categoryId], load)
+watch([month, typeFilter, accountId, categoryId], () => {
+  appStore.selectHomePeriod(month.value)
+  void load()
+})
 onMounted(async () => {
   await loadOptions()
   await load()
@@ -191,7 +196,12 @@ onMounted(async () => {
 <template>
   <main class="bills-page">
     <div class="safe-top">
-      <AppTopBar title="账单" @back="router.back()">
+      <AppTopBar
+        :title="view === 'calendar' ? month.replace('-', '.') : '账单'"
+        :period-switchable="view === 'calendar'"
+        @back="router.back()"
+        @select-period="showPeriod = true"
+      >
         <template #right>
           <button
             class="view-button"
@@ -206,7 +216,7 @@ onMounted(async () => {
       </AppTopBar>
     </div>
     <div class="content">
-      <BaseCard class="filters">
+      <BaseCard v-if="view === 'list'" class="filters">
         <label><span>月份</span><input v-model="month" type="month" /></label>
         <label>
           <SlidersHorizontal :size="17" />
@@ -254,7 +264,7 @@ onMounted(async () => {
           </select>
         </label>
       </BaseCard>
-      <BaseCard class="summary">
+      <BaseCard v-if="view === 'list'" class="summary">
         <div><span>收入</span><MoneyText :amount-minor="summary.income" tone="income" /></div>
         <div><span>支出</span><MoneyText :amount-minor="summary.expense" tone="expense" /></div>
         <div><span>结余</span><MoneyText :amount-minor="summary.income - summary.expense" /></div>
@@ -273,22 +283,6 @@ onMounted(async () => {
         <div v-if="!groups.length" class="state">当前筛选范围还没有账单</div>
       </template>
       <template v-else>
-        <div class="calendar-metrics" role="tablist" aria-label="日历显示方式">
-          <button
-            v-for="option in [
-              ['flow', '收支'],
-              ['balance', '结余'],
-              ['income', '收入'],
-              ['expense', '支出'],
-            ] as const"
-            :key="option[0]"
-            type="button"
-            :class="{ active: calendarMetric === option[0] }"
-            @click="calendarMetric = option[0]"
-          >
-            {{ option[1] }}
-          </button>
-        </div>
         <BaseCard class="calendar">
           <div
             v-for="weekday in ['一', '二', '三', '四', '五', '六', '日']"
@@ -334,6 +328,27 @@ onMounted(async () => {
               >
             </template>
           </button>
+          <div class="calendar-metrics" role="tablist" aria-label="日历显示方式">
+            <button
+              v-for="option in [
+                ['flow', '收支'],
+                ['balance', '结余'],
+                ['income', '收入'],
+                ['expense', '支出'],
+              ] as const"
+              :key="option[0]"
+              type="button"
+              :class="{ active: calendarMetric === option[0] }"
+              @click="calendarMetric = option[0]"
+            >
+              {{ option[1] }}
+            </button>
+          </div>
+          <p class="calendar-total">
+            月收入：{{ (summary.income / 100).toFixed(2) }}，月支出：{{
+              (summary.expense / 100).toFixed(2)
+            }}，月结余：{{ ((summary.income - summary.expense) / 100).toFixed(2) }}
+          </p>
         </BaseCard>
         <DailyLedgerCard
           v-if="selectedGroup"
@@ -352,6 +367,12 @@ onMounted(async () => {
       @update:show="showDetail = $event"
       @updated="load"
     />
+    <AppBottomSheet v-model:show="showPeriod" title="选择日历月份">
+      <label class="calendar-period-input">
+        <span>月份</span>
+        <input v-model="month" type="month" @change="showPeriod = false" />
+      </label>
+    </AppBottomSheet>
   </main>
 </template>
 
@@ -430,9 +451,19 @@ select {
 }
 .calendar-metrics {
   display: flex;
+  grid-column: 1 / -1;
+  width: min(100%, 270px);
+  margin: 12px auto 2px;
   padding: 3px;
   background: var(--color-surface);
   border-radius: var(--radius-pill);
+}
+.calendar-total {
+  grid-column: 1 / -1;
+  margin: 8px 4px 0;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 18px;
 }
 .calendar-metrics button {
   flex: 1;
@@ -490,5 +521,14 @@ select {
 }
 .income {
   color: var(--color-income);
+}
+.calendar-period-input {
+  display: grid;
+  gap: 8px;
+  color: var(--color-text-secondary);
+}
+.calendar-period-input input {
+  height: 48px;
+  font-size: 16px;
 }
 </style>

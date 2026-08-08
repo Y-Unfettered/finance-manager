@@ -190,53 +190,59 @@ function goCategory(categoryId?: string): void {
 
 <template>
   <AppBottomSheet :show="show" title="详情" @update:show="$emit('update:show', $event)">
+    <template v-if="tx" #actions>
+      <button
+        type="button"
+        aria-label="复制"
+        title="复制"
+        :disabled="!canEditOrCopy"
+        @click="handleCopy"
+      >
+        <Copy :size="18" :stroke-width="2" aria-hidden="true" />
+      </button>
+      <button
+        v-if="tx.type === 'expense' || tx.type === 'credit_purchase'"
+        type="button"
+        aria-label="退款并冲减原支出"
+        title="退款：关联原支出并冲减已花金额"
+        @click="handleRefund"
+      >
+        <RotateCcw :size="18" :stroke-width="2" aria-hidden="true" />
+      </button>
+      <button
+        v-if="tx.type === 'refund' && tx.originalTransactionId"
+        type="button"
+        aria-label="查看原交易"
+        title="查看原交易"
+        @click="handleOriginal"
+      >
+        <RotateCcw :size="18" :stroke-width="2" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        aria-label="修改"
+        title="修改"
+        :disabled="tx.status === 'void' || !canEditOrCopy"
+        @click="handleEdit"
+      >
+        <Pencil :size="18" :stroke-width="2" aria-hidden="true" />
+      </button>
+      <button
+        class="detail-header-danger"
+        type="button"
+        aria-label="删除"
+        title="删除"
+        :disabled="tx.status === 'void'"
+        @click="startDelete"
+      >
+        <Trash2 :size="18" :stroke-width="2" aria-hidden="true" />
+      </button>
+    </template>
     <div v-if="loading" class="sheet-state">正在加载…</div>
     <div v-else-if="!tx" class="sheet-state sheet-state--error">
       {{ errorMessage || '交易不存在' }}
     </div>
     <div v-else class="tx-detail">
-      <!-- 表头操作按钮 -->
-      <div class="tx-detail__actions">
-        <button class="action-btn" type="button" :disabled="!canEditOrCopy" @click="handleCopy">
-          <Copy :size="18" :stroke-width="1.75" aria-hidden="true" />
-          <span>复制</span>
-        </button>
-        <button
-          v-if="tx.type === 'expense' || tx.type === 'credit_purchase'"
-          class="action-btn"
-          type="button"
-          @click="handleRefund"
-        >
-          <RotateCcw :size="18" :stroke-width="1.75" aria-hidden="true" /><span>退款</span>
-        </button>
-        <button
-          v-if="tx.type === 'refund' && tx.originalTransactionId"
-          class="action-btn"
-          type="button"
-          @click="handleOriginal"
-        >
-          <RotateCcw :size="18" :stroke-width="1.75" aria-hidden="true" /><span>原交易</span>
-        </button>
-        <button
-          class="action-btn"
-          type="button"
-          :disabled="tx.status === 'void' || !canEditOrCopy"
-          @click="handleEdit"
-        >
-          <Pencil :size="18" :stroke-width="1.75" aria-hidden="true" />
-          <span>修改</span>
-        </button>
-        <button
-          class="action-btn action-btn--danger"
-          type="button"
-          :disabled="tx.status === 'void'"
-          @click="startDelete"
-        >
-          <Trash2 :size="18" :stroke-width="1.75" aria-hidden="true" />
-          <span>删除</span>
-        </button>
-      </div>
-
       <span v-if="tx.status === 'void'" class="void-tag">已撤销</span>
 
       <!-- 第一行：金额 + 日期 -->
@@ -374,33 +380,7 @@ function goCategory(categoryId?: string): void {
   display: grid;
   gap: var(--space-3);
 }
-.tx-detail__actions {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
-  gap: var(--space-2);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--color-divider);
-}
-.action-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) 0;
-  color: var(--color-text-secondary);
-  font-size: var(--type-label-size);
-  background: var(--color-background);
-  border: 0;
-  border-radius: var(--radius-control);
-}
-.action-btn:active {
-  background: var(--color-primary-50);
-}
-.action-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.action-btn--danger {
+.detail-header-danger {
   color: var(--color-danger);
 }
 .void-tag {

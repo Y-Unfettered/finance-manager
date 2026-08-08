@@ -1393,14 +1393,14 @@ export function recentSummaryDateRange(
 ): { startUtc: string; endUtc: string; startLocal: Date; endLocal: Date } {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const startLocal = new Date(today)
-  if (range === 'week') {
+  if (range === 'week' || range === '7d') {
     const mondayOffset = (today.getDay() + 6) % 7
     startLocal.setDate(today.getDate() - mondayOffset)
   } else {
-    startLocal.setDate(today.getDate() - (range === '7d' ? 6 : 14))
+    startLocal.setDate(today.getDate() - 14)
   }
-  const endLocal = new Date(today)
-  endLocal.setDate(today.getDate() + 1)
+  const endLocal = new Date(startLocal)
+  endLocal.setDate(startLocal.getDate() + (range === '15d' ? 15 : 7))
   return {
     startUtc: startLocal.toISOString(),
     endUtc: endLocal.toISOString(),

@@ -64,6 +64,7 @@ onUnmounted(() => {
     <RouterLink
       v-if="route.name === 'home'"
       class="home-create-fab"
+      :class="{ 'home-create-fab--hidden': !appStore.homeFabVisible }"
       :to="{ name: 'new-expense' }"
       aria-label="记一笔"
     >
@@ -83,17 +84,17 @@ onUnmounted(() => {
 .page-enter-active,
 .page-leave-active {
   transition:
-    opacity var(--motion-fast) var(--ease-standard),
-    transform var(--motion-fast) var(--ease-standard);
+    opacity var(--motion-base) var(--ease-standard),
+    clip-path var(--motion-slow) var(--ease-emphasized);
 }
 
 .page-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
+  opacity: 0.72;
+  clip-path: inset(0 0 0 100%);
 }
 
 .page-leave-to {
-  opacity: 0;
+  opacity: 0.94;
 }
 
 .fade-enter-active,
@@ -137,11 +138,18 @@ onUnmounted(() => {
   transform: translateX(-50%);
   transition:
     box-shadow var(--motion-fast) var(--ease-standard),
+    opacity var(--motion-base) var(--ease-emphasized),
     transform var(--motion-instant) var(--ease-standard);
 }
 
 .home-create-fab:active {
   box-shadow: 0 6px 18px rgb(23 107 93 / 22%);
   transform: translateX(-50%) scale(0.96);
+}
+
+.home-create-fab--hidden {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%) scale(0.55);
 }
 </style>

@@ -2,19 +2,25 @@
 import { Swipe, SwipeItem, type SwipeInstance } from 'vant'
 import 'vant/es/swipe/style'
 import 'vant/es/swipe-item/style'
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AccountsView from './AccountsView.vue'
 import HomeView from './HomeView.vue'
+import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
 const router = useRouter()
+const appStore = useAppStore()
 const swipe = ref<SwipeInstance>()
 const homeView = ref<InstanceType<typeof HomeView>>()
 const initialIndex = route.name === 'accounts' ? 1 : 0
 const activeIndex = ref(initialIndex)
 let edgeTouchStart: { x: number; y: number } | undefined
+
+onMounted(() => {
+  if (route.name === 'home') appStore.homeFabVisible = true
+})
 
 watch(
   () => route.name,
@@ -56,6 +62,10 @@ function handleTouchEnd(event: TouchEvent): void {
     homeView.value?.openDrawer()
   }
 }
+
+function handleHomeScroll(event: Event): void {
+  appStore.homeFabVisible = (event.currentTarget as HTMLElement).scrollTop < 44
+}
 </script>
 
 <template>
@@ -72,7 +82,9 @@ function handleTouchEnd(event: TouchEvent): void {
     @change="handleSwipeChange"
   >
     <SwipeItem>
-      <div class="overview-slide"><HomeView ref="homeView" /></div>
+      <div class="overview-slide" @scroll.passive="handleHomeScroll">
+        <HomeView ref="homeView" />
+      </div>
     </SwipeItem>
     <SwipeItem>
       <div class="overview-slide"><AccountsView /></div>

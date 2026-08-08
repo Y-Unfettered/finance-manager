@@ -1,18 +1,55 @@
 <script setup lang="ts">
+import { Check } from '@lucide/vue'
+import { onBeforeUnmount, ref } from 'vue'
+
 import BaseCard from './BaseCard.vue'
 import MoneyText from './MoneyText.vue'
 import type { LedgerListItem } from '@/db/repositories/dashboard-repository'
 
-defineProps<{
-  label: string
-  incomeMinor: number
-  expenseMinor: number
-  items: readonly LedgerListItem[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    label: string
+    incomeMinor: number
+    expenseMinor: number
+    items: readonly LedgerListItem[]
+    selectedIds?: readonly string[]
+    selectionMode?: boolean
+  }>(),
+  { selectedIds: () => [], selectionMode: false },
+)
 
 const emit = defineEmits<{
   select: [item: LedgerListItem]
+  longpress: [item: LedgerListItem]
+  toggle: [item: LedgerListItem]
 }>()
+
+let pressTimer: ReturnType<typeof setTimeout> | undefined
+const longPressedId = ref<string>()
+
+function startPress(item: LedgerListItem): void {
+  cancelPress()
+  pressTimer = setTimeout(() => {
+    longPressedId.value = item.id
+    emit('longpress', item)
+  }, 460)
+}
+
+function cancelPress(): void {
+  if (pressTimer) clearTimeout(pressTimer)
+  pressTimer = undefined
+}
+
+function activate(item: LedgerListItem): void {
+  if (longPressedId.value === item.id) {
+    longPressedId.value = undefined
+    return
+  }
+  if (props.selectionMode) emit('toggle', item)
+  else emit('select', item)
+}
+
+onBeforeUnmount(cancelPress)
 
 function displayAmount(item: LedgerListItem): number {
   if (item.type === 'expense' || item.type === 'credit_purchase') {
@@ -44,9 +81,23 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
         :key="item.id"
         type="button"
         class="transaction-row"
-        @click="emit('select', item)"
+        :class="{ 'transaction-row--selected': selectedIds.includes(item.id) }"
+        @pointerdown="startPress(item)"
+        @pointerup="cancelPress"
+        @pointerleave="cancelPress"
+        @pointercancel="cancelPress"
+        @contextmenu.prevent
+        @click="activate(item)"
       >
-        <span class="transaction-row__dot" :data-type="item.type" aria-hidden="true" />
+        <span
+          v-if="selectionMode"
+          class="transaction-row__check"
+          :class="{ 'transaction-row__check--active': selectedIds.includes(item.id) }"
+          aria-hidden="true"
+        >
+          <Check v-if="selectedIds.includes(item.id)" :size="13" :stroke-width="3" />
+        </span>
+        <span v-else class="transaction-row__dot" :data-type="item.type" aria-hidden="true" />
         <div class="transaction-row__body">
           <strong>{{ item.title }}</strong>
           <span>{{ item.accountLabel }}</span>
@@ -65,6 +116,8 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
 <style scoped>
 .daily-card {
   padding: 0 var(--space-4);
+  overflow: hidden;
+  border-color: rgb(231 235 232 / 55%);
 }
 
 .daily-card__header {
@@ -84,11 +137,12 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
 
 .daily-card__header span {
   overflow: hidden;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   font-size: var(--type-caption-size);
   line-height: var(--type-caption-line);
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 650;
 }
 
 .daily-card__list {
@@ -106,7 +160,10 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
   text-align: left;
   background: transparent;
   border: 0;
-  border-top: 1px solid var(--color-divider);
+  border-top: 1px solid rgb(231 235 232 / 62%);
+  transition:
+    opacity var(--motion-instant),
+    transform var(--motion-instant);
 }
 
 .transaction-row:first-child {
@@ -114,7 +171,27 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
 }
 
 .transaction-row:active {
-  background: var(--color-primary-50);
+  opacity: 0.72;
+  transform: scale(0.995);
+}
+
+.transaction-row--selected {
+  background: rgb(23 107 93 / 6%);
+}
+
+.transaction-row__check {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  color: white;
+  border: 1.5px solid var(--color-text-tertiary);
+  border-radius: 50%;
+}
+
+.transaction-row__check--active {
+  background: var(--color-primary-600);
+  border-color: var(--color-primary-600);
 }
 
 .transaction-row__dot {

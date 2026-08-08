@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { BookOpen, Search, Receipt, Settings, X } from '@lucide/vue'
+import { BookOpen, Search, ReceiptText, Settings } from '@lucide/vue'
 import { Popup } from 'vant'
 import 'vant/es/popup/style'
 import { onMounted, ref, watch } from 'vue'
@@ -18,7 +18,8 @@ const emit = defineEmits<{
 const router = useRouter()
 const appStore = useAppStore()
 const ledgers = useLedgerService()
-const ledgerCount = ref(1)
+const usedDays = ref(1)
+const touchStart = ref<{ x: number; y: number }>()
 
 interface DrawerEntry {
   id: string
@@ -31,7 +32,7 @@ interface DrawerEntry {
 const entries: readonly DrawerEntry[] = [
   { id: 'ledger', label: '我的账本', icon: BookOpen, route: 'ledgers' },
   { id: 'search', label: '搜索', icon: Search, route: 'search' },
-  { id: 'bills', label: '账单', icon: Receipt, route: 'bills' },
+  { id: 'bills', label: '账单', icon: ReceiptText, route: 'bills' },
   { id: 'settings', label: '设置', icon: Settings, route: 'settings' },
 ] as const
 
@@ -42,11 +43,32 @@ function close(): void {
 function go(entry: DrawerEntry): void {
   if (entry.disabled || !entry.route) return
   close()
-  void router.replace({ name: entry.route })
+  void router.push({ name: entry.route })
 }
 
 async function loadLedgerCount(): Promise<void> {
-  if (ledgers) ledgerCount.value = (await ledgers.list()).filter((item) => !item.archivedAt).length
+  if (!ledgers) return
+  const rows = await ledgers.list()
+  const active = rows.find((item) => item.id === appStore.ledgerId) ?? rows[0]
+  if (active) {
+    const created = new Date(active.createdAt)
+    usedDays.value = Math.max(1, Math.floor((Date.now() - created.getTime()) / 86_400_000) + 1)
+  }
+}
+
+function handleTouchStart(event: TouchEvent): void {
+  const touch = event.touches[0]
+  touchStart.value = touch ? { x: touch.clientX, y: touch.clientY } : undefined
+}
+
+function handleTouchEnd(event: TouchEvent): void {
+  const start = touchStart.value
+  const touch = event.changedTouches[0]
+  touchStart.value = undefined
+  if (!start || !touch) return
+  const deltaX = touch.clientX - start.x
+  const deltaY = touch.clientY - start.y
+  if (deltaX <= -48 && Math.abs(deltaX) > Math.abs(deltaY) * 1.2) close()
 }
 
 watch(
@@ -63,19 +85,17 @@ onMounted(loadLedgerCount)
     :show="show"
     teleport="body"
     position="left"
-    :style="{ width: '72%', height: '100%' }"
+    :style="{ width: '70%', height: '100%' }"
     class="side-drawer"
+    @touchstart.passive="handleTouchStart"
+    @touchend="handleTouchEnd"
+    @touchcancel="touchStart = undefined"
     @update:show="$emit('update:show', $event)"
   >
-    <div class="side-drawer__safe-top">
-      <button type="button" class="side-drawer__close" aria-label="关闭侧栏" @click="close">
-        <X :size="22" :stroke-width="1.75" aria-hidden="true" />
-      </button>
-    </div>
     <button class="side-drawer__profile" type="button" @click="go(entries[0]!)">
-      <div class="side-drawer__avatar">账</div>
-      <strong>{{ appStore.ledgerName }}</strong>
-      <span>个人记账 · 共 {{ ledgerCount }} 个账本</span>
+      <div class="side-drawer__avatar">L</div>
+      <strong>{{ appStore.profileName }}</strong>
+      <span>已使用 {{ usedDays }} 天</span>
     </button>
     <nav class="side-drawer__nav">
       <button
@@ -85,11 +105,13 @@ onMounted(loadLedgerCount)
         class="drawer-entry"
         @click="go(entry)"
       >
-        <component :is="entry.icon" :size="22" :stroke-width="1.75" aria-hidden="true" />
+        <span class="drawer-entry__icon">
+          <component :is="entry.icon" :size="24" :stroke-width="2.6" aria-hidden="true" />
+        </span>
         <span>{{ entry.label }}</span>
+        <small v-if="entry.id === 'ledger'">{{ appStore.ledgerName }}</small>
       </button>
     </nav>
-    <footer class="side-drawer__footer">财务经理 · 本地账本</footer>
   </Popup>
 </template>
 
@@ -100,26 +122,10 @@ onMounted(loadLedgerCount)
   color: var(--color-text-primary);
   background: var(--color-surface);
 }
-.side-drawer__safe-top {
-  display: flex;
-  justify-content: flex-end;
-  padding: calc(env(safe-area-inset-top) + var(--space-2)) var(--space-3) 0;
-}
-.side-drawer__close {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  place-items: center;
-  color: var(--color-text-secondary);
-  background: transparent;
-  border: 0;
-  border-radius: var(--radius-pill);
-}
 .side-drawer__profile {
   display: grid;
   width: 100%;
-  padding: var(--space-5) var(--space-5) var(--space-6);
+  padding: calc(env(safe-area-inset-top) + 64px) 28px 42px;
   gap: var(--space-1);
   color: inherit;
   text-align: left;
@@ -128,71 +134,66 @@ onMounted(loadLedgerCount)
 }
 .side-drawer__avatar {
   display: grid;
-  width: 56px;
-  height: 56px;
-  margin-bottom: var(--space-3);
+  width: 64px;
+  height: 64px;
+  margin-bottom: 18px;
   place-items: center;
   color: white;
-  font-size: var(--type-money-summary-size);
-  font-weight: 600;
-  background: linear-gradient(135deg, var(--color-primary-500), #2a9d8f);
-  border-radius: 18px;
+  font-size: 27px;
+  font-weight: 750;
+  background: linear-gradient(145deg, #6c5ce7, #9b8cff 55%, #ffc7b7);
+  border-radius: 50%;
 }
 .side-drawer__profile strong {
-  font-size: var(--type-section-title-size);
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
 }
 .side-drawer__profile span {
   color: var(--color-text-tertiary);
-  font-size: var(--type-caption-size);
-  line-height: var(--type-caption-line);
+  font-size: 14px;
+  line-height: 22px;
 }
 .side-drawer__nav {
   display: grid;
-  padding: 0 var(--space-3);
-  gap: 2px;
+  padding: 0 20px;
+  align-content: start;
+  gap: 10px;
   overflow-y: auto;
-  flex: 1;
 }
 .drawer-entry {
-  display: flex;
-  min-height: 52px;
-  padding: 0 var(--space-3);
+  display: grid;
+  min-height: 58px;
+  padding: 0 8px;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
   align-items: center;
-  gap: var(--space-3);
+  gap: 14px;
   color: var(--color-text-primary);
-  font-size: var(--type-body-size);
+  font-size: 17px;
+  font-weight: 550;
   background: transparent;
   border: 0;
   border-radius: var(--radius-control);
 }
-.drawer-entry svg {
-  color: var(--color-text-tertiary);
+.drawer-entry__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  color: #7f898f;
 }
-.drawer-entry span {
-  flex: 1;
+.drawer-entry__icon svg {
+  fill: currentcolor;
+  fill-opacity: 0.13;
+}
+.drawer-entry > span:nth-child(2) {
   text-align: left;
+}
+.drawer-entry small {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  font-weight: 400;
 }
 .drawer-entry:active {
   background: var(--color-primary-50);
-}
-.drawer-entry--disabled {
-  color: var(--color-text-tertiary);
-  cursor: not-allowed;
-}
-.drawer-entry__tag {
-  padding: 2px 8px;
-  color: var(--color-text-tertiary);
-  font-style: normal;
-  font-size: var(--type-caption-size);
-  background: var(--color-background);
-  border-radius: var(--radius-pill);
-}
-.side-drawer__footer {
-  padding: var(--space-5) var(--space-5) calc(var(--space-5) + env(safe-area-inset-bottom));
-  color: var(--color-text-tertiary);
-  font-size: var(--type-caption-size);
-  text-align: center;
-  border-top: 1px solid var(--color-divider);
 }
 </style>
