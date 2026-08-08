@@ -1,4 +1,17 @@
-export type EntityKind = 'ledger' | 'account' | 'category' | 'transaction' | 'entry'
+export type EntityKind =
+  | 'ledger'
+  | 'account'
+  | 'category'
+  | 'transaction'
+  | 'entry'
+  | 'receivable'
+  | 'payable'
+  | 'import_batch'
+  | 'budget'
+  | 'category_budget'
+  | 'template'
+  | 'recurring'
+  | 'reminder'
 
 export interface IdGenerator {
   next(kind: EntityKind): string

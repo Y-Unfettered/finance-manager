@@ -69,4 +69,20 @@ export class CategoryRepository extends BaseRepository {
       archivedAt: row.archivedAt ?? undefined,
     }))
   }
+
+  async findByName(ledgerId: string, name: string): Promise<CategoryRecord | undefined> {
+    const rows = await this.database.query<CategoryRow>(
+      `
+        SELECT id, ledger_id AS ledgerId, parent_id AS parentId, kind, name,
+          sort_order AS sortOrder, archived_at AS archivedAt,
+          created_at AS createdAt, updated_at AS updatedAt
+        FROM categories WHERE ledger_id = ? AND name = ? LIMIT 1
+      `,
+      [ledgerId, name],
+    )
+    const row = rows[0]
+    return row
+      ? { ...row, parentId: row.parentId ?? undefined, archivedAt: row.archivedAt ?? undefined }
+      : undefined
+  }
 }

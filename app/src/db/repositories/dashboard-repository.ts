@@ -28,6 +28,7 @@ interface LedgerItemRow {
   amountMinor: number
   occurredAt: string
   merchant: string | null
+  counterparty: string | null
   categoryName: string | null
   primaryAccount: string | null
   sourceAccount: string | null
@@ -73,15 +74,19 @@ export class DashboardRepository extends BaseRepository {
           transactions.amount_minor AS amountMinor,
           transactions.occurred_at AS occurredAt,
           transactions.merchant,
+          transactions.counterparty,
           MAX(categories.name) AS categoryName,
           MAX(CASE
-            WHEN transactions.type <> 'transfer' AND accounts.id IS NOT NULL THEN accounts.name
+            WHEN transactions.type NOT IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND accounts.id IS NOT NULL THEN accounts.name
           END) AS primaryAccount,
           MAX(CASE
-            WHEN transactions.type = 'transfer' AND entries.side = 'credit' THEN accounts.name
+            WHEN transactions.type IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND entries.side = 'credit' THEN accounts.name
           END) AS sourceAccount,
           MAX(CASE
-            WHEN transactions.type = 'transfer' AND entries.side = 'debit' THEN accounts.name
+            WHEN transactions.type IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND entries.side = 'debit' THEN accounts.name
           END) AS targetAccount
         FROM transactions
         LEFT JOIN entries ON entries.transaction_id = transactions.id
@@ -98,6 +103,48 @@ export class DashboardRepository extends BaseRepository {
     )
     return rows.map(mapLedgerItem)
   }
+
+  async listRecent(ledgerId: string, limit: number): Promise<LedgerListItem[]> {
+    const rows = await this.database.query<LedgerItemRow>(
+      `
+        SELECT
+          transactions.id,
+          transactions.type,
+          transactions.amount_minor AS amountMinor,
+          transactions.occurred_at AS occurredAt,
+          transactions.merchant,
+          transactions.counterparty,
+          MAX(categories.name) AS categoryName,
+          MAX(CASE
+            WHEN transactions.type NOT IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND accounts.id IS NOT NULL THEN accounts.name
+          END) AS primaryAccount,
+          MAX(CASE
+            WHEN transactions.type IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND entries.side = 'credit' THEN accounts.name
+          END) AS sourceAccount,
+          MAX(CASE
+            WHEN transactions.type IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND entries.side = 'debit' THEN accounts.name
+          END) AS targetAccount
+        FROM transactions
+        LEFT JOIN entries ON entries.transaction_id = transactions.id
+        LEFT JOIN accounts ON accounts.id = entries.account_id
+        LEFT JOIN categories ON categories.id = entries.category_id
+        WHERE transactions.ledger_id = ?
+          AND transactions.status = 'posted'
+          AND transactions.type NOT IN (
+            'opening_balance', 'balance_adjustment',
+            'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing'
+          )
+        GROUP BY transactions.id
+        ORDER BY transactions.created_at DESC
+        LIMIT ?
+      `,
+      [ledgerId, limit],
+    )
+    return rows.map(mapLedgerItem)
+  }
 }
 
 function mapLedgerItem(row: LedgerItemRow): LedgerListItem {
@@ -107,8 +154,17 @@ function mapLedgerItem(row: LedgerItemRow): LedgerListItem {
     type: row.type,
     amountMinor: row.amountMinor,
     occurredAt: row.occurredAt,
-    title: row.merchant ?? row.categoryName ?? transactionFallbackTitle(row.type),
-    accountLabel: row.type === 'transfer' ? transferLabel : (row.primaryAccount ?? '未指定账户'),
+    title:
+      row.merchant ?? row.counterparty ?? row.categoryName ?? transactionFallbackTitle(row.type),
+    accountLabel: [
+      'transfer',
+      'loan_out',
+      'loan_recovery',
+      'borrowing',
+      'repay_borrowing',
+    ].includes(row.type)
+      ? transferLabel
+      : (row.primaryAccount ?? '未指定账户'),
   }
 }
 
@@ -122,5 +178,21 @@ function transactionFallbackTitle(type: TransactionType): string {
       return '转账'
     case 'credit_purchase':
       return '信用消费'
+    case 'repayment':
+      return '还款'
+    case 'refund':
+      return '退款'
+    case 'loan_out':
+      return '借出款'
+    case 'loan_recovery':
+      return '收到还款'
+    case 'borrowing':
+      return '借入款'
+    case 'repay_borrowing':
+      return '归还借款'
+    case 'balance_adjustment':
+      return '余额调整'
+    case 'opening_balance':
+      return '期初余额'
   }
 }

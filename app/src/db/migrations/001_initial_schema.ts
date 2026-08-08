@@ -53,7 +53,8 @@ CREATE TABLE transactions (
   ledger_id TEXT NOT NULL REFERENCES ledgers(id) ON DELETE CASCADE,
   type TEXT NOT NULL CHECK (type IN (
     'expense', 'income', 'transfer', 'credit_purchase', 'repayment',
-    'refund', 'loan_out', 'loan_recovery', 'balance_adjustment', 'opening_balance'
+    'refund', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing',
+    'balance_adjustment', 'opening_balance'
   )),
   status TEXT NOT NULL DEFAULT 'posted' CHECK (status IN ('posted', 'void')),
   amount_minor INTEGER NOT NULL CHECK (amount_minor > 0),

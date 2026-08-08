@@ -10,6 +10,10 @@ defineProps<{
   items: readonly LedgerListItem[]
 }>()
 
+const emit = defineEmits<{
+  select: [item: LedgerListItem]
+}>()
+
 function displayAmount(item: LedgerListItem): number {
   if (item.type === 'expense' || item.type === 'credit_purchase') {
     return -item.amountMinor
@@ -35,7 +39,13 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
       </span>
     </header>
     <div class="daily-card__list">
-      <div v-for="item in items" :key="item.id" class="transaction-row">
+      <button
+        v-for="item in items"
+        :key="item.id"
+        type="button"
+        class="transaction-row"
+        @click="emit('select', item)"
+      >
         <span class="transaction-row__dot" :data-type="item.type" aria-hidden="true" />
         <div class="transaction-row__body">
           <strong>{{ item.title }}</strong>
@@ -47,7 +57,7 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
           :tone="amountTone(item)"
           :show-plus="item.type === 'income'"
         />
-      </div>
+      </button>
     </div>
   </BaseCard>
 </template>
@@ -81,17 +91,30 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
   white-space: nowrap;
 }
 
+.daily-card__list {
+  display: grid;
+}
+
 .transaction-row {
   display: grid;
   min-height: 56px;
+  padding: 0;
   grid-template-columns: 8px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
   border-top: 1px solid var(--color-divider);
 }
 
 .transaction-row:first-child {
   border-top: 0;
+}
+
+.transaction-row:active {
+  background: var(--color-primary-50);
 }
 
 .transaction-row__dot {

@@ -10,6 +10,7 @@ import {
   Search,
 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import AccountBrandIcon from '@/components/AccountBrandIcon.vue'
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
@@ -17,6 +18,7 @@ import AppIconButton from '@/components/AppIconButton.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
+import { parseCnyInputToMinor } from '@/domain/money'
 import {
   ACCOUNT_CATALOG_GROUPS,
   BANK_CATALOG,
@@ -24,11 +26,16 @@ import {
   type AccountCatalogItem,
   type BankCatalogItem,
 } from '@/features/finance/account-catalog'
-import { summarizeAssets, type AssetSectionSummary } from '@/features/finance/asset-summary'
+import {
+  summarizeAssets,
+  type AssetSectionId,
+  type AssetSectionSummary,
+} from '@/features/finance/asset-summary'
 import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
 
 const appStore = useAppStore()
+const router = useRouter()
 const finance = useFinanceService()
 const accounts = ref<AccountBalanceRecord[]>([])
 const loading = ref(true)
@@ -39,20 +46,14 @@ const amountsVisible = ref(true)
 const showCatalog = ref(false)
 const showBanks = ref(false)
 const showForm = ref(false)
-const showGroup = ref(false)
+const expandedSectionId = ref<AssetSectionId | null>(null)
 const bankQuery = ref('')
 const pendingItem = ref<AccountCatalogItem>()
 const selectedBank = ref<BankCatalogItem>()
-const selectedSection = ref<AssetSectionSummary>()
-const form = ref({ name: '', institution: '' })
+const form = ref({ name: '', institution: '', initialBalance: '' })
 
 const overview = computed(() => summarizeAssets(accounts.value))
-const visibleSections = computed(() =>
-  overview.value.sections.filter(
-    (section) =>
-      ['credit', 'funds', 'prepaid', 'investment'].includes(section.id) || section.count > 0,
-  ),
-)
+const visibleSections = computed(() => overview.value.sections)
 const filteredBanks = computed(() => {
   const query = bankQuery.value.trim().toLowerCase()
   if (!query) return BANK_CATALOG
@@ -61,9 +62,14 @@ const filteredBanks = computed(() => {
   )
 })
 const sectionAccounts = computed(() => {
-  const types = selectedSection.value?.accountTypes ?? []
+  const types = expandedSection.value?.accountTypes ?? []
   return accounts.value.filter((account) => types.includes(account.type))
 })
+const expandedSection = computed(() =>
+  expandedSectionId.value
+    ? overview.value.sections.find((section) => section.id === expandedSectionId.value)
+    : undefined,
+)
 const liabilityRatioLabel = computed(() => `${(overview.value.liabilityRatio * 100).toFixed(2)}%`)
 
 async function loadAccounts(): Promise<void> {
@@ -105,7 +111,7 @@ function chooseBank(bank: BankCatalogItem): void {
 }
 
 function beginAccountForm(name: string, institution: string): void {
-  form.value = { name, institution }
+  form.value = { name, institution, initialBalance: '' }
   formError.value = ''
   showForm.value = true
 }
@@ -121,6 +127,10 @@ async function submitAccount(): Promise<void> {
       name: form.value.name,
       type: item.type,
       institution: form.value.institution,
+      initialBalanceMinor: form.value.initialBalance.trim()
+        ? parseCnyInputToMinor(form.value.initialBalance)
+        : 0,
+      occurredAt: new Date().toISOString(),
     })
     showForm.value = false
     pendingItem.value = undefined
@@ -133,9 +143,13 @@ async function submitAccount(): Promise<void> {
   }
 }
 
-function openSection(section: AssetSectionSummary): void {
-  selectedSection.value = section
-  showGroup.value = true
+function toggleSection(section: AssetSectionSummary): void {
+  expandedSectionId.value = expandedSectionId.value === section.id ? null : section.id
+}
+
+function openAccount(account: AccountBalanceRecord): void {
+  expandedSectionId.value = null
+  void router.push({ name: 'account-detail', params: { accountId: account.id } })
 }
 
 function iconForAccount(account: AccountBalanceRecord): AccountCatalogItem {
@@ -211,30 +225,83 @@ onMounted(loadAccounts)
         </BaseCard>
 
         <BaseCard class="borrow-card">
-          <div>
+          <button type="button" @click="router.push({ name: 'payables' })">
             <ArrowDownToLine :size="24" :stroke-width="1.75" aria-hidden="true" />
-            <span><small>总借入</small><MoneyText :amount-minor="overview.borrowedMinor" /></span>
-          </div>
+            <span>
+              <small>总借入</small>
+              <MoneyText
+                v-if="amountsVisible"
+                :amount-minor="overview.borrowedMinor === 0 ? 0 : overview.borrowedMinor"
+                tone="expense"
+              />
+              <strong v-else>••••</strong>
+            </span>
+          </button>
           <i aria-hidden="true" />
-          <div>
+          <button type="button" @click="router.push({ name: 'receivables' })">
             <ArrowUpFromLine :size="24" :stroke-width="1.75" aria-hidden="true" />
-            <span><small>总借出</small><MoneyText :amount-minor="overview.lentMinor" /></span>
-          </div>
+            <span>
+              <small>总借出</small>
+              <MoneyText
+                v-if="amountsVisible"
+                :amount-minor="overview.lentMinor"
+                tone="income"
+                :show-plus="overview.lentMinor > 0"
+              />
+              <strong v-else>••••</strong>
+            </span>
+          </button>
         </BaseCard>
 
-        <BaseCard class="asset-groups">
+        <BaseCard
+          v-for="section in visibleSections"
+          :key="section.id"
+          class="section-card"
+          :class="{
+            'section-card--empty': section.count === 0,
+            'section-card--expanded': expandedSectionId === section.id,
+          }"
+        >
           <button
-            v-for="section in visibleSections"
-            :key="section.id"
             type="button"
-            @click="openSection(section)"
+            :aria-expanded="expandedSectionId === section.id"
+            @click="toggleSection(section)"
           >
             <strong>{{ section.label }}</strong>
             <span>
               <MoneyText :amount-minor="section.amountMinor" />
-              <ChevronRight :size="22" :stroke-width="1.75" aria-hidden="true" />
+              <ChevronRight
+                :size="22"
+                :stroke-width="1.75"
+                aria-hidden="true"
+                class="section-card__chevron"
+              />
             </span>
           </button>
+          <div v-if="expandedSectionId === section.id" class="section-card__body">
+            <div v-if="sectionAccounts.length === 0" class="section-card__empty">
+              还没有此类账户
+            </div>
+            <button
+              v-for="account in sectionAccounts"
+              :key="account.id"
+              class="section-card__row"
+              type="button"
+              @click="openAccount(account)"
+            >
+              <AccountBrandIcon
+                :label="account.name"
+                :symbol="iconForAccount(account).symbol"
+                :color="iconForAccount(account).color"
+              />
+              <span
+                ><strong>{{ account.name }}</strong
+                ><small>{{ account.institution }}</small></span
+              >
+              <MoneyText :amount-minor="account.balanceMinor" />
+              <ChevronRight :size="20" :stroke-width="1.75" aria-hidden="true" />
+            </button>
+          </div>
         </BaseCard>
       </template>
     </div>
@@ -313,33 +380,22 @@ onMounted(loadAccounts)
           <span>机构（可选）</span>
           <input v-model="form.institution" maxlength="30" placeholder="例如：招商银行" />
         </label>
+        <label>
+          <span>当前余额</span>
+          <input
+            v-model="form.initialBalance"
+            type="text"
+            inputmode="decimal"
+            autocomplete="off"
+            placeholder="0.00"
+          />
+        </label>
         <div v-if="formError" class="form-error" role="alert">{{ formError }}</div>
         <button class="primary-button" type="submit" :disabled="saving">
           {{ saving ? '正在保存…' : '保存账户' }}
         </button>
-        <p class="account-form__note">本版本新账户初始余额为 ¥0.00，期初余额将在下一步接入。</p>
+        <p class="account-form__note">当前余额会作为期初余额记入独立流水，不计入月收入或月支出。</p>
       </form>
-    </AppBottomSheet>
-
-    <AppBottomSheet
-      v-model:show="showGroup"
-      :title="selectedSection ? `${selectedSection.label}账户` : '账户明细'"
-    >
-      <div class="group-detail">
-        <div v-if="sectionAccounts.length === 0" class="group-detail__empty">还没有此类账户</div>
-        <div v-for="account in sectionAccounts" :key="account.id" class="group-account-row">
-          <AccountBrandIcon
-            :label="account.name"
-            :symbol="iconForAccount(account).symbol"
-            :color="iconForAccount(account).color"
-          />
-          <span
-            ><strong>{{ account.name }}</strong
-            ><small>{{ account.institution }}</small></span
-          >
-          <MoneyText :amount-minor="account.balanceMinor" />
-        </div>
-      </div>
     </AppBottomSheet>
   </main>
 </template>
@@ -465,11 +521,20 @@ onMounted(loadAccounts)
   gap: var(--space-4);
 }
 
-.borrow-card > div {
+.borrow-card > button {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-3);
+  padding: var(--space-2) 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-control);
+}
+
+.borrow-card > button:active {
+  background: var(--color-primary-50);
 }
 
 .borrow-card svg {
@@ -486,7 +551,8 @@ onMounted(loadAccounts)
   font-size: var(--type-caption-size);
 }
 
-.borrow-card :deep(.money-text) {
+.borrow-card :deep(.money-text),
+.borrow-card strong {
   font-size: var(--type-section-title-size);
   font-weight: 600;
 }
@@ -496,40 +562,90 @@ onMounted(loadAccounts)
   background: var(--color-divider);
 }
 
-.asset-groups {
+.section-card {
   padding: 0 var(--space-4);
 }
 
-.asset-groups button {
+.section-card > button {
   display: flex;
   width: 100%;
   min-height: 60px;
-  padding: 0;
+  padding: var(--space-2) 0;
   align-items: center;
   justify-content: space-between;
   color: var(--color-text-primary);
   background: transparent;
   border: 0;
-  border-top: 1px solid var(--color-divider);
 }
 
-.asset-groups button:first-child {
-  border-top: 0;
+.section-card--empty > button {
+  opacity: 0.55;
 }
 
-.asset-groups button > strong {
+.section-card > button > strong {
   font-size: var(--type-section-title-size);
   font-weight: 600;
 }
 
-.asset-groups button > span {
+.section-card > button > span {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-.asset-groups svg {
+.section-card__chevron {
   color: var(--color-text-tertiary);
+  transition: transform var(--motion-short) var(--ease-standard);
+}
+
+.section-card--expanded > button .section-card__chevron {
+  transform: rotate(90deg);
+}
+
+.section-card__body {
+  padding: 0 0 var(--space-2);
+}
+
+.section-card__row {
+  display: flex;
+  width: 100%;
+  min-height: 60px;
+  padding: var(--space-2) 0;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text-primary);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+}
+
+.section-card__row:active {
+  background: var(--color-primary-50);
+}
+
+.section-card__row > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+
+.section-card__row small {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.section-card__row svg {
+  color: var(--color-text-tertiary);
+}
+
+.section-card__empty {
+  padding: var(--space-8) 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
+  text-align: center;
 }
 
 .asset-add-button {
@@ -573,8 +689,7 @@ onMounted(loadAccounts)
 }
 
 .catalog-picker,
-.bank-picker,
-.group-detail {
+.bank-picker {
   max-height: 68dvh;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -601,13 +716,18 @@ onMounted(loadAccounts)
 .catalog-grid button {
   display: grid;
   min-width: 0;
-  padding: 0;
+  padding: var(--space-2);
   place-items: center;
   gap: var(--space-2);
   color: var(--color-text-primary);
   font-size: var(--type-label-size);
   background: transparent;
   border: 0;
+  border-radius: var(--radius-control);
+}
+
+.catalog-grid button:active {
+  background: var(--color-primary-50);
 }
 
 .catalog-grid button > span:last-child {
@@ -641,8 +761,7 @@ onMounted(loadAccounts)
   margin-top: var(--space-3);
 }
 
-.bank-list button,
-.group-account-row {
+.bank-list button {
   display: flex;
   width: 100%;
   min-height: 60px;
@@ -654,11 +773,15 @@ onMounted(loadAccounts)
   background: transparent;
   border: 0;
   border-top: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
 }
 
-.bank-list button:first-child,
-.group-account-row:first-child {
+.bank-list button:first-child {
   border-top: 0;
+}
+
+.bank-list button:active {
+  background: var(--color-primary-50);
 }
 
 .bank-list button > span:last-child {
@@ -671,22 +794,19 @@ onMounted(loadAccounts)
   gap: var(--space-4);
 }
 
-.account-form__type,
-.group-account-row {
+.account-form__type {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
 
-.account-form__type > span:last-child,
-.group-account-row > span:nth-child(2) {
+.account-form__type > span:last-child {
   display: grid;
   min-width: 0;
   flex: 1;
 }
 
-.account-form__type small,
-.group-account-row small {
+.account-form__type small {
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
 }
@@ -733,16 +853,11 @@ onMounted(loadAccounts)
   border-radius: var(--radius-control);
 }
 
-.account-form__note,
-.group-detail__empty {
+.account-form__note {
   margin: 0;
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   line-height: var(--type-caption-line);
   text-align: center;
-}
-
-.group-detail__empty {
-  padding: var(--space-8) 0;
 }
 </style>

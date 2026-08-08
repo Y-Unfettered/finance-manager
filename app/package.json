@@ -1,7 +1,7 @@
 {
   "name": "finance-manager-app",
   "private": true,
-  "version": "0.0.7",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,11 +19,13 @@
     "@capacitor/android": "^8.5.0",
     "@capacitor/app": "^8.1.1",
     "@capacitor/core": "^8.5.0",
+    "@capacitor/filesystem": "^7.1.8",
     "@lucide/vue": "^1.28.0",
     "pinia": "^4.0.2",
     "vant": "^4.10.0",
     "vue": "^3.5.40",
-    "vue-router": "^5.2.0"
+    "vue-router": "^5.2.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.0",

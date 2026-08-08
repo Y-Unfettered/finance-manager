@@ -13,3 +13,9 @@ export function parseCnyInputToMinor(value: string): number {
   }
   return minor
 }
+
+export function formatMinorToCny(minor: number): string {
+  const yuan = Math.floor(minor / 100)
+  const cents = minor % 100
+  return cents > 0 ? `${yuan}.${String(cents).padStart(2, '0')}` : String(yuan)
+}

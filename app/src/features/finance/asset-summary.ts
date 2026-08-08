@@ -38,7 +38,7 @@ const SECTION_DEFINITIONS: readonly Omit<AssetSectionSummary, 'amountMinor' | 'c
   { id: 'prepaid', label: '充值', accountTypes: ['prepaid'] },
   { id: 'investment', label: '投资', accountTypes: ['investment'] },
   { id: 'receivable', label: '借出款', accountTypes: ['receivable'] },
-  { id: 'other_liability', label: '其他负债', accountTypes: ['other_liability'] },
+  { id: 'other_liability', label: '借入款', accountTypes: ['other_liability'] },
 ]
 
 export function summarizeAssets(accounts: readonly AccountBalanceRecord[]): AssetOverview {

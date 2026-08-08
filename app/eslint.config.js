@@ -25,6 +25,8 @@ export default tseslint.config(
     rules: {
       'vue/multi-word-component-names': 'off',
       'vue/require-default-prop': 'off',
+      // vue-tsc 已对类型进行检查，且 vue-eslint-parser 下 no-undef 会误报浏览器全局类型
+      'no-undef': 'off',
     },
   },
   eslintConfigPrettier,

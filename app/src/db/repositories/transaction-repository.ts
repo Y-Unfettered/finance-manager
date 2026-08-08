@@ -1,20 +1,79 @@
-import { assertBalanced, type EntryTarget, type TransactionDraft } from '@/domain/accounting'
+import {
+  assertBalanced,
+  type EntryTarget,
+  type TransactionDraft,
+  type TransactionType,
+} from '@/domain/accounting'
 import type { StoredEntry, StoredTransaction, TransactionWithEntries } from '@/domain/entities'
 import type { Clock } from '@/domain/time'
 import { toUtcIso } from '@/domain/time'
 import type { IdGenerator } from '@/domain/identity'
 
-import type { SqliteExecutor, SqlStatement } from '../core/types'
+import type { SqliteExecutor, SqlStatement, SqlValue } from '../core/types'
 import { BaseRepository } from './base-repository'
 
-interface TransactionRow extends Omit<StoredTransaction, 'merchant' | 'note'> {
+interface TransactionRow extends Omit<StoredTransaction, 'merchant' | 'counterparty' | 'note'> {
   merchant: string | null
+  counterparty: string | null
   note: string | null
 }
 
 interface EntryRow extends Omit<StoredEntry, 'accountId' | 'categoryId'> {
   accountId: string | null
   categoryId: string | null
+}
+
+export interface AccountActivityRecord {
+  id: string
+  transactionId: string
+  type: StoredTransaction['type']
+  amountMinor: number
+  changeMinor: number
+  occurredAt: string
+  title: string
+  note?: string
+}
+
+interface AccountActivityRow extends Omit<AccountActivityRecord, 'note'> {
+  note: string | null
+}
+
+export interface TransactionSearchFilter {
+  ledgerId: string
+  keyword?: string
+  startUtc?: string
+  endUtc?: string
+  accountId?: string
+  categoryId?: string
+  type?: TransactionType
+  minAmountMinor?: number
+  maxAmountMinor?: number
+  includeVoid?: boolean
+  limit?: number
+}
+
+export interface TransactionSearchResultItem {
+  id: string
+  type: TransactionType
+  amountMinor: number
+  occurredAt: string
+  merchant?: string
+  counterparty?: string
+  note?: string
+  categoryName?: string
+  primaryAccountName?: string
+}
+
+interface SearchRow {
+  id: string
+  type: TransactionType
+  amountMinor: number
+  occurredAt: string
+  merchant: string | null
+  counterparty: string | null
+  note: string | null
+  categoryName: string | null
+  primaryAccountName: string | null
 }
 
 export class TransactionRepository extends BaseRepository {
@@ -50,6 +109,7 @@ export class TransactionRepository extends BaseRepository {
       currency: draft.currency,
       occurredAt,
       merchant: draft.merchant,
+      counterparty: draft.counterparty,
       note: draft.note,
       createdAt,
       updatedAt: createdAt,
@@ -62,7 +122,7 @@ export class TransactionRepository extends BaseRepository {
             id, ledger_id, type, status, amount_minor, currency, occurred_at,
             merchant, counterparty, note, capture_source, parser_version,
             confidence, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
         `,
         values: [
           transaction.id,
@@ -73,6 +133,7 @@ export class TransactionRepository extends BaseRepository {
           transaction.currency,
           transaction.occurredAt,
           transaction.merchant ?? null,
+          transaction.counterparty ?? null,
           transaction.note ?? null,
           transaction.createdAt,
           transaction.updatedAt,
@@ -115,6 +176,170 @@ export class TransactionRepository extends BaseRepository {
     return rows[0]?.count ?? 0
   }
 
+  async voidTransaction(id: string, updatedAt: string): Promise<void> {
+    await this.database.executeSet(
+      [
+        {
+          statement: `UPDATE transactions SET status = 'void', updated_at = ? WHERE id = ?`,
+          values: [updatedAt, id],
+        },
+      ],
+      true,
+    )
+  }
+
+  async updateMetadata(
+    id: string,
+    fields: { occurredAt?: string; merchant?: string; note?: string },
+    updatedAt: string,
+  ): Promise<void> {
+    const setClauses: string[] = ['updated_at = ?']
+    const values: SqlValue[] = [updatedAt]
+    if (fields.occurredAt !== undefined) {
+      setClauses.unshift('occurred_at = ?')
+      values.unshift(fields.occurredAt)
+    }
+    if (fields.merchant !== undefined) {
+      setClauses.unshift('merchant = ?')
+      values.unshift(fields.merchant.trim() === '' ? null : fields.merchant.trim())
+    }
+    if (fields.note !== undefined) {
+      setClauses.unshift('note = ?')
+      values.unshift(fields.note.trim() === '' ? null : fields.note.trim())
+    }
+    values.push(id)
+    await this.database.executeSet(
+      [
+        {
+          statement: `UPDATE transactions SET ${setClauses.join(', ')} WHERE id = ?`,
+          values,
+        },
+      ],
+      true,
+    )
+  }
+
+  async listByAccount(accountId: string): Promise<AccountActivityRecord[]> {
+    const rows = await this.database.query<AccountActivityRow>(
+      `
+        SELECT
+          entries.id,
+          transactions.id AS transactionId,
+          transactions.type,
+          transactions.amount_minor AS amountMinor,
+          CASE
+            WHEN entries.side = accounts.normal_balance THEN entries.amount_minor
+            ELSE -entries.amount_minor
+          END AS changeMinor,
+          transactions.occurred_at AS occurredAt,
+          COALESCE(transactions.counterparty, transactions.merchant, categories.name,
+            CASE transactions.type
+              WHEN 'opening_balance' THEN '期初余额'
+              WHEN 'balance_adjustment' THEN '余额调整'
+              WHEN 'loan_out' THEN '借出款'
+              WHEN 'loan_recovery' THEN '收到还款'
+              WHEN 'borrowing' THEN '借入款'
+              WHEN 'repay_borrowing' THEN '归还借款'
+              ELSE '账户流水'
+            END
+          ) AS title,
+          transactions.note
+        FROM entries
+        JOIN transactions ON transactions.id = entries.transaction_id
+        JOIN accounts ON accounts.id = entries.account_id
+        LEFT JOIN entries AS category_entries
+          ON category_entries.transaction_id = transactions.id
+          AND category_entries.category_id IS NOT NULL
+        LEFT JOIN categories ON categories.id = category_entries.category_id
+        WHERE entries.account_id = ? AND transactions.status = 'posted'
+        ORDER BY transactions.occurred_at DESC, transactions.created_at DESC
+      `,
+      [accountId],
+    )
+    return rows.map((row) => ({ ...row, note: row.note ?? undefined }))
+  }
+
+  /**
+   * 多维度搜索筛选：关键词、日期范围、账户、分类、类型、金额区间。
+   * 关键词匹配 merchant / counterparty / note / category.name。
+   * 账户/分类筛选命中任一相关分录。
+   */
+  async search(filter: TransactionSearchFilter): Promise<TransactionSearchResultItem[]> {
+    const where: string[] = ['transactions.ledger_id = ?']
+    const values: SqlValue[] = [filter.ledgerId]
+    if (!filter.includeVoid) {
+      where.push("transactions.status = 'posted'")
+    }
+    if (filter.keyword && filter.keyword.trim() !== '') {
+      where.push(
+        `(transactions.merchant LIKE ? OR transactions.counterparty LIKE ? OR transactions.note LIKE ? OR categories.name LIKE ?)`,
+      )
+      const kw = `%${filter.keyword.trim()}%`
+      values.push(kw, kw, kw, kw)
+    }
+    if (filter.startUtc) {
+      where.push('transactions.occurred_at >= ?')
+      values.push(filter.startUtc)
+    }
+    if (filter.endUtc) {
+      where.push('transactions.occurred_at < ?')
+      values.push(filter.endUtc)
+    }
+    if (filter.type) {
+      where.push('transactions.type = ?')
+      values.push(filter.type)
+    }
+    if (filter.minAmountMinor !== undefined) {
+      where.push('transactions.amount_minor >= ?')
+      values.push(filter.minAmountMinor)
+    }
+    if (filter.maxAmountMinor !== undefined) {
+      where.push('transactions.amount_minor <= ?')
+      values.push(filter.maxAmountMinor)
+    }
+    if (filter.accountId) {
+      where.push(
+        `EXISTS (SELECT 1 FROM entries AS e_acc WHERE e_acc.transaction_id = transactions.id AND e_acc.account_id = ?)`,
+      )
+      values.push(filter.accountId)
+    }
+    if (filter.categoryId) {
+      where.push(
+        `EXISTS (SELECT 1 FROM entries AS e_cat WHERE e_cat.transaction_id = transactions.id AND e_cat.category_id = ?)`,
+      )
+      values.push(filter.categoryId)
+    }
+
+    const limitClause = filter.limit ? `LIMIT ${Math.max(1, Math.min(filter.limit, 1000))}` : ''
+    const rows = await this.database.query<SearchRow>(
+      `
+        SELECT
+          transactions.id,
+          transactions.type,
+          transactions.amount_minor AS amountMinor,
+          transactions.occurred_at AS occurredAt,
+          transactions.merchant,
+          transactions.counterparty,
+          transactions.note,
+          MAX(categories.name) AS categoryName,
+          MAX(CASE
+            WHEN transactions.type NOT IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND accounts.id IS NOT NULL THEN accounts.name
+          END) AS primaryAccountName
+        FROM transactions
+        LEFT JOIN entries ON entries.transaction_id = transactions.id
+        LEFT JOIN accounts ON accounts.id = entries.account_id
+        LEFT JOIN categories ON categories.id = entries.category_id
+        WHERE ${where.join(' AND ')}
+        GROUP BY transactions.id
+        ORDER BY transactions.occurred_at DESC, transactions.created_at DESC
+        ${limitClause}
+      `,
+      values,
+    )
+    return rows.map(mapSearchRow)
+  }
+
   private async listEntries(transactionId: string): Promise<StoredEntry[]> {
     const rows = await this.database.query<EntryRow>(
       `
@@ -151,6 +376,7 @@ const TRANSACTION_SELECT = `
     currency,
     occurred_at AS occurredAt,
     merchant,
+    counterparty,
     note,
     created_at AS createdAt,
     updated_at AS updatedAt
@@ -188,6 +414,21 @@ function mapTransaction(row: TransactionRow): StoredTransaction {
   return {
     ...row,
     merchant: row.merchant ?? undefined,
+    counterparty: row.counterparty ?? undefined,
     note: row.note ?? undefined,
+  }
+}
+
+function mapSearchRow(row: SearchRow): TransactionSearchResultItem {
+  return {
+    id: row.id,
+    type: row.type,
+    amountMinor: row.amountMinor,
+    occurredAt: row.occurredAt,
+    merchant: row.merchant ?? undefined,
+    counterparty: row.counterparty ?? undefined,
+    note: row.note ?? undefined,
+    categoryName: row.categoryName ?? undefined,
+    primaryAccountName: row.primaryAccountName ?? undefined,
   }
 }
