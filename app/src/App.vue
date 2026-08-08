@@ -16,6 +16,9 @@ const lockStore = useAppLockStore()
 const appLockService = inject(appLockServiceKey)
 
 const privacyVeil = ref(false)
+const pageTransition = computed(() =>
+  route.meta.pageTransition === 'page-back' ? 'page-back' : 'page-forward',
+)
 
 const showUnlock = computed(
   () =>
@@ -57,7 +60,7 @@ onUnmounted(() => {
   <PinUnlockView v-if="showUnlock" />
   <template v-else>
     <RouterView v-slot="{ Component }">
-      <Transition name="page" mode="out-in">
+      <Transition :name="pageTransition">
         <component :is="Component" />
       </Transition>
     </RouterView>
@@ -81,20 +84,44 @@ onUnmounted(() => {
 </template>
 
 <style>
-.page-enter-active,
-.page-leave-active {
-  transition:
-    opacity var(--motion-base) var(--ease-standard),
-    clip-path var(--motion-slow) var(--ease-emphasized);
+.page-forward-enter-active,
+.page-forward-leave-active,
+.page-back-enter-active,
+.page-back-leave-active {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+  overflow: hidden auto;
+  background: var(--color-background);
+  transition: transform 300ms var(--ease-emphasized);
+  will-change: transform;
 }
 
-.page-enter-from {
-  opacity: 0.72;
-  clip-path: inset(0 0 0 100%);
+.page-forward-enter-active,
+.page-back-leave-active {
+  z-index: 62;
 }
 
-.page-leave-to {
-  opacity: 0.94;
+.page-forward-leave-active,
+.page-back-enter-active {
+  z-index: 61;
+}
+
+.page-forward-enter-from {
+  transform: translateX(100%);
+}
+
+.page-forward-leave-to {
+  transform: translateX(-22%);
+}
+
+.page-back-enter-from {
+  transform: translateX(-22%);
+}
+
+.page-back-leave-to {
+  transform: translateX(100%);
 }
 
 .fade-enter-active,

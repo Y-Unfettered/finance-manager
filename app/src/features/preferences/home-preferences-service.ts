@@ -45,7 +45,7 @@ export class HomePreferencesService {
         summaryRangeType: ['week', '7d', '15d', 'hidden'].includes(value.summaryRangeType ?? '')
           ? (value.summaryRangeType as HomeSummaryRangeType)
           : '7d',
-        amountsHidden: value.amountsHidden === true,
+        amountsHidden: false,
         defaultExpenseAccountId: optionalId(value.defaultExpenseAccountId),
         defaultIncomeAccountId: optionalId(value.defaultIncomeAccountId),
         rememberLastAccount: value.rememberLastAccount !== false,
@@ -61,6 +61,7 @@ export class HomePreferencesService {
   }
 
   async save(ledgerId: string, preferences: HomePreferences): Promise<void> {
+    preferences.amountsHidden = false
     await this.settings.set(
       `home_preferences:${ledgerId}`,
       JSON.stringify(preferences),

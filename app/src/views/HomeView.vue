@@ -307,7 +307,7 @@ onMounted(loadHome)
 </script>
 
 <template>
-  <main class="home-page" :class="{ 'home-page--amounts-hidden': homePreferences.amountsHidden }">
+  <main class="home-page">
     <div class="home-topbar">
       <AppTopBar
         :title="monthTitle"
@@ -891,10 +891,5 @@ onMounted(loadHome)
   color: white;
   background: var(--color-danger);
   border: 0;
-}
-.home-page--amounts-hidden :deep(.money-text),
-.home-page--amounts-hidden :deep(.recent-summary-card__amount) {
-  filter: blur(7px);
-  user-select: none;
 }
 </style>

@@ -4,10 +4,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AppTopBar from '@/components/AppTopBar.vue'
-import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import DailyLedgerCard from '@/components/DailyLedgerCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import MonthPickerSheet from '@/components/MonthPickerSheet.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
 import type { LedgerListItem } from '@/db/repositories/dashboard-repository'
 import type { TransactionType } from '@/domain/accounting'
@@ -367,12 +367,12 @@ onMounted(async () => {
       @update:show="showDetail = $event"
       @updated="load"
     />
-    <AppBottomSheet v-model:show="showPeriod" title="选择日历月份">
-      <label class="calendar-period-input">
-        <span>月份</span>
-        <input v-model="month" type="month" @change="showPeriod = false" />
-      </label>
-    </AppBottomSheet>
+    <MonthPickerSheet
+      v-model:show="showPeriod"
+      :period="month"
+      title="选择日历月份"
+      @select="month = $event"
+    />
   </main>
 </template>
 
@@ -492,11 +492,13 @@ select {
 }
 .day {
   display: grid;
-  min-height: 58px;
-  padding: 4px;
+  min-height: 64px;
+  padding: 8px 3px 6px;
   align-content: start;
+  justify-items: center;
+  gap: 2px;
   color: var(--color-text-primary);
-  text-align: left;
+  text-align: center;
   background: var(--color-background);
   border: 1px solid transparent;
   border-radius: 8px;
@@ -509,7 +511,8 @@ select {
   background: var(--color-primary-50);
 }
 .day strong {
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 19px;
 }
 .day small {
   overflow: hidden;
@@ -521,14 +524,5 @@ select {
 }
 .income {
   color: var(--color-income);
-}
-.calendar-period-input {
-  display: grid;
-  gap: 8px;
-  color: var(--color-text-secondary);
-}
-.calendar-period-input input {
-  height: 48px;
-  font-size: 16px;
 }
 </style>

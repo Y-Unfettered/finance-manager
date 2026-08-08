@@ -128,4 +128,16 @@ const router = createRouter({
   ],
 })
 
+let historyNavigation = false
+if (typeof window !== 'undefined') {
+  window.addEventListener('popstate', () => {
+    historyNavigation = true
+  })
+}
+
+router.beforeEach((to) => {
+  to.meta.pageTransition = historyNavigation ? 'page-back' : 'page-forward'
+  historyNavigation = false
+})
+
 export default router

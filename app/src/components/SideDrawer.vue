@@ -2,7 +2,7 @@
 import { BookOpen, Search, ReceiptText, Settings } from '@lucide/vue'
 import { Popup } from 'vant'
 import 'vant/es/popup/style'
-import { onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 import { useLedgerService } from '@/features/ledger/ledger-service'
@@ -57,11 +57,13 @@ async function loadLedgerCount(): Promise<void> {
 }
 
 function handleTouchStart(event: TouchEvent): void {
+  if (!props.show) return
   const touch = event.touches[0]
   touchStart.value = touch ? { x: touch.clientX, y: touch.clientY } : undefined
 }
 
 function handleTouchEnd(event: TouchEvent): void {
+  if (!props.show) return
   const start = touchStart.value
   const touch = event.changedTouches[0]
   touchStart.value = undefined
@@ -77,7 +79,17 @@ watch(
     if (show) void loadLedgerCount()
   },
 )
-onMounted(loadLedgerCount)
+onMounted(() => {
+  void loadLedgerCount()
+  window.addEventListener('touchstart', handleTouchStart, { passive: true, capture: true })
+  window.addEventListener('touchend', handleTouchEnd, true)
+  window.addEventListener('touchcancel', handleTouchEnd, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('touchstart', handleTouchStart, true)
+  window.removeEventListener('touchend', handleTouchEnd, true)
+  window.removeEventListener('touchcancel', handleTouchEnd, true)
+})
 </script>
 
 <template>
@@ -87,9 +99,6 @@ onMounted(loadLedgerCount)
     position="left"
     :style="{ width: '70%', height: '100%' }"
     class="side-drawer"
-    @touchstart.passive="handleTouchStart"
-    @touchend="handleTouchEnd"
-    @touchcancel="touchStart = undefined"
     @update:show="$emit('update:show', $event)"
   >
     <button class="side-drawer__profile" type="button" @click="go(entries[0]!)">

@@ -93,10 +93,6 @@ onMounted(load)
               <option value="hidden">不显示</option>
             </select>
           </label>
-          <label>
-            <span><strong>默认隐藏首页金额</strong><small>进入首页时模糊显示金额</small></span>
-            <input v-model="preferences.amountsHidden" type="checkbox" @change="save" />
-          </label>
         </BaseCard>
       </section>
       <section>
