@@ -22,7 +22,7 @@ withDefaults(
     :aria-label="label"
   >
     <slot>
-      <WalletCards :size="compact ? 20 : 24" :stroke-width="1.75" aria-hidden="true" />
+      <WalletCards :size="compact ? 14 : 17" :stroke-width="1.75" aria-hidden="true" />
     </slot>
   </span>
 </template>
@@ -40,9 +40,9 @@ withDefaults(
 }
 
 .account-avatar--compact {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
 }
 
 .account-avatar--info {

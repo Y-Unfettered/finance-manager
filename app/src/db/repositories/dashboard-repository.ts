@@ -14,7 +14,11 @@ export interface LedgerListItem {
   amountMinor: number
   occurredAt: string
   title: string
+  categoryLabel?: string
+  noteLabel?: string
   accountLabel: string
+  originalAmountMinor?: number
+  discountMinor?: number
 }
 
 export interface DailyFlowPoint {
@@ -35,10 +39,13 @@ interface LedgerItemRow {
   occurredAt: string
   merchant: string | null
   counterparty: string | null
+  note: string | null
   categoryName: string | null
   primaryAccount: string | null
   sourceAccount: string | null
   targetAccount: string | null
+  originalAmountMinor: number | null
+  discountMinor: number | null
 }
 
 export class DashboardRepository extends BaseRepository {
@@ -102,9 +109,12 @@ export class DashboardRepository extends BaseRepository {
           transactions.id,
           transactions.type,
           transactions.amount_minor AS amountMinor,
+          MAX(transaction_discounts.original_amount_minor) AS originalAmountMinor,
+          MAX(transaction_discounts.discount_minor) AS discountMinor,
           transactions.occurred_at AS occurredAt,
           transactions.merchant,
           transactions.counterparty,
+          transactions.note,
           MAX(categories.name) AS categoryName,
           MAX(CASE
             WHEN transactions.type NOT IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
@@ -122,6 +132,8 @@ export class DashboardRepository extends BaseRepository {
         LEFT JOIN entries ON entries.transaction_id = transactions.id
         LEFT JOIN accounts ON accounts.id = entries.account_id
         LEFT JOIN categories ON categories.id = entries.category_id
+        LEFT JOIN transaction_discounts
+          ON transaction_discounts.transaction_id = transactions.id
         WHERE transactions.ledger_id = ?
           AND transactions.status = 'posted'
           AND transactions.occurred_at >= ?
@@ -141,9 +153,12 @@ export class DashboardRepository extends BaseRepository {
           transactions.id,
           transactions.type,
           transactions.amount_minor AS amountMinor,
+          MAX(transaction_discounts.original_amount_minor) AS originalAmountMinor,
+          MAX(transaction_discounts.discount_minor) AS discountMinor,
           transactions.occurred_at AS occurredAt,
           transactions.merchant,
           transactions.counterparty,
+          transactions.note,
           MAX(categories.name) AS categoryName,
           MAX(CASE
             WHEN transactions.type NOT IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
@@ -161,6 +176,8 @@ export class DashboardRepository extends BaseRepository {
         LEFT JOIN entries ON entries.transaction_id = transactions.id
         LEFT JOIN accounts ON accounts.id = entries.account_id
         LEFT JOIN categories ON categories.id = entries.category_id
+        LEFT JOIN transaction_discounts
+          ON transaction_discounts.transaction_id = transactions.id
         WHERE transactions.ledger_id = ?
           AND transactions.status = 'posted'
           AND transactions.type NOT IN (
@@ -178,7 +195,19 @@ export class DashboardRepository extends BaseRepository {
 }
 
 function mapLedgerItem(row: LedgerItemRow): LedgerListItem {
-  const transferLabel = [row.sourceAccount, row.targetAccount].filter(Boolean).join(' → ')
+  const directional = [
+    'transfer',
+    'repayment',
+    'loan_out',
+    'loan_recovery',
+    'borrowing',
+    'repay_borrowing',
+  ].includes(row.type)
+  const categoryLabel = directional
+    ? transactionFallbackTitle(row.type)
+    : (row.categoryName ?? transactionFallbackTitle(row.type))
+  const noteLabel = row.merchant ?? row.counterparty ?? row.note ?? undefined
+  const transferLabel = [row.sourceAccount, row.targetAccount].filter(Boolean).join('→')
   return {
     id: row.id,
     type: row.type,
@@ -186,16 +215,11 @@ function mapLedgerItem(row: LedgerItemRow): LedgerListItem {
     occurredAt: row.occurredAt,
     title:
       row.merchant ?? row.counterparty ?? row.categoryName ?? transactionFallbackTitle(row.type),
-    accountLabel: [
-      'transfer',
-      'repayment',
-      'loan_out',
-      'loan_recovery',
-      'borrowing',
-      'repay_borrowing',
-    ].includes(row.type)
-      ? transferLabel
-      : (row.primaryAccount ?? '未指定账户'),
+    categoryLabel,
+    noteLabel,
+    accountLabel: directional ? transferLabel : (row.primaryAccount ?? '未指定账户'),
+    originalAmountMinor: row.originalAmountMinor ?? undefined,
+    discountMinor: row.discountMinor ?? undefined,
   }
 }
 

@@ -5,6 +5,7 @@ import {
   createCreditPurchase,
   createExpense,
   createIncome,
+  createLoanOut,
   createRepayBorrowing,
   createTransfer,
   type CategoryPostingRef,
@@ -549,6 +550,21 @@ export class ImportService {
       const created = await this.transactions.create(ledgerId, draft)
       return created.id
     }
+    if (row.raw.transferPurpose === 'loan_out') {
+      if (targetAccount.type !== 'receivable') {
+        throw new Error('借出款的转入账户必须是应收/借出账户')
+      }
+      const draft = createLoanOut({
+        amountMinor: row.raw.amountMinor,
+        occurredAt,
+        sourceAccount,
+        receivableAccount: targetAccount,
+        counterparty: row.raw.targetAccountName,
+        note: row.raw.note,
+      })
+      const created = await this.transactions.create(ledgerId, draft)
+      return created.id
+    }
     const draft = createTransfer({
       amountMinor: row.raw.amountMinor,
       occurredAt,
@@ -677,6 +693,7 @@ function parseRow(
     index: rowIndex,
     raw,
     kind,
+    transferPurpose: detection.transferPurpose,
     typeInferred,
     amountMinor: Math.abs(amountMinor),
     occurredAt,
@@ -788,13 +805,20 @@ const TRANSFER_KEYWORDS = [
 function detectKind(
   typeText: string,
   amountMinor: number,
-): { kind: ImportTransactionKind | undefined; inferred: boolean } {
+): {
+  kind: ImportTransactionKind | undefined
+  inferred: boolean
+  transferPurpose?: 'loan_out'
+} {
   const normalized = typeText.trim().toLowerCase()
   if (normalized === '') {
     return { kind: amountMinor < 0 ? 'expense' : 'income', inferred: true }
   }
   if (['expense', '支出', '支'].includes(normalized)) return { kind: 'expense', inferred: false }
   if (['income', '收入', '收'].includes(normalized)) return { kind: 'income', inferred: false }
+  if (normalized.includes('借出') || normalized.includes('借给')) {
+    return { kind: 'transfer', inferred: false, transferPurpose: 'loan_out' }
+  }
   if (TRANSFER_KEYWORDS.includes(normalized)) {
     return { kind: 'transfer', inferred: false }
   }
@@ -949,10 +973,13 @@ function collectPendingAccounts(
   pending: PendingAccountCreation[],
   pendingIds: Map<string, string>,
 ): void {
-  const names = [row.sourceAccountName, row.targetAccountName].filter((name): name is string =>
-    Boolean(name && name.trim()),
+  const accounts = [
+    { rawName: row.sourceAccountName, role: 'source' as const },
+    { rawName: row.targetAccountName, role: 'target' as const },
+  ].filter((item): item is { rawName: string; role: 'source' | 'target' } =>
+    Boolean(item.rawName && item.rawName.trim()),
   )
-  for (const rawName of names) {
+  for (const { rawName, role } of accounts) {
     const key = rawName.trim()
     if (accountMap.has(key)) continue
     // 先尝试按名称匹配已有账户
@@ -964,17 +991,22 @@ function collectPendingAccounts(
     // 未匹配，用 catalog 推断类型并生成 pending 创建项
     if (pendingIds.has(key)) continue
     const catalog = findAccountCatalogItem(key)
+    const isLoanReceivable = row.transferPurpose === 'loan_out' && role === 'target'
     const tempId = `pending:account:${key}`
     pendingIds.set(key, tempId)
     accountMap.set(key, tempId)
     // 当 rawName 比 catalog.name 更具体时（如"中信银行信用卡"包含"信用卡"），
     // 用 rawName 作为账户名，保留完整信息
-    const inferredName = key !== catalog.name && key.includes(catalog.name) ? key : catalog.name
+    const inferredName = isLoanReceivable
+      ? key
+      : key !== catalog.name && key.includes(catalog.name)
+        ? key
+        : catalog.name
     pending.push({
       rawName: key,
-      accountType: catalog.type,
+      accountType: isLoanReceivable ? 'receivable' : catalog.type,
       inferredName,
-      institution: catalog.institution,
+      institution: isLoanReceivable ? key : catalog.institution,
     })
   }
 }

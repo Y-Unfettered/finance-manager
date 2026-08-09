@@ -27,6 +27,7 @@ import {
 } from '@/features/recurring/recurring-service'
 import { useTemplateService } from '@/features/templates/template-service'
 import { useAppStore } from '@/stores/app'
+import { navigateBack } from '@/router/navigation-transition'
 
 const TEMPLATE_TYPE_LABELS: Record<TransactionTemplateType, string> = {
   expense: '支出',
@@ -437,7 +438,7 @@ onMounted(load)
 <template>
   <main class="templates-page">
     <div class="templates-page__safe-top">
-      <AppTopBar title="模板与周期交易" @back="router.replace({ name: 'profile' })" />
+      <AppTopBar title="模板与周期交易" @back="navigateBack(router, { name: 'settings' })" />
     </div>
 
     <div class="templates-page__content">

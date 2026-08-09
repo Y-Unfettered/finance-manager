@@ -137,6 +137,51 @@ describe('finance repositories', () => {
     })
   })
 
+  it('calculates account balances at a historical month end', async () => {
+    const database = new NodeSqliteExecutor()
+    await runMigrations(database, undefined, clock.nowIso)
+    const ids = new SequenceIdGenerator()
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const accounts = new AccountRepository(database)
+    const categories = new CategoryRepository(database)
+    const transactions = new TransactionRepository(database, ids, clock)
+    const bank = account('historical-bank', ledger.id, '历史银行卡', 'bank', 'debit')
+    await accounts.create(bank)
+    const categoryList = await categories.listByLedger(ledger.id)
+    const salary = categoryList.find((category) => category.name === '工资')!
+    const food = categoryList.find((category) => category.name === '餐饮')!
+
+    await transactions.create(
+      ledger.id,
+      createIncome({
+        amountMinor: 100_000,
+        occurredAt: '2026-07-15T12:00:00+08:00',
+        depositAccount: bank,
+        category: salary,
+      }),
+    )
+    await transactions.create(
+      ledger.id,
+      createExpense({
+        amountMinor: 20_000,
+        occurredAt: '2026-08-05T12:00:00+08:00',
+        paymentAccount: bank,
+        category: food,
+      }),
+    )
+
+    expect(
+      balanceMap(await accounts.listBalancesAt(ledger.id, '2026-08-01T00:00:00.000Z')),
+    ).toMatchObject({ 'historical-bank': 100_000 })
+    expect(
+      balanceMap(await accounts.listBalancesAt(ledger.id, '2026-09-01T00:00:00.000Z')),
+    ).toMatchObject({ 'historical-bank': 80_000 })
+  })
+
   it('rolls back the transaction header when any entry fails', async () => {
     const database = new NodeSqliteExecutor()
     await runMigrations(database, undefined, clock.nowIso)

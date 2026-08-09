@@ -251,6 +251,15 @@ function goCategory(categoryId?: string): void {
         <span class="tx-detail__date">{{ formattedOccurredAt }}</span>
       </div>
 
+      <div v-if="tx.discountMinor" class="tx-detail__row">
+        <Tag :size="18" :stroke-width="1.75" aria-hidden="true" />
+        <span class="tx-detail__label">优惠</span>
+        <strong class="tx-detail__value">
+          -¥{{ (tx.discountMinor / 100).toFixed(2) }} · 原价
+          ¥{{ ((tx.originalAmountMinor ?? tx.amountMinor) / 100).toFixed(2) }}
+        </strong>
+      </div>
+
       <!-- 第二行：分类 -->
       <button
         v-if="tx.categoryName"

@@ -97,6 +97,46 @@ export class AccountRepository extends BaseRepository {
     return rows.map(mapBalance)
   }
 
+  async listBalancesAt(ledgerId: string, endUtc: string): Promise<AccountBalanceRecord[]> {
+    const rows = await this.database.query<BalanceRow>(
+      `
+        SELECT
+          accounts.id,
+          accounts.ledger_id AS ledgerId,
+          accounts.name,
+          accounts.type,
+          accounts.normal_balance AS normalBalance,
+          accounts.currency,
+          accounts.institution,
+          accounts.archived_at AS archivedAt,
+          accounts.created_at AS createdAt,
+          accounts.updated_at AS updatedAt,
+          COALESCE(SUM(CASE
+            WHEN transactions.id IS NULL THEN 0
+            WHEN entries.side = accounts.normal_balance THEN entries.amount_minor
+            ELSE -entries.amount_minor
+          END), 0) AS balanceMinor,
+          account_preferences.brand_key AS brandKey,
+          account_preferences.icon_key AS iconKey,
+          account_preferences.color,
+          COALESCE(account_preferences.include_in_asset_stats, 1) AS includeInAssetStats,
+          COALESCE(account_preferences.visible_in_entry, 1) AS visibleInEntry
+        FROM accounts
+        LEFT JOIN entries ON entries.account_id = accounts.id
+        LEFT JOIN transactions ON transactions.id = entries.transaction_id
+          AND transactions.status = 'posted'
+          AND transactions.occurred_at < ?
+        LEFT JOIN account_preferences ON account_preferences.account_id = accounts.id
+        WHERE accounts.ledger_id = ?
+          AND COALESCE(account_preferences.include_in_asset_stats, 1) = 1
+        GROUP BY accounts.id
+        ORDER BY accounts.name
+      `,
+      [endUtc, ledgerId],
+    )
+    return rows.map(mapBalance)
+  }
+
   async findBalance(id: string): Promise<AccountBalanceRecord | undefined> {
     const rows = await this.database.query<BalanceRow>(
       `${BALANCE_SELECT} WHERE accounts.id = ? LIMIT 1`,

@@ -2,13 +2,20 @@
 import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { Plus } from '@lucide/vue'
-import { computed, inject, onMounted, onUnmounted, ref } from 'vue'
+import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 
 import PinUnlockView from '@/views/PinUnlockView.vue'
+import RoutePageFrame from '@/components/RoutePageFrame.vue'
 import { appLockServiceKey } from '@/features/app-lock/app-lock-service'
 import { useAppLockStore } from '@/features/app-lock/app-lock-store'
 import { useAppStore } from '@/stores/app'
+import {
+  navigationCacheEpoch,
+  navigationDirection,
+  navigationEntryId,
+  resetNavigationStateCache,
+} from '@/router/navigation-transition'
 
 const appStore = useAppStore()
 const route = useRoute()
@@ -16,8 +23,9 @@ const lockStore = useAppLockStore()
 const appLockService = inject(appLockServiceKey)
 
 const privacyVeil = ref(false)
-const pageTransition = computed(() =>
-  route.meta.pageTransition === 'page-back' ? 'page-back' : 'page-forward',
+const routeViewKey = computed(
+  () =>
+    `${navigationCacheEpoch.value}:${navigationEntryId.value}:${String(route.name ?? route.path)}`,
 )
 
 const showUnlock = computed(
@@ -54,14 +62,28 @@ onMounted(async () => {
 onUnmounted(() => {
   appStateListener?.remove()
 })
+
+watch(
+  () => appStore.ledgerId,
+  (ledgerId, previousLedgerId) => {
+    if (previousLedgerId && ledgerId !== previousLedgerId) resetNavigationStateCache()
+  },
+)
 </script>
 
 <template>
   <PinUnlockView v-if="showUnlock" />
-  <template v-else>
+  <div v-else class="app-navigation" :data-navigation-direction="navigationDirection">
     <RouterView v-slot="{ Component }">
-      <Transition :name="pageTransition">
-        <component :is="Component" />
+      <Transition name="route-page">
+        <KeepAlive :max="32">
+          <RoutePageFrame
+            v-if="Component"
+            :key="routeViewKey"
+            :view-component="Component"
+            :contained-scroll="route.name === 'accounts'"
+          />
+        </KeepAlive>
       </Transition>
     </RouterView>
     <RouterLink
@@ -73,7 +95,7 @@ onUnmounted(() => {
     >
       <Plus :size="30" :stroke-width="2" aria-hidden="true" />
     </RouterLink>
-  </template>
+  </div>
 
   <!-- 隐私遮挡：切到后台时覆盖内容，防止任务列表预览泄露账目 -->
   <Transition name="fade">
@@ -84,44 +106,75 @@ onUnmounted(() => {
 </template>
 
 <style>
-.page-forward-enter-active,
-.page-forward-leave-active,
-.page-back-enter-active,
-.page-back-leave-active {
+.app-navigation {
+  min-height: 100dvh;
+  overflow-x: clip;
+  background: var(--color-background);
+}
+
+.route-page-frame {
   position: fixed;
   inset: 0;
   width: 100%;
+  max-width: 100vw;
   height: 100dvh;
-  overflow: hidden auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-x: none;
   background: var(--color-background);
-  transition: transform 300ms var(--ease-emphasized);
+  backface-visibility: hidden;
+  contain: layout paint;
+  transform: translate3d(0, 0, 0);
+}
+
+.route-page-frame--contained-scroll {
+  overflow-y: hidden;
+}
+
+.route-page-enter-active,
+.route-page-leave-active {
   will-change: transform;
 }
 
-.page-forward-enter-active,
-.page-back-leave-active {
+.route-page-enter-active {
+  z-index: 62;
+  transition: transform 260ms var(--ease-emphasized);
+}
+
+.route-page-leave-active {
+  z-index: 61;
+  transition:
+    transform 260ms var(--ease-emphasized),
+    opacity 260ms var(--ease-emphasized);
+}
+
+.app-navigation[data-navigation-direction='forward'] .route-page-enter-from {
+  transform: translate3d(100%, 0, 0);
+}
+
+.app-navigation[data-navigation-direction='forward'] .route-page-leave-to {
+  opacity: 0.92;
+  transform: translate3d(-18%, 0, 0);
+}
+
+.app-navigation[data-navigation-direction='back'] .route-page-leave-active {
   z-index: 62;
 }
 
-.page-forward-leave-active,
-.page-back-enter-active {
+.app-navigation[data-navigation-direction='back'] .route-page-leave-to {
+  transform: translate3d(100%, 0, 0);
+}
+
+.app-navigation[data-navigation-direction='back'] .route-page-enter-active {
   z-index: 61;
+  transition:
+    transform 260ms var(--ease-emphasized),
+    opacity 260ms var(--ease-emphasized);
 }
 
-.page-forward-enter-from {
-  transform: translateX(100%);
-}
-
-.page-forward-leave-to {
-  transform: translateX(-22%);
-}
-
-.page-back-enter-from {
-  transform: translateX(-22%);
-}
-
-.page-back-leave-to {
-  transform: translateX(100%);
+.app-navigation[data-navigation-direction='back'] .route-page-enter-from {
+  opacity: 0.92;
+  transform: translate3d(-18%, 0, 0);
 }
 
 .fade-enter-active,
@@ -161,16 +214,16 @@ onUnmounted(() => {
   color: white;
   background: var(--color-primary-600);
   border-radius: var(--radius-pill);
-  box-shadow: 0 10px 28px rgb(23 107 93 / 28%);
+  box-shadow: 0 10px 28px rgb(var(--color-primary-rgb) / 28%);
   transform: translateX(-50%);
   transition:
     box-shadow var(--motion-fast) var(--ease-standard),
     opacity var(--motion-base) var(--ease-emphasized),
-    transform var(--motion-instant) var(--ease-standard);
+    transform var(--motion-base) var(--ease-emphasized);
 }
 
 .home-create-fab:active {
-  box-shadow: 0 6px 18px rgb(23 107 93 / 22%);
+  box-shadow: 0 6px 18px rgb(var(--color-primary-rgb) / 22%);
   transform: translateX(-50%) scale(0.96);
 }
 

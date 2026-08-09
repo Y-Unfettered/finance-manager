@@ -2,8 +2,9 @@
 import { BookOpen, Search, ReceiptText, Settings } from '@lucide/vue'
 import { Popup } from 'vant'
 import 'vant/es/popup/style'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useRoutePageActive } from '@/composables/routePageActivation'
 import { useAppStore } from '@/stores/app'
 import { useLedgerService } from '@/features/ledger/ledger-service'
 
@@ -16,10 +17,13 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+const pageActive = useRoutePageActive()
+const visible = computed(() => props.show && pageActive.value)
 const appStore = useAppStore()
 const ledgers = useLedgerService()
 const usedDays = ref(1)
 const touchStart = ref<{ x: number; y: number }>()
+const pendingRouteName = ref<string>()
 
 interface DrawerEntry {
   id: string
@@ -42,8 +46,14 @@ function close(): void {
 
 function go(entry: DrawerEntry): void {
   if (entry.disabled || !entry.route) return
+  pendingRouteName.value = entry.route
   close()
-  void router.push({ name: entry.route })
+}
+
+function handleClosed(): void {
+  const routeName = pendingRouteName.value
+  pendingRouteName.value = undefined
+  if (routeName) void router.push({ name: routeName })
 }
 
 async function loadLedgerCount(): Promise<void> {
@@ -57,13 +67,13 @@ async function loadLedgerCount(): Promise<void> {
 }
 
 function handleTouchStart(event: TouchEvent): void {
-  if (!props.show) return
+  if (!visible.value) return
   const touch = event.touches[0]
   touchStart.value = touch ? { x: touch.clientX, y: touch.clientY } : undefined
 }
 
 function handleTouchEnd(event: TouchEvent): void {
-  if (!props.show) return
+  if (!visible.value) return
   const start = touchStart.value
   const touch = event.changedTouches[0]
   touchStart.value = undefined
@@ -94,12 +104,14 @@ onBeforeUnmount(() => {
 
 <template>
   <Popup
-    :show="show"
+    :show="visible"
     teleport="body"
     position="left"
+    transition="home-drawer"
     :style="{ width: '70%', height: '100%' }"
     class="side-drawer"
     @update:show="$emit('update:show', $event)"
+    @closed="handleClosed"
   >
     <button class="side-drawer__profile" type="button" @click="go(entries[0]!)">
       <div class="side-drawer__avatar">L</div>
@@ -204,5 +216,21 @@ onBeforeUnmount(() => {
 }
 .drawer-entry:active {
   background: var(--color-primary-50);
+}
+
+:global(.home-drawer-enter-active),
+:global(.home-drawer-leave-active) {
+  transition: transform var(--motion-slow) var(--ease-emphasized) !important;
+  will-change: transform;
+}
+
+:global(.home-drawer-enter-from),
+:global(.home-drawer-leave-to) {
+  transform: translate3d(-100%, -50%, 0) !important;
+}
+
+:global(.home-drawer-enter-to),
+:global(.home-drawer-leave-from) {
+  transform: translate3d(0, -50%, 0) !important;
 }
 </style>

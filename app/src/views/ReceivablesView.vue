@@ -19,6 +19,7 @@ import type { AccountBalanceRecord, ReceivableBalanceRecord } from '@/domain/ent
 import { parseCnyInputToMinor } from '@/domain/money'
 import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
+import { navigateBack } from '@/router/navigation-transition'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -240,7 +241,7 @@ onMounted(load)
 <template>
   <main class="receivables-page">
     <div class="receivables-page__safe-top">
-      <AppTopBar title="借出款" @back="router.replace({ name: 'accounts' })" />
+      <AppTopBar title="借出款" @back="navigateBack(router, { name: 'accounts' })" />
     </div>
 
     <div class="receivables-page__content">
@@ -557,7 +558,7 @@ onMounted(load)
   background: var(--color-primary-600);
   border: 0;
   border-radius: var(--radius-pill);
-  box-shadow: 0 8px 24px rgb(23 107 93 / 22%);
+  box-shadow: 0 8px 24px rgb(var(--color-primary-rgb) / 22%);
 }
 .page-state,
 .empty-state {

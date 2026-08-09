@@ -57,7 +57,7 @@ describe('BackupService', () => {
     const parsed = JSON.parse(json)
     expect(parsed.format).toBe('finance-manager-backup')
     expect(parsed.version).toBe(1)
-    expect(parsed.schemaVersion).toBe(9)
+    expect(parsed.schemaVersion).toBe(10)
     expect(parsed.appVersion).toBe('0.0.10')
     expect(parsed.checksum).toMatch(/^[0-9a-f]{64}$/)
     expect(parsed.recordCounts.transactions).toBeGreaterThanOrEqual(1)
@@ -73,7 +73,7 @@ describe('BackupService', () => {
     const result = await verifyBackupJson(json)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.schemaVersion).toBe(9)
+      expect(result.schemaVersion).toBe(10)
       expect(result.totalRestored).toBeGreaterThan(0)
     }
   })
@@ -104,6 +104,46 @@ describe('BackupService', () => {
 })
 
 describe('RestoreService', () => {
+  it('keeps uploaded category icons through a full backup and restore', async () => {
+    const { database, ledger, finance } = await setupLedgerWithExpenses()
+    const food = (await finance.listExpenseCategories(ledger.id)).find(
+      (category) => category.name === '餐饮',
+    )!
+    const customIcon = 'data:image/png;base64,Y2F0ZWdvcnktaWNvbg=='
+    await finance.saveCategory({
+      ledgerId: ledger.id,
+      categoryId: food.id,
+      kind: 'expense',
+      name: food.name,
+      parentId: food.parentId,
+      iconKey: customIcon,
+      color: '#5b8def',
+    })
+    const json = await new BackupService({
+      database,
+      clock,
+      appVersion: '0.0.10',
+    }).createBackupJson()
+
+    const fresh = new NodeSqliteExecutor()
+    const freshIds = new SequenceIdGenerator()
+    await runMigrations(fresh, undefined, clock.nowIso)
+    const outcome = await new RestoreService({
+      database: fresh,
+      clock,
+      appVersion: '0.0.10',
+    }).restoreFromJson(json)
+    expect(outcome.result.ok).toBe(true)
+
+    const restoredLedger = (await new LedgerRepository(fresh).findFirst())!
+    const restoredFinance = new FinanceService(fresh, freshIds, clock)
+    expect(
+      (await restoredFinance.listExpenseCategories(restoredLedger.id)).find(
+        (category) => category.id === food.id,
+      )?.iconKey,
+    ).toBe(customIcon)
+  })
+
   it('restores a backup into an empty database and reproduces balances', async () => {
     const { database, ids, ledger, cash } = await setupLedgerWithExpenses()
     const backupService = new BackupService({ database, clock, appVersion: '0.0.10' })

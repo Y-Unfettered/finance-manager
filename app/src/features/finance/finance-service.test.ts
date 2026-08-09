@@ -22,6 +22,99 @@ class SequenceIdGenerator implements IdGenerator {
 }
 
 describe('FinanceService', () => {
+  it('persists uploaded category icons and allows replacing them with built-in icons', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+    const food = (await service.listExpenseCategories(ledger.id)).find(
+      (category) => category.name === '餐饮',
+    )!
+    const customIcon = 'data:image/png;base64,Y2F0ZWdvcnktaWNvbg=='
+
+    await service.saveCategory({
+      ledgerId: ledger.id,
+      categoryId: food.id,
+      kind: 'expense',
+      name: food.name,
+      parentId: food.parentId,
+      iconKey: customIcon,
+      color: '#5b8def',
+    })
+    expect(
+      (await service.listExpenseCategories(ledger.id)).find((category) => category.id === food.id)
+        ?.iconKey,
+    ).toBe(customIcon)
+
+    await service.saveCategory({
+      ledgerId: ledger.id,
+      categoryId: food.id,
+      kind: 'expense',
+      name: food.name,
+      parentId: food.parentId,
+      iconKey: 'utensils',
+      color: '#5b8def',
+    })
+    expect(
+      (await service.listExpenseCategories(ledger.id)).find((category) => category.id === food.id)
+        ?.iconKey,
+    ).toBe('utensils')
+  })
+
+  it('persists valid discounts and rejects discounts that reach or exceed the original amount', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+    const cash = (await service.listAccounts(ledger.id)).find((account) => account.type === 'cash')!
+    const food = (await service.listExpenseCategories(ledger.id)).find(
+      (category) => category.name === '餐饮',
+    )!
+
+    const transactionId = await service.createExpense({
+      ledgerId: ledger.id,
+      amountMinor: 1_500,
+      originalAmountMinor: 2_000,
+      discountMinor: 500,
+      accountId: cash.id,
+      categoryId: food.id,
+      occurredAt: clock.nowIso(),
+    })
+
+    expect(await service.getTransaction(transactionId)).toMatchObject({
+      amountMinor: 1_500,
+      originalAmountMinor: 2_000,
+      discountMinor: 500,
+    })
+    expect((await service.listRecentTransactions(ledger.id, 1))[0]).toMatchObject({
+      amountMinor: 1_500,
+      originalAmountMinor: 2_000,
+      discountMinor: 500,
+    })
+
+    await expect(
+      service.createExpense({
+        ledgerId: ledger.id,
+        amountMinor: 100,
+        originalAmountMinor: 2_000,
+        discountMinor: 2_100,
+        accountId: cash.id,
+        categoryId: food.id,
+        occurredAt: clock.nowIso(),
+      }),
+    ).rejects.toThrow('优惠金额必须小于原金额')
+  })
+
   it('creates an expense and exposes it through account balances and the monthly home snapshot', async () => {
     const database = new NodeSqliteExecutor()
     const ids = new SequenceIdGenerator()
@@ -61,6 +154,8 @@ describe('FinanceService', () => {
         type: 'expense',
         amountMinor: 3_800,
         title: '午餐',
+        categoryLabel: '餐饮',
+        noteLabel: '午餐',
         accountLabel: '现金',
       },
     ])
@@ -363,6 +458,21 @@ describe('FinanceService', () => {
       type: 'refund',
       originalTransactionId: purchaseId,
     })
+    expect(await service.listAccountActivity(creditCard.id)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          transactionId: purchaseId,
+          categoryName: '餐饮',
+          accountName: '信用卡',
+          ledgerName: '日常账本',
+        }),
+        expect.objectContaining({
+          transactionId: repaymentId,
+          sourceAccountName: '还款银行卡',
+          targetAccountName: '信用卡',
+        }),
+      ]),
+    )
   })
 
   it('edits a transfer as a transfer instead of converting it into an expense', async () => {

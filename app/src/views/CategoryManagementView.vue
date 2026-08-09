@@ -5,6 +5,7 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  ImagePlus,
   Plus,
   RotateCcw,
 } from '@lucide/vue'
@@ -15,43 +16,30 @@ import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import CategoryIcon from '@/components/CategoryIcon.vue'
+import { useUiPreference } from '@/composables/useUiPreference'
 import type { CategoryDetailRecord } from '@/domain/entities'
+import { CATEGORY_ICON_OPTIONS, type CategoryIconSeries } from '@/features/finance/category-icons'
 import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
-
-const ICON_OPTIONS = [
-  'utensils',
-  'coffee',
-  'shirt',
-  'bus',
-  'plane',
-  'baby',
-  'paw-print',
-  'phone',
-  'wine',
-  'book',
-  'house',
-  'sparkles',
-  'hospital',
-  'gift',
-  'car',
-  'gamepad',
-  'wallet',
-  'banknote',
-  'circle-ellipsis',
-] as const
+import { prepareCustomIconDataUri } from '@/utils/icon-image'
 
 const router = useRouter()
 const appStore = useAppStore()
 const finance = useFinanceService()
-const kind = ref<'expense' | 'income'>('expense')
+const kind = useUiPreference<'expense' | 'income'>('category-management:kind', 'expense', [
+  'expense',
+  'income',
+])
 const categories = ref<CategoryDetailRecord[]>([])
 const expanded = ref(new Set<string>())
 const showEditor = ref(false)
 const saving = ref(false)
+const preparingIcon = ref(false)
 const error = ref('')
 const showArchived = ref(false)
 const iconQuery = ref('')
+const iconSeries = ref<CategoryIconSeries>('outline')
+const customIconInput = ref<HTMLInputElement>()
 const form = ref({
   categoryId: '',
   parentId: '',
@@ -69,9 +57,17 @@ const roots = computed(() =>
 const activeRoots = computed(() =>
   categories.value.filter((item) => item.kind === kind.value && !item.parentId && !item.archivedAt),
 )
+const busy = computed(() => saving.value || preparingIcon.value)
+const hasCustomIcon = computed(() =>
+  /^data:image\/(?:png|jpeg|webp);base64,/i.test(form.value.iconKey),
+)
 const filteredIcons = computed(() => {
   const query = iconQuery.value.trim().toLowerCase()
-  return query ? ICON_OPTIONS.filter((icon) => icon.includes(query)) : ICON_OPTIONS
+  return CATEGORY_ICON_OPTIONS.filter(
+    (icon) =>
+      icon.series === iconSeries.value &&
+      (!query || `${icon.key} ${icon.label} ${icon.keywords}`.toLowerCase().includes(query)),
+  )
 })
 
 async function load(): Promise<void> {
@@ -94,6 +90,8 @@ function openCreate(parentId = ''): void {
     color: '#5b8def',
   }
   iconQuery.value = ''
+  iconSeries.value = 'outline'
+  preparingIcon.value = false
   error.value = ''
   showEditor.value = true
 }
@@ -107,12 +105,14 @@ function openEdit(item: CategoryDetailRecord): void {
     color: item.color ?? '#5b8def',
   }
   iconQuery.value = ''
+  iconSeries.value = form.value.iconKey.startsWith('filled:') ? 'filled' : 'outline'
+  preparingIcon.value = false
   error.value = ''
   showEditor.value = true
 }
 
 async function save(): Promise<void> {
-  if (!finance || !appStore.ledgerId || saving.value) return
+  if (!finance || !appStore.ledgerId || busy.value) return
   saving.value = true
   error.value = ''
   try {
@@ -131,6 +131,26 @@ async function save(): Promise<void> {
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
     saving.value = false
+  }
+}
+
+function selectCustomIcon(): void {
+  if (!busy.value) customIconInput.value?.click()
+}
+
+async function uploadCustomIcon(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || busy.value) return
+  error.value = ''
+  preparingIcon.value = true
+  try {
+    form.value.iconKey = await prepareCustomIconDataUri(file)
+  } catch (cause) {
+    error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    preparingIcon.value = false
   }
 }
 
@@ -303,26 +323,83 @@ onMounted(load)
             </option>
           </select>
         </label>
+        <div class="custom-icon-upload">
+          <button
+            type="button"
+            class="custom-upload-choice"
+            :class="{ active: hasCustomIcon }"
+            :disabled="busy"
+            @click="selectCustomIcon"
+          >
+            <ImagePlus :size="20" aria-hidden="true" />
+            <span>
+              <strong>{{ hasCustomIcon ? '更换自定义图标' : '上传自定义图标' }}</strong>
+              <small>支持 PNG、JPG、WebP，自动缩放为正方形</small>
+            </span>
+            <CategoryIcon
+              v-if="hasCustomIcon"
+              :icon-key="form.iconKey"
+              :color="form.color"
+              :label="form.name || '自定义分类图标'"
+              :size="36"
+            />
+            <ChevronRight v-else :size="19" aria-hidden="true" />
+          </button>
+          <input
+            ref="customIconInput"
+            class="custom-upload-input"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            @change="uploadCustomIcon"
+          />
+          <small v-if="hasCustomIcon" class="custom-upload-status">
+            已选择自定义图标；点击下方图标库可换回内置图标。
+          </small>
+        </div>
+        <div class="icon-series" aria-label="图标系列">
+          <button
+            type="button"
+            :disabled="busy"
+            :class="{ active: iconSeries === 'outline' }"
+            @click="iconSeries = 'outline'"
+          >
+            线性
+          </button>
+          <button
+            type="button"
+            :disabled="busy"
+            :class="{ active: iconSeries === 'filled' }"
+            @click="iconSeries = 'filled'"
+          >
+            面性
+          </button>
+        </div>
         <label
           ><span>图标搜索</span
-          ><input v-model="iconQuery" type="search" placeholder="输入英文图标名"
+          ><input
+            v-model="iconQuery"
+            type="search"
+            :disabled="busy"
+            placeholder="搜索餐饮、交通、购物…"
         /></label>
         <div class="icon-picker">
           <button
             v-for="icon in filteredIcons"
-            :key="icon"
+            :key="icon.key"
             type="button"
-            :class="{ active: form.iconKey === icon }"
-            :aria-label="icon"
-            @click="form.iconKey = icon"
+            :disabled="busy"
+            :class="{ active: form.iconKey === icon.key }"
+            :aria-label="icon.label"
+            @click="form.iconKey = icon.key"
           >
-            <CategoryIcon :icon-key="icon" :color="form.color" :size="38" />
+            <CategoryIcon :icon-key="icon.key" :color="form.color" :size="36" />
+            <small>{{ icon.label }}</small>
           </button>
         </div>
         <label><span>颜色</span><input v-model="form.color" type="color" /></label>
         <p v-if="error" class="error">{{ error }}</p>
-        <button class="save-button" type="submit" :disabled="saving">
-          {{ saving ? '保存中…' : '保存' }}
+        <button class="save-button" type="submit" :disabled="busy">
+          {{ preparingIcon ? '处理图片…' : saving ? '保存中…' : '保存' }}
         </button>
       </form>
     </AppBottomSheet>
@@ -460,7 +537,11 @@ onMounted(load)
 }
 .editor {
   display: grid;
+  max-height: calc(100dvh - 112px - env(safe-area-inset-bottom));
+  padding: 1px;
+  overflow-y: auto;
   gap: var(--space-4);
+  overscroll-behavior: contain;
 }
 .editor label {
   display: grid;
@@ -482,23 +563,91 @@ onMounted(load)
 .editor input[type='color'] {
   padding: 6px;
 }
+.custom-icon-upload {
+  display: grid;
+  gap: var(--space-2);
+}
+.custom-upload-choice {
+  display: grid;
+  min-height: 62px;
+  padding: var(--space-2) var(--space-3);
+  grid-template-columns: 24px 1fr 38px;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-primary-700);
+  text-align: left;
+  background: var(--color-primary-50);
+  border: 1px solid var(--color-primary-100);
+  border-radius: var(--radius-control);
+}
+.custom-upload-choice.active {
+  border-color: var(--color-primary-500);
+}
+.custom-upload-choice > span {
+  display: grid;
+  gap: 2px;
+}
+.custom-upload-choice small,
+.custom-upload-status {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+.custom-upload-choice > svg:last-child {
+  color: var(--color-text-tertiary);
+}
+.custom-upload-input {
+  display: none;
+}
+.custom-upload-status {
+  padding: 0 var(--space-1);
+}
+.icon-series {
+  display: grid;
+  padding: 3px;
+  grid-template-columns: 1fr 1fr;
+  background: var(--color-background);
+  border-radius: var(--radius-pill);
+}
+.icon-series button {
+  height: 36px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-pill);
+}
+.icon-series button.active {
+  color: white;
+  background: var(--color-primary-600);
+}
 .icon-picker {
   display: grid;
-  max-height: 176px;
+  max-height: 246px;
   overflow-y: auto;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: var(--space-2);
 }
 .icon-picker button {
   display: grid;
-  padding: 3px;
+  min-width: 0;
+  padding: 4px 2px 5px;
   place-items: center;
+  gap: 2px;
+  color: var(--color-text-secondary);
   background: transparent;
   border: 2px solid transparent;
-  border-radius: 50%;
+  border-radius: var(--radius-control);
 }
 .icon-picker button.active {
   border-color: var(--color-primary-500);
+  background: var(--color-primary-50);
+}
+.icon-picker small {
+  overflow: hidden;
+  width: 100%;
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .save-button {
   height: 48px;

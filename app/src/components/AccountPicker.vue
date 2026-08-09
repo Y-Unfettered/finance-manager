@@ -3,6 +3,8 @@ import { computed, ref } from 'vue'
 import { Filter, Plus } from '@lucide/vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import { formatMinorToCny } from '@/domain/money'
+import { findAccountCatalogItem } from '@/features/finance/account-catalog'
+import { useRoutePageActive } from '@/composables/routePageActivation'
 import AccountAvatar from './AccountAvatar.vue'
 import AccountBrandIcon from './AccountBrandIcon.vue'
 
@@ -21,6 +23,7 @@ const emit = defineEmits<{
 }>()
 
 const searchQuery = ref('')
+const pageActive = useRoutePageActive()
 
 const filteredAccounts = computed(() => {
   if (!searchQuery.value) return props.accounts
@@ -49,22 +52,18 @@ function createAccount(): void {
   emit('update:show', false)
 }
 
-function getAccountInitials(name: string): string {
-  return name.slice(0, 2)
-}
-
-function getBrandColor(acc: AccountBalanceRecord): string {
-  if (acc.type === 'credit_card') return 'var(--color-warning)'
-  if (acc.normalBalance === 'credit') return 'var(--color-info)'
-  const hash = [...acc.name].reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0)
-  const hue = Math.abs(hash) % 360
-  return `hsl(${hue}, 55%, 52%)`
+function appearance(acc: AccountBalanceRecord) {
+  return findAccountCatalogItem(acc.name, acc.institution)
 }
 </script>
 
 <template>
   <Teleport to="body">
-    <div v-if="show" class="account-picker__overlay" @click.self="emit('update:show', false)">
+    <div
+      v-if="show && pageActive"
+      class="account-picker__overlay"
+      @click.self="emit('update:show', false)"
+    >
       <div class="account-picker">
         <header class="account-picker__header">
           <h2>{{ title || '选择一个账户' }}</h2>
@@ -99,7 +98,7 @@ function getBrandColor(acc: AccountBalanceRecord): string {
               type="button"
               @click="select(null)"
             >
-              <AccountAvatar label="不选择账户" :size="'large'" />
+              <AccountAvatar label="不选择账户" />
               <div class="account-item__info">
                 <span class="account-item__name">不选择账户</span>
               </div>
@@ -119,9 +118,10 @@ function getBrandColor(acc: AccountBalanceRecord): string {
               >
                 <AccountBrandIcon
                   :label="acc.name"
-                  :symbol="getAccountInitials(acc.name)"
-                  :color="getBrandColor(acc)"
-                  :size="'large'"
+                  :brand-key="acc.brandKey ?? appearance(acc).id"
+                  :symbol="acc.iconKey ?? appearance(acc).symbol"
+                  :color="acc.color ?? appearance(acc).color"
+                  :size="'medium'"
                 />
                 <div class="account-item__info">
                   <span class="account-item__name">{{ acc.name }}</span>
@@ -146,9 +146,10 @@ function getBrandColor(acc: AccountBalanceRecord): string {
               >
                 <AccountBrandIcon
                   :label="acc.name"
-                  :symbol="getAccountInitials(acc.name)"
-                  :color="getBrandColor(acc)"
-                  :size="'large'"
+                  :brand-key="acc.brandKey ?? appearance(acc).id"
+                  :symbol="acc.iconKey ?? appearance(acc).symbol"
+                  :color="acc.color ?? appearance(acc).color"
+                  :size="'medium'"
                 />
                 <div class="account-item__info">
                   <span class="account-item__name">{{ acc.name }}</span>
@@ -243,7 +244,7 @@ function getBrandColor(acc: AccountBalanceRecord): string {
 .account-picker__body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-3) var(--space-4) env(safe-area-inset-bottom);
+  padding: var(--space-3) var(--space-3) env(safe-area-inset-bottom);
 }
 
 .account-section {
@@ -260,19 +261,20 @@ function getBrandColor(acc: AccountBalanceRecord): string {
 
 .account-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: var(--space-2);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .account-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: var(--space-3) var(--space-2);
-  background: var(--color-background);
-  border: 2px solid transparent;
-  border-radius: 14px;
+  gap: 4px;
+  min-width: 0;
+  padding: var(--space-2) 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -283,7 +285,7 @@ function getBrandColor(acc: AccountBalanceRecord): string {
 
 .account-item.selected {
   border-color: var(--color-primary-500);
-  background: var(--color-primary-50);
+  background: transparent;
 }
 
 .account-item--no-select {
@@ -308,7 +310,7 @@ function getBrandColor(acc: AccountBalanceRecord): string {
 
 .account-item__name {
   color: var(--color-text-primary);
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -323,7 +325,7 @@ function getBrandColor(acc: AccountBalanceRecord): string {
 
 .account-item__balance {
   color: var(--color-text-tertiary);
-  font-size: 12px;
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 

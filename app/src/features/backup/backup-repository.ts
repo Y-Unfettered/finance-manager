@@ -129,6 +129,10 @@ const TABLE_SCHEMAS: readonly TableSchema[] = [
     columns: ['transaction_id', 'original_transaction_id', 'relation_type', 'created_at'],
   },
   {
+    name: 'transaction_discounts',
+    columns: ['transaction_id', 'original_amount_minor', 'discount_minor', 'created_at'],
+  },
+  {
     name: 'transaction_attachments',
     columns: ['id', 'transaction_id', 'mime_type', 'data_uri', 'created_at'],
   },

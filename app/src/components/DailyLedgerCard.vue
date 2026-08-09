@@ -14,6 +14,7 @@ const props = withDefaults(
     items: readonly LedgerListItem[]
     selectedIds?: readonly string[]
     selectionMode?: boolean
+    summary?: string
   }>(),
   { selectedIds: () => [], selectionMode: false },
 )
@@ -63,6 +64,11 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
   if (item.type === 'expense' || item.type === 'credit_purchase') return 'expense'
   return 'default'
 }
+
+function rowNote(item: LedgerListItem): string {
+  const discount = item.discountMinor ? `优惠 ¥${(item.discountMinor / 100).toFixed(2)}` : ''
+  return [item.noteLabel, discount].filter(Boolean).join(' · ')
+}
 </script>
 
 <template>
@@ -70,9 +76,12 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
     <header class="daily-card__header">
       <strong>{{ label }}</strong>
       <span>
-        <template v-if="incomeMinor">收 ¥{{ (incomeMinor / 100).toFixed(2) }}</template>
-        <template v-if="incomeMinor && expenseMinor"> · </template>
-        <template v-if="expenseMinor">支 ¥{{ (expenseMinor / 100).toFixed(2) }}</template>
+        <template v-if="summary">{{ summary }}</template>
+        <template v-else>
+          <template v-if="incomeMinor">收 ¥{{ (incomeMinor / 100).toFixed(2) }}</template>
+          <template v-if="incomeMinor && expenseMinor"> · </template>
+          <template v-if="expenseMinor">支 ¥{{ (expenseMinor / 100).toFixed(2) }}</template>
+        </template>
       </span>
     </header>
     <div class="daily-card__list">
@@ -81,7 +90,10 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
         :key="item.id"
         type="button"
         class="transaction-row"
-        :class="{ 'transaction-row--selected': selectedIds.includes(item.id) }"
+        :class="{
+          'transaction-row--selection-mode': selectionMode,
+          'transaction-row--selected': selectedIds.includes(item.id),
+        }"
         @pointerdown="startPress(item)"
         @pointerup="cancelPress"
         @pointerleave="cancelPress"
@@ -99,15 +111,18 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
         </span>
         <span v-else class="transaction-row__dot" :data-type="item.type" aria-hidden="true" />
         <div class="transaction-row__body">
-          <strong>{{ item.title }}</strong>
-          <span>{{ item.accountLabel }}</span>
+          <strong>{{ item.categoryLabel ?? item.title }}</strong>
+          <span v-if="rowNote(item)">{{ rowNote(item) }}</span>
         </div>
-        <MoneyText
-          class="transaction-row__amount"
-          :amount-minor="displayAmount(item)"
-          :tone="amountTone(item)"
-          :show-plus="item.type === 'income' || item.type === 'refund'"
-        />
+        <div class="transaction-row__right">
+          <MoneyText
+            :amount-minor="displayAmount(item)"
+            :tone="amountTone(item)"
+            :show-plus="item.type === 'income' || item.type === 'refund'"
+            :show-currency="false"
+          />
+          <small>{{ item.accountLabel }}</small>
+        </div>
       </button>
     </div>
   </BaseCard>
@@ -151,9 +166,9 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
 
 .transaction-row {
   display: grid;
-  min-height: 56px;
-  padding: 0;
-  grid-template-columns: 8px minmax(0, 1fr) auto;
+  min-height: 55px;
+  padding: 5px 0;
+  grid-template-columns: 5px minmax(0, 1fr) minmax(88px, auto);
   align-items: center;
   gap: var(--space-3);
   color: inherit;
@@ -176,7 +191,12 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
 }
 
 .transaction-row--selected {
-  background: rgb(23 107 93 / 6%);
+  background: rgb(var(--color-primary-rgb) / 6%);
+}
+
+.transaction-row--selection-mode {
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  column-gap: var(--space-4);
 }
 
 .transaction-row__check {
@@ -195,8 +215,8 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
 }
 
 .transaction-row__dot {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
   background: var(--color-text-tertiary);
   border-radius: var(--radius-pill);
 }
@@ -233,9 +253,26 @@ function amountTone(item: LedgerListItem): 'default' | 'income' | 'expense' {
   white-space: nowrap;
 }
 
-.transaction-row__amount {
+.transaction-row__right {
+  display: grid;
+  min-width: 0;
+  justify-items: end;
+  gap: 1px;
+}
+
+.transaction-row__right :deep(.money-text) {
   font-size: var(--type-list-amount-size);
   font-weight: 500;
   line-height: var(--type-list-amount-line);
+}
+
+.transaction-row__right small {
+  overflow: hidden;
+  max-width: 150px;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

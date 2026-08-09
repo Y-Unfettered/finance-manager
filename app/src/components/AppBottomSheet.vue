@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { X } from '@lucide/vue'
 import { Popup } from 'vant'
+import { computed } from 'vue'
 import 'vant/es/popup/style'
 
-defineProps<{
+import { useRoutePageActive } from '@/composables/routePageActivation'
+
+const props = defineProps<{
   show: boolean
   title: string
 }>()
+
+const pageActive = useRoutePageActive()
+const visible = computed(() => props.show && pageActive.value)
 
 defineEmits<{
   'update:show': [value: boolean]
@@ -15,7 +21,7 @@ defineEmits<{
 
 <template>
   <Popup
-    :show="show"
+    :show="visible"
     teleport="body"
     position="bottom"
     round

@@ -19,6 +19,7 @@ export interface BankCatalogItem {
   name: string
   symbol: string
   color: string
+  aliases?: readonly string[]
 }
 
 export const ACCOUNT_CATALOG_GROUPS: readonly {
@@ -32,11 +33,11 @@ export const ACCOUNT_CATALOG_GROUPS: readonly {
     items: [
       item('cash', '现金', '¥', '#596cff', 'cash', 'funds'),
       item('wechat', '微信', '微', '#45bd68', 'platform', 'funds', '微信'),
-      item('零钱通', '微信零钱通', '通', '#f3b72b', 'platform', 'funds', '微信'),
+      item('wechat-balance', '微信零钱', '零', '#f3b72b', 'platform', 'funds', '微信'),
       item('alipay', '支付宝', '支', '#2f7cf6', 'platform', 'funds', '支付宝'),
       item('yu-ebao', '余额宝', '余', '#f45124', 'platform', 'funds', '支付宝'),
       item('yu-libao', '余利宝', '利', '#388cf5', 'platform', 'funds', '支付宝'),
-      item('pocket', '小荷包', '荷', '#f3983d', 'platform', 'funds', '支付宝'),
+      item('pocket', '支付宝小荷包', '荷', '#f3983d', 'platform', 'funds', '支付宝'),
       item('unionpay', '云闪付', '云', '#cf4247', 'platform', 'funds', '银联'),
       item('bank', '银行卡', '卡', '#4388f4', 'bank', 'funds', undefined, true),
       item('fund', '公积金', '积', '#7652eb', 'restricted_asset', 'funds'),
@@ -50,7 +51,7 @@ export const ACCOUNT_CATALOG_GROUPS: readonly {
   },
   {
     id: 'credit',
-    title: '信用卡账户',
+    title: '信用账户',
     items: [
       item('credit-card', '信用卡', '卡', '#e96d42', 'credit_card', 'credit', undefined, true),
       item('huabei', '花呗', '花', '#4d8ef7', 'consumer_credit', 'credit', '支付宝'),
@@ -100,7 +101,7 @@ export const BANK_CATALOG: readonly BankCatalogItem[] = [
   bank('spdb', '浦发银行', '浦', '#183d82'),
   bank('cgb', '广发银行', '广', '#c12b2a'),
   bank('psbc', '邮政储蓄银行', '邮', '#23834e'),
-  bank('rcc', '农村信用社', '信', '#35945b'),
+  bank('rcc', '四川农村信用社', '川', '#62a52c', ['农村信用社', '四川农信']),
   bank('pingan', '平安银行', '平', '#e85320'),
   bank('citic', '中信银行', '信', '#ca2e34'),
   bank('cib', '兴业银行', '兴', '#1a4b92'),
@@ -122,7 +123,11 @@ export function findAccountCatalogItem(
   )
   if (exact) return exact
 
-  const matchedBank = BANK_CATALOG.find((entry) => normalized.includes(entry.name.toLowerCase()))
+  const matchedBank = BANK_CATALOG.find(
+    (entry) =>
+      normalized.includes(entry.name.toLowerCase()) ||
+      entry.aliases?.some((alias) => normalized.includes(alias.toLowerCase())),
+  )
   if (matchedBank) {
     return item(
       matchedBank.id,
@@ -158,6 +163,12 @@ function item(
   return { id, name, symbol, color, type, group, institution, chooseBank }
 }
 
-function bank(id: string, name: string, symbol: string, color: string): BankCatalogItem {
-  return { id, name, symbol, color }
+function bank(
+  id: string,
+  name: string,
+  symbol: string,
+  color: string,
+  aliases?: readonly string[],
+): BankCatalogItem {
+  return { id, name, symbol, color, aliases }
 }

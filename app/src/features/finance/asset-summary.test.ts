@@ -52,6 +52,20 @@ describe('summarizeAssets', () => {
       count: 1,
     })
   })
+
+  it('keeps zero-balance accounts in totals but excludes them from account counts', () => {
+    const overview = summarizeAssets([
+      account('cash', 'cash', 'debit', 40_000),
+      account('empty-fund', 'investment', 'debit', 0),
+      account('empty-card', 'credit_card', 'credit', 0),
+    ])
+
+    expect(overview.totalAssetsMinor).toBe(40_000)
+    expect(overview.totalLiabilitiesMinor).toBe(0)
+    expect(overview.assetCount).toBe(1)
+    expect(overview.liabilityCount).toBe(0)
+    expect(overview.sections.find((section) => section.id === 'investment')?.count).toBe(0)
+  })
 })
 
 function account(

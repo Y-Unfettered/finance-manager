@@ -11,8 +11,8 @@ import {
   WalletCards,
   X,
 } from '@lucide/vue'
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
@@ -37,6 +37,7 @@ import {
   useHomePreferencesService,
   type HomePreferences,
 } from '@/features/preferences/home-preferences-service'
+import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
 
 interface DailyGroup {
   key: string
@@ -47,6 +48,7 @@ interface DailyGroup {
 }
 
 const router = useRouter()
+const route = useRoute()
 const appStore = useAppStore()
 const finance = useFinanceService()
 const budgetService = useBudgetService()
@@ -61,6 +63,7 @@ const homePreferences = ref<HomePreferences>({
   amountsHidden: false,
   rememberLastAccount: true,
   appearance: 'system',
+  colorTheme: 'green',
 })
 const loading = ref(true)
 const errorMessage = ref('')
@@ -76,13 +79,28 @@ const bulkDeleting = ref(false)
 const bulkEditing = ref(false)
 const bulkEditDate = ref('')
 const bulkEditNote = ref('')
+const homeScroller = ref<HTMLElement>()
+const isTopbarScrolled = ref(false)
+const homePullDistance = ref(0)
+const homeBottomBounce = ref(0)
+const homePulling = ref(false)
+const pullRefreshing = ref(false)
+let homeSwipeStart: { x: number; y: number } | undefined
+let homePullStartY: number | undefined
+let homeOverscrollEdge: 'top' | 'bottom' | undefined
+let homeScrollContainer: HTMLElement | undefined
+let lastHomeScrollTop = 0
+let homeFabTouchY: number | undefined
+let homeUsesTouchInput = false
 const selectionMode = computed(() => selectedIds.value.length > 0)
+const showPullIndicator = computed(() => homePullDistance.value > 3 || pullRefreshing.value)
+const topbarElevated = computed(() => isTopbarScrolled.value)
+const pullIndicatorStyle = computed(() => ({
+  transform: `translate3d(-50%, ${-34 + Math.min(42, homePullDistance.value * 0.96)}px, 0)`,
+}))
 
 const monthTitle = computed(
   () => `${currentMonth.value.getFullYear()}-${pad(currentMonth.value.getMonth() + 1)}`,
-)
-const monthLabelShort = computed(
-  () => `${currentMonth.value.getFullYear()}.${pad(currentMonth.value.getMonth() + 1)}`,
 )
 const dailyGroups = computed<DailyGroup[]>(() => {
   const groups = new Map<string, DailyGroup>()
@@ -123,7 +141,7 @@ const budgetProgress = computed(() => {
   }
 })
 
-async function loadHome(): Promise<void> {
+async function loadHome(options: { silent?: boolean } = {}): Promise<void> {
   if (!finance || !appStore.ledgerId) {
     loading.value = false
     errorMessage.value =
@@ -132,7 +150,7 @@ async function loadHome(): Promise<void> {
         : '正在准备本地账本，请稍候…'
     return
   }
-  loading.value = true
+  if (!options.silent) loading.value = true
   errorMessage.value = ''
   try {
     const periodKey = currentMonthPeriodKey(currentMonth.value)
@@ -152,7 +170,7 @@ async function loadHome(): Promise<void> {
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
-    loading.value = false
+    if (!options.silent) loading.value = false
   }
 }
 
@@ -160,7 +178,140 @@ function openDrawer(): void {
   showDrawer.value = true
 }
 
-defineExpose({ openDrawer })
+function handleHomeSwipeStart(event: TouchEvent): void {
+  const touch = event.touches[0]
+  homeUsesTouchInput = true
+  homeFabTouchY = touch && event.touches.length === 1 ? touch.clientY : undefined
+  homeSwipeStart =
+    !showDrawer.value && touch && event.touches.length === 1
+      ? { x: touch.clientX, y: touch.clientY }
+      : undefined
+}
+
+function handleHomeFabTouchMove(event: TouchEvent): void {
+  const touch = event.touches[0]
+  if (!touch || homeFabTouchY === undefined || selectionMode.value) return
+  const deltaY = touch.clientY - homeFabTouchY
+  if (Math.abs(deltaY) < 12) return
+  appStore.homeFabVisible = deltaY > 0
+  homeFabTouchY = touch.clientY
+}
+
+function handleHomeSwipeEnd(event: TouchEvent): void {
+  const start = homeSwipeStart
+  const touch = event.changedTouches[0]
+  homeSwipeStart = undefined
+  homeFabTouchY = undefined
+  if (!start || !touch || showDrawer.value) return
+  const deltaX = touch.clientX - start.x
+  const deltaY = touch.clientY - start.y
+  if (Math.abs(deltaX) < 64 || Math.abs(deltaX) <= Math.abs(deltaY) * 1.25) return
+  if (deltaX > 0) {
+    openDrawer()
+  } else {
+    goAssets()
+  }
+}
+
+function cancelHomeTouch(): void {
+  homeSwipeStart = undefined
+  homeFabTouchY = undefined
+}
+
+function updateTopbarAppearance(): void {
+  const scrollTop = homeScrollContainer?.scrollTop ?? 0
+  isTopbarScrolled.value = scrollTop > 2
+
+  if (!selectionMode.value && !homeUsesTouchInput) {
+    const delta = scrollTop - lastHomeScrollTop
+    if (Math.abs(delta) >= 8) appStore.homeFabVisible = delta < 0
+  }
+  lastHomeScrollTop = scrollTop
+}
+
+function bindHomeScroll(): void {
+  homeScrollContainer = homeScroller.value
+  lastHomeScrollTop = homeScrollContainer?.scrollTop ?? 0
+  if (!selectionMode.value) appStore.homeFabVisible = true
+  homeScrollContainer?.addEventListener('scroll', updateTopbarAppearance, { passive: true })
+  updateTopbarAppearance()
+}
+
+function handleHomePullStart(event: TouchEvent): void {
+  if (pullRefreshing.value || !homeScrollContainer) return
+  const touch = event.touches[0]
+  homePullStartY = touch && event.touches.length === 1 ? touch.clientY : undefined
+  const atTop = homeScrollContainer.scrollTop <= 1
+  const atBottom =
+    homeScrollContainer.scrollHeight -
+      homeScrollContainer.clientHeight -
+      homeScrollContainer.scrollTop <=
+    1
+  homeOverscrollEdge = atTop ? 'top' : atBottom ? 'bottom' : undefined
+  if (!homeOverscrollEdge) homePullStartY = undefined
+  homePulling.value = homePullStartY !== undefined
+}
+
+function handleHomePullMove(event: TouchEvent): void {
+  const touch = event.touches[0]
+  if (!touch || homePullStartY === undefined || !homeScrollContainer || !homeOverscrollEdge) return
+  const deltaY = touch.clientY - homePullStartY
+
+  if (homeOverscrollEdge === 'top') {
+    if (homeScrollContainer.scrollTop > 1 || deltaY <= 0) {
+      homePullDistance.value = 0
+      return
+    }
+    event.preventDefault()
+    homePullDistance.value = Math.min(72, deltaY * 0.42)
+    return
+  }
+
+  const atBottom =
+    homeScrollContainer.scrollHeight -
+      homeScrollContainer.clientHeight -
+      homeScrollContainer.scrollTop <=
+    1
+  if (!atBottom || deltaY >= 0) {
+    homeBottomBounce.value = 0
+    return
+  }
+  event.preventDefault()
+  homeBottomBounce.value = Math.min(34, -deltaY * 0.18)
+}
+
+async function handleHomePullEnd(): Promise<void> {
+  const overscrollEdge = homeOverscrollEdge
+  const shouldRefresh = homePullDistance.value >= 44
+  homePullStartY = undefined
+  homeOverscrollEdge = undefined
+  homePulling.value = false
+  if (overscrollEdge === 'bottom') {
+    homeBottomBounce.value = 0
+    return
+  }
+  if (!shouldRefresh) {
+    homePullDistance.value = 0
+    return
+  }
+
+  pullRefreshing.value = true
+  homePullDistance.value = 44
+  const refreshStartedAt = performance.now()
+  await loadHome({ silent: true })
+  const remaining = Math.max(0, 420 - (performance.now() - refreshStartedAt))
+  if (remaining > 0) await new Promise((resolve) => window.setTimeout(resolve, remaining))
+  pullRefreshing.value = false
+  homePullDistance.value = 0
+}
+
+function cancelHomePull(): void {
+  homePullStartY = undefined
+  homeOverscrollEdge = undefined
+  homePulling.value = false
+  homeBottomBounce.value = 0
+  if (!pullRefreshing.value) homePullDistance.value = 0
+}
 
 function shiftMonth(delta: number): void {
   const date = new Date(currentMonth.value)
@@ -233,7 +384,6 @@ function editSelection(): void {
   const id = selectedIds.value[0]
   if (!id) return
   if (selectedIds.value.length === 1) {
-    cancelSelection()
     void router.push({ name: 'new-expense', query: { edit: id } })
     return
   }
@@ -303,116 +453,178 @@ watch(currentMonth, (value) => {
   void loadHome()
 })
 
+watch(
+  () => route.name,
+  (routeName) => {
+    if (routeName !== 'home' && selectionMode.value) cancelSelection()
+  },
+)
+
 onMounted(loadHome)
+onMounted(bindHomeScroll)
+useRefreshOnActivated(() => loadHome({ silent: true }))
+onUnmounted(() => {
+  homeScrollContainer?.removeEventListener('scroll', updateTopbarAppearance)
+  appStore.homeFabVisible = true
+})
 </script>
 
 <template>
-  <main class="home-page">
-    <div class="home-topbar">
+  <main
+    class="home-page"
+    @touchstart.passive="handleHomeSwipeStart"
+    @touchmove.passive="handleHomeFabTouchMove"
+    @touchend="handleHomeSwipeEnd"
+    @touchcancel="cancelHomeTouch"
+  >
+    <div class="home-topbar" :class="{ 'home-topbar--scrolled': topbarElevated }">
       <AppTopBar
         :title="monthTitle"
         :show-back="false"
         period-switchable
-        variant="transparent"
+        :variant="topbarElevated ? 'surface' : 'transparent'"
         @select-period="showPeriod = true"
       >
         <template #left>
-          <AppIconButton label="菜单" variant="on-dark" @click="openDrawer">
+          <AppIconButton
+            label="菜单"
+            :variant="topbarElevated ? 'default' : 'on-dark'"
+            @click="openDrawer"
+          >
             <Menu :size="26" :stroke-width="2.4" aria-hidden="true" />
           </AppIconButton>
         </template>
         <template #right>
-          <AppIconButton label="日历视图" variant="on-dark" @click="goBills">
+          <AppIconButton
+            label="日历视图"
+            :variant="topbarElevated ? 'default' : 'on-dark'"
+            @click="goBills"
+          >
             <CalendarDays :size="23" :stroke-width="2.3" aria-hidden="true" />
           </AppIconButton>
-          <AppIconButton label="月报表" variant="on-dark" @click="goMonthlyReport">
+          <AppIconButton
+            label="月报表"
+            :variant="topbarElevated ? 'default' : 'on-dark'"
+            @click="goMonthlyReport"
+          >
             <ChartNoAxesColumn :size="23" :stroke-width="2.3" aria-hidden="true" />
           </AppIconButton>
-          <AppIconButton label="资产管理" variant="on-dark" @click="goAssets">
+          <AppIconButton
+            label="资产管理"
+            :variant="topbarElevated ? 'default' : 'on-dark'"
+            @click="goAssets"
+          >
             <WalletCards :size="23" :stroke-width="2.3" aria-hidden="true" />
           </AppIconButton>
         </template>
       </AppTopBar>
     </div>
-    <section class="home-hero">
-      <div class="home-hero__shade" />
-      <div class="home-hero__summary">
-        <div class="home-hero__expense">
-          <span>月支出</span>
-          <MoneyText :amount-minor="snapshot?.summary.expenseMinor ?? 0" />
+
+    <div class="home-pull-zone">
+      <Transition name="pull-indicator">
+        <div
+          v-if="showPullIndicator"
+          class="home-pull-indicator"
+          :class="{ 'home-pull-indicator--dragging': homePulling }"
+          :style="pullIndicatorStyle"
+          role="status"
+          aria-label="刷新账本"
+        >
+          <span />
         </div>
-        <div class="home-hero__metrics">
-          <div>
-            <span>月收入</span>
-            <MoneyText :amount-minor="snapshot?.summary.incomeMinor ?? 0" />
+      </Transition>
+    </div>
+
+    <div
+      ref="homeScroller"
+      class="home-scroll"
+      :class="{ 'home-scroll--pulling': homePulling }"
+      :style="{ transform: `translate3d(0, ${-homeBottomBounce}px, 0)` }"
+      @touchstart.passive="handleHomePullStart"
+      @touchmove="handleHomePullMove"
+      @touchend="handleHomePullEnd"
+      @touchcancel="cancelHomePull"
+    >
+      <section class="home-hero">
+        <div class="home-hero__shade" />
+        <div class="home-hero__summary">
+          <div class="home-hero__expense">
+            <span>月支出</span>
+            <MoneyText :amount-minor="snapshot?.summary.expenseMinor ?? 0" />
           </div>
-          <div>
-            <span>本月结余</span>
-            <MoneyText :amount-minor="snapshot?.summary.balanceMinor ?? 0" />
+          <div class="home-hero__metrics">
+            <div>
+              <span>月收入</span>
+              <MoneyText :amount-minor="snapshot?.summary.incomeMinor ?? 0" />
+            </div>
+            <div>
+              <span>本月结余</span>
+              <MoneyText :amount-minor="snapshot?.summary.balanceMinor ?? 0" />
+            </div>
           </div>
         </div>
-      </div>
-    </section>
+      </section>
 
-    <div class="home-page__content">
-      <BaseCard
-        class="budget-card"
-        :class="{ 'budget-card--over': budgetProgress.over }"
-        @click="goBudget"
-      >
-        <div class="budget-card__header">
-          <strong>预算 · {{ monthLabelShort }}</strong>
-          <AppIconButton label="预算管理">
-            <MoreHorizontal :size="22" :stroke-width="1.75" aria-hidden="true" />
-          </AppIconButton>
-        </div>
-        <div class="budget-card__track">
-          <span :style="{ width: `${budgetProgress.percent}%` }" />
-        </div>
-        <div class="budget-card__footer">
-          <span v-if="budgetProgress.has">
-            剩余：<b :class="{ 'budget-card--danger': budgetProgress.over }">
-              ¥{{ (budgetProgress.remainingMinor / 100).toFixed(2) }}
-            </b>
-          </span>
-          <span v-else>未设置预算，点击设置</span>
-          <span v-if="budgetProgress.has">
-            总额：¥{{ (budgetProgress.total / 100).toFixed(2) }} · 已用
-            {{ budgetProgress.percent.toFixed(0) }}%
-          </span>
-        </div>
-      </BaseCard>
+      <div class="home-page__content">
+        <BaseCard
+          class="budget-card"
+          :class="{ 'budget-card--over': budgetProgress.over }"
+          @click="goBudget"
+        >
+          <div class="budget-card__header">
+            <strong>预算</strong>
+            <AppIconButton label="预算管理">
+              <MoreHorizontal :size="22" :stroke-width="1.75" aria-hidden="true" />
+            </AppIconButton>
+          </div>
+          <div class="budget-card__track">
+            <span :style="{ width: `${budgetProgress.percent}%` }" />
+          </div>
+          <div class="budget-card__footer">
+            <span v-if="budgetProgress.has">
+              剩余：<b :class="{ 'budget-card--danger': budgetProgress.over }">
+                ¥{{ (budgetProgress.remainingMinor / 100).toFixed(2) }}
+              </b>
+            </span>
+            <span v-else>未设置预算，点击设置</span>
+            <span v-if="budgetProgress.has">
+              总额：¥{{ (budgetProgress.total / 100).toFixed(2) }} · 已用
+              {{ budgetProgress.percent.toFixed(0) }}%
+            </span>
+          </div>
+        </BaseCard>
 
-      <RecentSummaryCard
-        v-if="recentSummary"
-        :summary="recentSummary"
-        :display-type="homePreferences.summaryDisplayType"
-        @settings="showSummarySettings = true"
-      />
+        <RecentSummaryCard
+          v-if="recentSummary"
+          :summary="recentSummary"
+          :display-type="homePreferences.summaryDisplayType"
+          @settings="showSummarySettings = true"
+        />
 
-      <div v-if="loading" class="page-state">正在读取本地账本…</div>
-      <div v-else-if="errorMessage" class="page-state page-state--error">
-        <span>{{ errorMessage }}</span>
-        <button type="button" @click="loadHome">重新加载</button>
+        <div v-if="loading" class="page-state">正在读取本地账本…</div>
+        <div v-else-if="errorMessage" class="page-state page-state--error">
+          <span>{{ errorMessage }}</span>
+          <button type="button" @click="loadHome()">重新加载</button>
+        </div>
+        <div v-else-if="dailyGroups.length === 0" class="empty-state">
+          <CalendarDays :size="28" :stroke-width="1.5" aria-hidden="true" />
+          <strong>本月还没有流水</strong>
+          <span>点击下方绿色按钮，记下第一笔支出。</span>
+        </div>
+        <DailyLedgerCard
+          v-for="group in dailyGroups"
+          :key="group.key"
+          :label="group.label"
+          :income-minor="group.incomeMinor"
+          :expense-minor="group.expenseMinor"
+          :items="group.items"
+          :selected-ids="selectedIds"
+          :selection-mode="selectionMode"
+          @select="openTransaction"
+          @longpress="startSelection"
+          @toggle="toggleSelection"
+        />
       </div>
-      <div v-else-if="dailyGroups.length === 0" class="empty-state">
-        <CalendarDays :size="28" :stroke-width="1.5" aria-hidden="true" />
-        <strong>本月还没有流水</strong>
-        <span>点击下方绿色按钮，记下第一笔支出。</span>
-      </div>
-      <DailyLedgerCard
-        v-for="group in dailyGroups"
-        :key="group.key"
-        :label="group.label"
-        :income-minor="group.incomeMinor"
-        :expense-minor="group.expenseMinor"
-        :items="group.items"
-        :selected-ids="selectedIds"
-        :selection-mode="selectionMode"
-        @select="openTransaction"
-        @longpress="startSelection"
-        @toggle="toggleSelection"
-      />
     </div>
 
     <SideDrawer v-model:show="showDrawer" />
@@ -531,20 +743,103 @@ onMounted(loadHome)
 
 <style scoped>
 .home-page {
-  min-height: 100dvh;
-  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  position: relative;
+  height: 100dvh;
+  overflow: hidden;
+  touch-action: pan-y;
   background: var(--color-background);
 }
 
 .home-topbar {
-  position: sticky;
-  z-index: 30;
+  position: absolute;
+  z-index: 40;
   top: 0;
+  right: 0;
+  left: 0;
   height: calc(var(--size-app-bar) + env(safe-area-inset-top));
   padding-top: env(safe-area-inset-top);
-  margin-bottom: calc((var(--size-app-bar) + env(safe-area-inset-top)) * -1);
-  background: linear-gradient(180deg, rgb(7 20 18 / 52%), rgb(7 20 18 / 12%));
-  backdrop-filter: blur(4px);
+  background: transparent;
+  border-bottom: 1px solid transparent;
+  box-shadow: 0 5px 16px rgb(11 27 23 / 10%);
+  transition:
+    background-color var(--motion-fast) var(--ease-standard),
+    border-color var(--motion-fast) var(--ease-standard);
+}
+
+.home-topbar--scrolled {
+  background: var(--color-surface);
+  border-bottom-color: var(--color-divider);
+}
+
+.home-scroll {
+  position: absolute;
+  inset: 0;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: none;
+  touch-action: pan-y;
+  transition: transform var(--motion-base) var(--ease-emphasized);
+  -webkit-overflow-scrolling: touch;
+}
+
+.home-scroll--pulling {
+  transition: none;
+}
+
+.home-pull-zone {
+  position: absolute;
+  z-index: 36;
+  top: calc(var(--size-app-bar) + env(safe-area-inset-top));
+  right: 0;
+  left: 0;
+  height: 64px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.home-pull-indicator {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: 50%;
+  box-shadow: 0 5px 14px rgb(11 27 23 / 14%);
+  transition: transform var(--motion-base) var(--ease-emphasized);
+}
+
+.home-pull-indicator--dragging {
+  transition: none;
+}
+
+.home-pull-indicator span {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--color-primary-100);
+  border-top-color: var(--color-primary-600);
+  border-radius: 50%;
+  animation: home-loading-spin 0.72s linear infinite;
+}
+
+.pull-indicator-enter-active,
+.pull-indicator-leave-active {
+  transition: opacity var(--motion-fast) var(--ease-standard);
+}
+
+.pull-indicator-enter-from,
+.pull-indicator-leave-to {
+  opacity: 0;
+}
+
+@keyframes home-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .home-hero {

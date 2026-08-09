@@ -7,11 +7,13 @@ const props = withDefaults(
     currency?: string
     tone?: 'default' | 'income' | 'expense'
     showPlus?: boolean
+    showCurrency?: boolean
   }>(),
   {
     currency: 'CNY',
     tone: 'default',
     showPlus: false,
+    showCurrency: true,
   },
 )
 
@@ -19,8 +21,8 @@ const formatted = computed(() => {
   const value = props.amountMinor / 100
   const prefix = props.showPlus && value > 0 ? '+' : ''
   const formattedValue = new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
-    currency: props.currency,
+    style: props.showCurrency ? 'currency' : 'decimal',
+    ...(props.showCurrency ? { currency: props.currency } : {}),
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value)

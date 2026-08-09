@@ -80,7 +80,7 @@ onBeforeUnmount(() => timer && clearTimeout(timer))
   width: 32px;
   height: 32px;
   content: '';
-  background: rgb(23 107 93 / 10%);
+  background: rgb(var(--color-primary-rgb) / 10%);
   border-radius: 50%;
   opacity: 0;
   transform: scale(0.72);

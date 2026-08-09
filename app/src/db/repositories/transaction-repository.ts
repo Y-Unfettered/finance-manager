@@ -32,12 +32,33 @@ export interface AccountActivityRecord {
   occurredAt: string
   originalOccurredAt?: string
   title: string
+  merchant?: string
+  counterparty?: string
+  categoryName?: string
+  accountName: string
+  sourceAccountName?: string
+  targetAccountName?: string
+  ledgerName: string
   note?: string
 }
 
-interface AccountActivityRow extends Omit<AccountActivityRecord, 'note' | 'originalOccurredAt'> {
+interface AccountActivityRow extends Omit<
+  AccountActivityRecord,
+  | 'note'
+  | 'originalOccurredAt'
+  | 'merchant'
+  | 'counterparty'
+  | 'categoryName'
+  | 'sourceAccountName'
+  | 'targetAccountName'
+> {
   note: string | null
   originalOccurredAt: string | null
+  merchant: string | null
+  counterparty: string | null
+  categoryName: string | null
+  sourceAccountName: string | null
+  targetAccountName: string | null
 }
 
 export interface TransactionSearchFilter {
@@ -64,6 +85,15 @@ export interface TransactionSearchResultItem {
   note?: string
   categoryName?: string
   primaryAccountName?: string
+  sourceAccountName?: string
+  targetAccountName?: string
+  originalAmountMinor?: number
+  discountMinor?: number
+}
+
+export interface TransactionDiscountRecord {
+  originalAmountMinor: number
+  discountMinor: number
 }
 
 interface SearchRow {
@@ -76,6 +106,10 @@ interface SearchRow {
   note: string | null
   categoryName: string | null
   primaryAccountName: string | null
+  sourceAccountName: string | null
+  targetAccountName: string | null
+  originalAmountMinor: number | null
+  discountMinor: number | null
 }
 
 export class TransactionRepository extends BaseRepository {
@@ -92,8 +126,9 @@ export class TransactionRepository extends BaseRepository {
     draft: TransactionDraft,
     link?: { originalTransactionId: string; relationType: 'refund' },
     attachmentDataUris: readonly string[] = [],
+    discount?: TransactionDiscountRecord,
   ): Promise<TransactionWithEntries> {
-    return this.write(ledgerId, draft, link, undefined, attachmentDataUris)
+    return this.write(ledgerId, draft, link, undefined, attachmentDataUris, discount)
   }
 
   async replace(
@@ -102,8 +137,9 @@ export class TransactionRepository extends BaseRepository {
     draft: TransactionDraft,
     link?: { originalTransactionId: string; relationType: 'refund' },
     attachmentDataUris: readonly string[] = [],
+    discount?: TransactionDiscountRecord,
   ): Promise<TransactionWithEntries> {
-    return this.write(ledgerId, draft, link, replacedTransactionId, attachmentDataUris)
+    return this.write(ledgerId, draft, link, replacedTransactionId, attachmentDataUris, discount)
   }
 
   private async write(
@@ -112,6 +148,7 @@ export class TransactionRepository extends BaseRepository {
     link?: { originalTransactionId: string; relationType: 'refund' },
     replacedTransactionId?: string,
     attachmentDataUris: readonly string[] = [],
+    discount?: TransactionDiscountRecord,
   ): Promise<TransactionWithEntries> {
     assertBalanced(draft.entries)
     const transactionId = this.ids.next('transaction')
@@ -183,6 +220,14 @@ export class TransactionRepository extends BaseRepository {
         values: [transaction.id, link.originalTransactionId, link.relationType, createdAt],
       })
     }
+    if (discount) {
+      statements.push({
+        statement: `INSERT INTO transaction_discounts (
+          transaction_id, original_amount_minor, discount_minor, created_at
+        ) VALUES (?, ?, ?, ?)`,
+        values: [transaction.id, discount.originalAmountMinor, discount.discountMinor, createdAt],
+      })
+    }
     attachmentDataUris.forEach((dataUri, index) => {
       const mimeType = /^data:([^;,]+)[;,]/.exec(dataUri)?.[1] ?? 'application/octet-stream'
       statements.push({
@@ -215,6 +260,15 @@ export class TransactionRepository extends BaseRepository {
 
     const entries = await this.listEntries(id)
     return { ...mapTransaction(row), entries }
+  }
+
+  async findDiscount(transactionId: string): Promise<TransactionDiscountRecord | undefined> {
+    const rows = await this.database.query<TransactionDiscountRecord>(
+      `SELECT original_amount_minor AS originalAmountMinor, discount_minor AS discountMinor
+       FROM transaction_discounts WHERE transaction_id = ? LIMIT 1`,
+      [transactionId],
+    )
+    return rows[0]
   }
 
   async listByLedger(ledgerId: string): Promise<StoredTransaction[]> {
@@ -337,6 +391,27 @@ export class TransactionRepository extends BaseRepository {
           END AS changeMinor,
           transactions.occurred_at AS occurredAt,
           original_transactions.occurred_at AS originalOccurredAt,
+          transactions.merchant,
+          transactions.counterparty,
+          categories.name AS categoryName,
+          accounts.name AS accountName,
+          ledgers.name AS ledgerName,
+          (SELECT source_accounts.name
+            FROM entries AS source_entries
+            JOIN accounts AS source_accounts ON source_accounts.id = source_entries.account_id
+            WHERE source_entries.transaction_id = transactions.id
+              AND source_entries.side = 'credit'
+            ORDER BY source_entries.id
+            LIMIT 1
+          ) AS sourceAccountName,
+          (SELECT target_accounts.name
+            FROM entries AS target_entries
+            JOIN accounts AS target_accounts ON target_accounts.id = target_entries.account_id
+            WHERE target_entries.transaction_id = transactions.id
+              AND target_entries.side = 'debit'
+            ORDER BY target_entries.id
+            LIMIT 1
+          ) AS targetAccountName,
           COALESCE(transactions.counterparty, transactions.merchant, categories.name,
             CASE transactions.type
               WHEN 'opening_balance' THEN '期初余额'
@@ -352,6 +427,7 @@ export class TransactionRepository extends BaseRepository {
         FROM entries
         JOIN transactions ON transactions.id = entries.transaction_id
         JOIN accounts ON accounts.id = entries.account_id
+        JOIN ledgers ON ledgers.id = transactions.ledger_id
         LEFT JOIN entries AS category_entries
           ON category_entries.transaction_id = transactions.id
           AND category_entries.category_id IS NOT NULL
@@ -369,6 +445,11 @@ export class TransactionRepository extends BaseRepository {
       ...row,
       note: row.note ?? undefined,
       originalOccurredAt: row.originalOccurredAt ?? undefined,
+      merchant: row.merchant ?? undefined,
+      counterparty: row.counterparty ?? undefined,
+      categoryName: row.categoryName ?? undefined,
+      sourceAccountName: row.sourceAccountName ?? undefined,
+      targetAccountName: row.targetAccountName ?? undefined,
     }))
   }
 
@@ -437,15 +518,27 @@ export class TransactionRepository extends BaseRepository {
           transactions.merchant,
           transactions.counterparty,
           transactions.note,
+          MAX(transaction_discounts.original_amount_minor) AS originalAmountMinor,
+          MAX(transaction_discounts.discount_minor) AS discountMinor,
           MAX(categories.name) AS categoryName,
           MAX(CASE
-            WHEN transactions.type NOT IN ('transfer', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+            WHEN transactions.type NOT IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
               AND accounts.id IS NOT NULL THEN accounts.name
-          END) AS primaryAccountName
+          END) AS primaryAccountName,
+          MAX(CASE
+            WHEN transactions.type IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND entries.side = 'credit' THEN accounts.name
+          END) AS sourceAccountName,
+          MAX(CASE
+            WHEN transactions.type IN ('transfer', 'repayment', 'loan_out', 'loan_recovery', 'borrowing', 'repay_borrowing')
+              AND entries.side = 'debit' THEN accounts.name
+          END) AS targetAccountName
         FROM transactions
         LEFT JOIN entries ON entries.transaction_id = transactions.id
         LEFT JOIN accounts ON accounts.id = entries.account_id
         LEFT JOIN categories ON categories.id = entries.category_id
+        LEFT JOIN transaction_discounts
+          ON transaction_discounts.transaction_id = transactions.id
         WHERE ${where.join(' AND ')}
         GROUP BY transactions.id
         ORDER BY transactions.occurred_at DESC, transactions.created_at DESC
@@ -546,5 +639,9 @@ function mapSearchRow(row: SearchRow): TransactionSearchResultItem {
     note: row.note ?? undefined,
     categoryName: row.categoryName ?? undefined,
     primaryAccountName: row.primaryAccountName ?? undefined,
+    sourceAccountName: row.sourceAccountName ?? undefined,
+    targetAccountName: row.targetAccountName ?? undefined,
+    originalAmountMinor: row.originalAmountMinor ?? undefined,
+    discountMinor: row.discountMinor ?? undefined,
   }
 }

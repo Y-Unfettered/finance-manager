@@ -15,6 +15,7 @@ export interface HomePreferences {
   defaultIncomeAccountId?: string
   rememberLastAccount: boolean
   appearance: 'system' | 'light' | 'dark'
+  colorTheme: 'green' | 'blue'
 }
 
 const DEFAULTS: HomePreferences = {
@@ -23,6 +24,7 @@ const DEFAULTS: HomePreferences = {
   amountsHidden: false,
   rememberLastAccount: true,
   appearance: 'system',
+  colorTheme: 'green',
 }
 
 export class HomePreferencesService {
@@ -37,7 +39,10 @@ export class HomePreferencesService {
 
   async get(ledgerId: string): Promise<HomePreferences> {
     const raw = await this.settings.get(`home_preferences:${ledgerId}`)
-    if (!raw) return { ...DEFAULTS }
+    if (!raw) {
+      applyAppearance(DEFAULTS.appearance, DEFAULTS.colorTheme)
+      return { ...DEFAULTS }
+    }
     try {
       const value = JSON.parse(raw) as Partial<HomePreferences>
       const preferences: HomePreferences = {
@@ -52,10 +57,12 @@ export class HomePreferencesService {
         appearance: ['system', 'light', 'dark'].includes(value.appearance ?? '')
           ? (value.appearance as HomePreferences['appearance'])
           : 'system',
+        colorTheme: value.colorTheme === 'blue' ? 'blue' : 'green',
       }
-      applyAppearance(preferences.appearance)
+      applyAppearance(preferences.appearance, preferences.colorTheme)
       return preferences
     } catch {
+      applyAppearance(DEFAULTS.appearance, DEFAULTS.colorTheme)
       return { ...DEFAULTS }
     }
   }
@@ -67,7 +74,7 @@ export class HomePreferencesService {
       JSON.stringify(preferences),
       this.clock.nowIso(),
     )
-    applyAppearance(preferences.appearance)
+    applyAppearance(preferences.appearance, preferences.colorTheme)
   }
 }
 
@@ -75,10 +82,14 @@ function optionalId(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined
 }
 
-function applyAppearance(appearance: HomePreferences['appearance']): void {
+function applyAppearance(
+  appearance: HomePreferences['appearance'],
+  colorTheme: HomePreferences['colorTheme'],
+): void {
   if (typeof document === 'undefined') return
   if (appearance === 'system') delete document.documentElement.dataset.theme
   else document.documentElement.dataset.theme = appearance
+  document.documentElement.dataset.colorTheme = colorTheme
 }
 
 export const homePreferencesServiceKey: InjectionKey<HomePreferencesService> =

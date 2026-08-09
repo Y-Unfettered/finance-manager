@@ -22,6 +22,7 @@ export const BACKUP_TABLES = [
   'import_batches',
   'transactions',
   'transaction_links',
+  'transaction_discounts',
   'transaction_attachments',
   'entries',
   'receivables',

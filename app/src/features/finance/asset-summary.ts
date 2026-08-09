@@ -56,16 +56,22 @@ export function summarizeAssets(accounts: readonly AccountBalanceRecord[]): Asse
     totalLiabilitiesMinor,
     borrowedMinor: sumByTypes(active, ['other_liability']),
     lentMinor: sumByTypes(active, ['receivable']),
-    assetCount: assets.length,
-    liabilityCount: liabilities.length,
+    assetCount: assets.filter(hasNonZeroBalance).length,
+    liabilityCount: liabilities.filter(hasNonZeroBalance).length,
     liabilityRatio:
       totalAssetsMinor > 0 ? Math.max(0, totalLiabilitiesMinor / totalAssetsMinor) : 0,
     sections: SECTION_DEFINITIONS.map((section) => ({
       ...section,
       amountMinor: sumByTypes(active, section.accountTypes),
-      count: active.filter((account) => section.accountTypes.includes(account.type)).length,
+      count: active.filter(
+        (account) => section.accountTypes.includes(account.type) && hasNonZeroBalance(account),
+      ).length,
     })),
   }
+}
+
+function hasNonZeroBalance(account: AccountBalanceRecord): boolean {
+  return account.balanceMinor !== 0
 }
 
 function sumBalances(accounts: readonly AccountBalanceRecord[]): number {

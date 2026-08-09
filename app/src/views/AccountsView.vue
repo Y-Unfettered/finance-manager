@@ -2,6 +2,7 @@
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
+  ChevronLeft,
   ChevronRight,
   Eye,
   EyeOff,
@@ -9,7 +10,7 @@ import {
   Plus,
   Search,
 } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AccountBrandIcon from '@/components/AccountBrandIcon.vue'
@@ -17,8 +18,10 @@ import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
+import { useRoutePageActive } from '@/composables/routePageActivation'
 import { isLiabilityAccountType } from '@/domain/accounts'
-import type { AccountBalanceRecord } from '@/domain/entities'
+import type { AccountBalanceRecord, CreditProfileRecord } from '@/domain/entities'
 import { parseCnyInputToMinor } from '@/domain/money'
 import {
   ACCOUNT_CATALOG_GROUPS,
@@ -34,11 +37,15 @@ import {
 } from '@/features/finance/asset-summary'
 import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
+import { navigateBack } from '@/router/navigation-transition'
 
 const appStore = useAppStore()
 const router = useRouter()
+const pageActive = useRoutePageActive()
 const finance = useFinanceService()
-const accounts = ref<AccountBalanceRecord[]>([])
+type AssetAccountRecord = AccountBalanceRecord & { creditProfile?: CreditProfileRecord }
+
+const accounts = ref<AssetAccountRecord[]>([])
 const loading = ref(true)
 const errorMessage = ref('')
 const formError = ref('')
@@ -51,6 +58,8 @@ const showArchivedAccounts = ref(false)
 const hiddenSectionIds = ref<AssetSectionId[]>([])
 const showBanks = ref(false)
 const showForm = ref(false)
+const assetsPage = ref<HTMLElement>()
+const assetActionsVisible = ref(true)
 const expandedSectionId = ref<AssetSectionId | null>(null)
 const bankQuery = ref('')
 const pendingItem = ref<AccountCatalogItem>()
@@ -66,12 +75,26 @@ const form = ref({
   includeInAssetStats: true,
   visibleInEntry: true,
 })
+let assetsScrollContainer: HTMLElement | undefined
+let lastAssetsScrollTop = 0
+let assetTouchActive = false
+let assetsUseTouchInput = false
 
 const overview = computed(() =>
   summarizeAssets(accounts.value.filter((account) => !account.archivedAt)),
 )
 const visibleSections = computed(() =>
-  overview.value.sections.filter((section) => !hiddenSectionIds.value.includes(section.id)),
+  overview.value.sections.filter(
+    (section) =>
+      !hiddenSectionIds.value.includes(section.id) &&
+      (section.count > 0 ||
+        (section.id === 'credit' &&
+          accounts.value.some(
+            (account) =>
+              section.accountTypes.includes(account.type) &&
+              (showArchivedAccounts.value || !account.archivedAt),
+          ))),
+  ),
 )
 const filteredBanks = computed(() => {
   const query = bankQuery.value.trim().toLowerCase()
@@ -97,20 +120,91 @@ const pendingIsLiability = computed(() =>
   pendingItem.value ? isLiabilityAccountType(pendingItem.value.type) : false,
 )
 
-async function loadAccounts(): Promise<void> {
+const amountFormatter = new Intl.NumberFormat('zh-CN', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
+function formatMinorAmount(amountMinor: number): string {
+  return amountFormatter.format(amountMinor / 100)
+}
+
+function sectionDisplayAmountMinor(section: AssetSectionSummary): number {
+  if (section.id !== 'credit' || section.amountMinor === 0) return section.amountMinor
+  return -Math.abs(section.amountMinor)
+}
+
+function creditBalanceLabel(account: AssetAccountRecord): string {
+  const signedBalance = account.balanceMinor === 0 ? 0 : -account.balanceMinor
+  return formatMinorAmount(signedBalance)
+}
+
+function availableCreditMinor(account: AssetAccountRecord): number | undefined {
+  const limit = account.creditProfile?.creditLimitMinor
+  if (!limit) return undefined
+  return Math.max(0, limit - account.balanceMinor)
+}
+
+function availableCreditLabel(account: AssetAccountRecord): string {
+  const available = availableCreditMinor(account)
+  return available === undefined ? '额度未设置' : `可用 ${formatMinorAmount(available)}`
+}
+
+function availableCreditPercent(account: AssetAccountRecord): number {
+  const limit = account.creditProfile?.creditLimitMinor ?? 0
+  const available = availableCreditMinor(account) ?? 0
+  return limit > 0 ? Math.min(100, Math.max(0, (available / limit) * 100)) : 0
+}
+
+function repaymentStatus(account: AssetAccountRecord): string {
+  if (account.balanceMinor <= 0) return '已还款'
+  const repaymentDay = account.creditProfile?.repaymentDay
+  if (!repaymentDay) return '未设置还款日'
+
+  const today = new Date()
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  let dueDate = dateForDay(today.getFullYear(), today.getMonth(), repaymentDay)
+  if (dueDate < todayStart) {
+    dueDate = dateForDay(today.getFullYear(), today.getMonth() + 1, repaymentDay)
+  }
+  const days = Math.round((dueDate.getTime() - todayStart.getTime()) / 86_400_000)
+  return days === 0 ? '今天还款' : `${days}天内还款`
+}
+
+function dateForDay(year: number, month: number, day: number): Date {
+  const lastDay = new Date(year, month + 1, 0).getDate()
+  return new Date(year, month, Math.min(day, lastDay))
+}
+
+async function loadAccounts(options: { silent?: boolean } = {}): Promise<void> {
   if (!finance || !appStore.ledgerId) {
     loading.value = false
     errorMessage.value = '正在准备本地账本，请稍候…'
     return
   }
-  loading.value = true
+  if (!options.silent) loading.value = true
   errorMessage.value = ''
   try {
-    accounts.value = await finance.listAccounts(appStore.ledgerId)
+    const listedAccounts = await finance.listAccounts(appStore.ledgerId)
+    const creditAccounts = listedAccounts.filter((account) =>
+      ['credit_card', 'consumer_credit'].includes(account.type),
+    )
+    const creditDetails = await Promise.all(
+      creditAccounts.map((account) => finance.getAccountDetail(account.id)),
+    )
+    const creditProfiles = new Map(
+      creditDetails.flatMap((detail) =>
+        detail?.creditProfile ? [[detail.id, detail.creditProfile] as const] : [],
+      ),
+    )
+    accounts.value = listedAccounts.map((account) => ({
+      ...account,
+      creditProfile: creditProfiles.get(account.id),
+    }))
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
-    loading.value = false
+    if (!options.silent) loading.value = false
   }
 }
 
@@ -195,8 +289,11 @@ function toggleSection(section: AssetSectionSummary): void {
 }
 
 function openAccount(account: AccountBalanceRecord): void {
-  expandedSectionId.value = null
   void router.push({ name: 'account-detail', params: { accountId: account.id } })
+}
+
+function goBack(): void {
+  navigateBack(router, { name: 'home' })
 }
 
 function iconForAccount(account: AccountBalanceRecord): AccountCatalogItem {
@@ -230,6 +327,39 @@ function toggleSectionVisibility(sectionId: AssetSectionId): void {
   }
 }
 
+function updateAssetActionsVisibility(): void {
+  const scrollTop = assetsScrollContainer?.scrollTop ?? 0
+  const delta = scrollTop - lastAssetsScrollTop
+  if (assetsUseTouchInput && assetTouchActive && Math.abs(delta) >= 2) {
+    assetActionsVisible.value = delta < 0
+  } else if (!assetsUseTouchInput && scrollTop <= 2) {
+    assetActionsVisible.value = true
+  } else if (!assetsUseTouchInput && Math.abs(delta) >= 8) {
+    assetActionsVisible.value = delta < 0
+  }
+  if (!assetActionsVisible.value) showQuickActions.value = false
+  lastAssetsScrollTop = scrollTop
+}
+
+function handleAssetTouchStart(event: TouchEvent): void {
+  const touch = event.touches[0]
+  assetsUseTouchInput = true
+  assetTouchActive = Boolean(touch && event.touches.length === 1)
+  lastAssetsScrollTop = assetsScrollContainer?.scrollTop ?? 0
+}
+
+function handleAssetTouchEnd(): void {
+  assetTouchActive = false
+  lastAssetsScrollTop = assetsScrollContainer?.scrollTop ?? 0
+}
+
+function bindAssetsScroll(): void {
+  assetsScrollContainer = assetsPage.value ?? undefined
+  lastAssetsScrollTop = assetsScrollContainer?.scrollTop ?? 0
+  assetsScrollContainer?.addEventListener('scroll', updateAssetActionsVisibility, { passive: true })
+  updateAssetActionsVisibility()
+}
+
 onMounted(() => {
   if (appStore.ledgerId) {
     const stored = localStorage.getItem(`finance-manager:asset-sections:${appStore.ledgerId}`)
@@ -240,13 +370,28 @@ onMounted(() => {
     }
   }
   void loadAccounts()
+  bindAssetsScroll()
+})
+useRefreshOnActivated(() => loadAccounts({ silent: true }))
+
+onUnmounted(() => {
+  assetsScrollContainer?.removeEventListener('scroll', updateAssetActionsVisibility)
 })
 </script>
 
 <template>
-  <main class="assets-page">
+  <main
+    ref="assetsPage"
+    class="assets-page"
+    @touchstart.passive="handleAssetTouchStart"
+    @touchend="handleAssetTouchEnd"
+    @touchcancel="handleAssetTouchEnd"
+  >
     <section class="assets-hero">
       <div class="assets-hero__safe-top">
+        <AppIconButton label="返回首页" @click="goBack">
+          <ChevronLeft :size="24" :stroke-width="1.9" aria-hidden="true" />
+        </AppIconButton>
         <AppIconButton
           class="assets-hero__more"
           label="资产设置"
@@ -293,7 +438,7 @@ onMounted(() => {
       <div v-if="loading" class="page-state">正在读取资产…</div>
       <div v-else-if="errorMessage" class="page-state page-state--error">
         <span>{{ errorMessage }}</span>
-        <button type="button" @click="loadAccounts">重新加载</button>
+        <button type="button" @click="loadAccounts()">重新加载</button>
       </div>
       <template v-else>
         <BaseCard class="trend-card">
@@ -363,7 +508,10 @@ onMounted(() => {
           >
             <strong>{{ section.label }}</strong>
             <span>
-              <MoneyText :amount-minor="section.amountMinor" />
+              <MoneyText
+                :amount-minor="sectionDisplayAmountMinor(section)"
+                :show-currency="false"
+              />
               <ChevronRight
                 :size="22"
                 :stroke-width="1.75"
@@ -380,52 +528,89 @@ onMounted(() => {
               v-for="account in sectionAccounts"
               :key="account.id"
               class="section-card__row"
+              :class="{ 'credit-account-row': section.id === 'credit' }"
               type="button"
               @click="openAccount(account)"
             >
-              <AccountBrandIcon
-                :label="account.name"
-                :symbol="account.iconKey ?? iconForAccount(account).symbol"
-                :color="account.color ?? iconForAccount(account).color"
-              />
-              <span
-                ><strong>{{ account.name }}</strong
-                ><small>{{ account.institution }}</small></span
-              >
-              <MoneyText :amount-minor="account.balanceMinor" />
-              <ChevronRight :size="20" :stroke-width="1.75" aria-hidden="true" />
+              <template v-if="section.id === 'credit'">
+                <AccountBrandIcon
+                  :label="account.name"
+                  :brand-key="account.brandKey ?? iconForAccount(account).id"
+                  :symbol="account.iconKey ?? iconForAccount(account).symbol"
+                  :color="account.color ?? iconForAccount(account).color"
+                />
+                <span class="credit-account-row__content">
+                  <span class="credit-account-row__heading">
+                    <strong>{{ account.name }}</strong>
+                    <strong v-if="amountsVisible" class="credit-account-row__balance">{{
+                      creditBalanceLabel(account)
+                    }}</strong>
+                    <strong v-else class="credit-account-row__balance">••••</strong>
+                  </span>
+                  <span class="credit-account-row__track" aria-hidden="true">
+                    <i :style="{ width: `${availableCreditPercent(account)}%` }" />
+                  </span>
+                  <span class="credit-account-row__meta">
+                    <small>{{ repaymentStatus(account) }}</small>
+                    <small>{{
+                      amountsVisible ? availableCreditLabel(account) : '可用 ••••'
+                    }}</small>
+                  </span>
+                </span>
+              </template>
+              <template v-else>
+                <AccountBrandIcon
+                  :label="account.name"
+                  :brand-key="account.brandKey ?? iconForAccount(account).id"
+                  :symbol="account.iconKey ?? iconForAccount(account).symbol"
+                  :color="account.color ?? iconForAccount(account).color"
+                />
+                <span
+                  ><strong>{{ account.name }}</strong
+                  ><small>{{ account.institution }}</small></span
+                >
+                <MoneyText :amount-minor="account.balanceMinor" />
+                <ChevronRight :size="20" :stroke-width="1.75" aria-hidden="true" />
+              </template>
             </button>
           </div>
         </BaseCard>
       </template>
     </div>
 
-    <div v-if="showQuickActions" class="asset-quick-actions">
-      <button type="button" @click="openCatalog"><span>添加账户</span><Plus :size="20" /></button>
-      <button type="button" @click="openGroupManagement">
-        <span>账户分组管理</span><MoreHorizontal :size="20" />
-      </button>
-      <button type="button" @click="toggleArchivedAccounts">
-        <span>{{ showArchivedAccounts ? '隐藏已归档账户' : '显示已归档账户' }}</span>
-        <EyeOff v-if="showArchivedAccounts" :size="20" />
-        <Eye v-else :size="20" />
-      </button>
-    </div>
+    <Teleport to="body">
+      <template v-if="pageActive">
+        <div v-if="showQuickActions" class="asset-quick-actions">
+          <button type="button" @click="openCatalog">
+            <span>添加账户</span><Plus :size="20" />
+          </button>
+          <button type="button" @click="openGroupManagement">
+            <span>账户分组管理</span><MoreHorizontal :size="20" />
+          </button>
+          <button type="button" @click="toggleArchivedAccounts">
+            <span>{{ showArchivedAccounts ? '隐藏已归档账户' : '显示已归档账户' }}</span>
+            <EyeOff v-if="showArchivedAccounts" :size="20" />
+            <Eye v-else :size="20" />
+          </button>
+        </div>
 
-    <button
-      class="asset-add-button"
-      type="button"
-      aria-label="资产快捷操作"
-      :aria-expanded="showQuickActions"
-      @click="showQuickActions = !showQuickActions"
-    >
-      <Plus
-        :size="28"
-        :stroke-width="2"
-        aria-hidden="true"
-        :class="{ 'asset-add-button__icon--open': showQuickActions }"
-      />
-    </button>
+        <button
+          class="asset-add-button"
+          :class="{ 'asset-add-button--hidden': !assetActionsVisible }"
+          type="button"
+          aria-label="资产快捷操作"
+          :aria-expanded="showQuickActions"
+          @click="showQuickActions = !showQuickActions"
+        >
+          <Plus
+            :size="28"
+            :stroke-width="2"
+            aria-hidden="true"
+            :class="{ 'asset-add-button__icon--open': showQuickActions }"
+          />
+        </button>
+      </template>
+    </Teleport>
 
     <AppBottomSheet v-model:show="showGroupManagement" title="账户分组管理">
       <div class="group-management">
@@ -457,6 +642,7 @@ onMounted(() => {
             >
               <AccountBrandIcon
                 :label="item.name"
+                :brand-key="item.id"
                 :symbol="item.symbol"
                 :color="item.color"
                 :foreground="item.foreground"
@@ -482,7 +668,12 @@ onMounted(() => {
             type="button"
             @click="chooseBank(bank)"
           >
-            <AccountBrandIcon :label="bank.name" :symbol="bank.symbol" :color="bank.color" />
+            <AccountBrandIcon
+              :label="bank.name"
+              :brand-key="bank.id"
+              :symbol="bank.symbol"
+              :color="bank.color"
+            />
             <span>{{ bank.name }}</span>
           </button>
         </div>
@@ -494,6 +685,7 @@ onMounted(() => {
         <div v-if="pendingItem" class="account-form__type">
           <AccountBrandIcon
             :label="selectedBank?.name ?? pendingItem.name"
+            :brand-key="selectedBank?.id ?? pendingItem.id"
             :symbol="selectedBank?.symbol ?? pendingItem.symbol"
             :color="selectedBank?.color ?? pendingItem.color"
           />
@@ -565,7 +757,12 @@ onMounted(() => {
 
 <style scoped>
 .assets-page {
-  min-height: 100dvh;
+  height: 100dvh;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: calc(96px + env(safe-area-inset-bottom));
   background: var(--color-background);
 }
@@ -582,7 +779,11 @@ onMounted(() => {
 .assets-hero__safe-top {
   position: absolute;
   top: env(safe-area-inset-top);
+  left: var(--space-2);
   right: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .assets-hero__visibility {
@@ -766,6 +967,11 @@ onMounted(() => {
   gap: var(--space-2);
 }
 
+.section-card > button :deep(.money-text) {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
 .section-card__chevron {
   color: var(--color-text-tertiary);
   transition: transform var(--motion-short) var(--ease-standard);
@@ -813,6 +1019,76 @@ onMounted(() => {
   color: var(--color-text-tertiary);
 }
 
+.credit-account-row {
+  min-height: 82px;
+  padding: var(--space-3) 0;
+  align-items: center;
+  border-radius: 0;
+}
+
+.credit-account-row__content {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 5px;
+}
+
+.credit-account-row__heading,
+.credit-account-row__meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.credit-account-row__heading > strong:first-child {
+  overflow: hidden;
+  font-size: var(--type-list-primary-size);
+  font-weight: 500;
+  line-height: var(--type-list-primary-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credit-account-row__balance {
+  flex: 0 0 auto;
+  font-size: var(--type-list-amount-size);
+  font-variant-numeric: tabular-nums lining-nums;
+  font-weight: 500;
+  line-height: var(--type-list-amount-line);
+}
+
+.credit-account-row__track {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  background: var(--color-primary-50);
+  border-radius: var(--radius-pill);
+}
+
+.credit-account-row__track i {
+  display: block;
+  height: 100%;
+  background: var(--color-primary-500);
+  border-radius: inherit;
+  transition: width var(--motion-base) var(--ease-standard);
+}
+
+.credit-account-row__meta small {
+  overflow: hidden;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  font-variant-numeric: tabular-nums lining-nums;
+  line-height: var(--type-caption-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credit-account-row__meta small:last-child {
+  text-align: right;
+}
+
 .section-card__empty {
   padding: var(--space-8) 0;
   color: var(--color-text-tertiary);
@@ -835,7 +1111,17 @@ onMounted(() => {
   background: var(--color-primary-600);
   border: 0;
   border-radius: var(--radius-pill);
-  box-shadow: 0 8px 24px rgb(23 107 93 / 22%);
+  box-shadow: 0 8px 24px rgb(var(--color-primary-rgb) / 22%);
+  transition:
+    opacity var(--motion-base) var(--ease-emphasized),
+    transform var(--motion-base) var(--ease-emphasized),
+    box-shadow var(--motion-fast) var(--ease-standard);
+}
+
+.asset-add-button--hidden {
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.55);
 }
 
 .asset-add-button svg {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ChevronRight, Plus } from '@lucide/vue'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
@@ -8,9 +8,11 @@ import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
 import type { BudgetMode, BudgetWithProgress } from '@/domain/entities'
 import { parseCnyInputToMinor } from '@/domain/money'
-import { currentMonthPeriodKey, useBudgetService } from '@/features/budget/budget-service'
+import { budgetRemainingRingPercent } from '@/features/budget/budget-presentation'
+import { useBudgetService } from '@/features/budget/budget-service'
 import { useFinanceService, type ExpenseCategoryOption } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
 
@@ -23,7 +25,7 @@ const router = useRouter()
 const appStore = useAppStore()
 const budgets = useBudgetService()
 const finance = useFinanceService()
-const periodKey = ref(currentMonthPeriodKey())
+const periodKey = computed(() => appStore.selectedHomePeriod)
 const progress = ref<BudgetWithProgress>()
 const categories = ref<ExpenseCategoryOption[]>([])
 const loading = ref(true)
@@ -41,18 +43,24 @@ const rootCategories = computed(() => categories.value.filter((item) => !item.pa
 const categoryTotal = computed(() =>
   form.value.categories.reduce((sum, item) => sum + item.limitMinor, 0),
 )
-const percent = computed(() =>
-  progress.value?.totalLimitMinor
-    ? Math.max(0, Math.round((progress.value.spentMinor / progress.value.totalLimitMinor) * 100))
-    : 0,
-)
-const ringStyle = computed(() => ({
-  background: `conic-gradient(${progress.value?.overspent ? 'var(--color-expense)' : 'var(--color-primary-500)'} ${Math.min(100, percent.value)}%, var(--color-primary-50) 0)`,
-}))
+const remainingPercent = computed(() => {
+  const value = progress.value
+  return value ? budgetRemainingRingPercent(value.totalLimitMinor, value.spentMinor) : 0
+})
+const ringStyle = computed(() => {
+  if (progress.value?.overspent) {
+    return {
+      background: 'conic-gradient(var(--color-expense) 100%, var(--color-primary-50) 0)',
+    }
+  }
+  return {
+    background: `conic-gradient(var(--color-primary-500) ${remainingPercent.value}%, var(--color-primary-50) 0)`,
+  }
+})
 
-async function load() {
+async function load(options: { silent?: boolean } = {}) {
   if (!budgets || !appStore.ledgerId) return
-  loading.value = true
+  if (!options.silent) loading.value = true
   error.value = ''
   try {
     const [budget, cats] = await Promise.all([
@@ -64,7 +72,7 @@ async function load() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
-    loading.value = false
+    if (!options.silent) loading.value = false
   }
 }
 function openEditor() {
@@ -152,21 +160,14 @@ async function save() {
 function goCategory(categoryId: string) {
   void router.push({ name: 'category-statistics', params: { categoryId } })
 }
-watch(periodKey, load)
 onMounted(load)
+useRefreshOnActivated(() => load({ silent: true }))
 </script>
 
 <template>
   <main class="budget-page">
     <div class="safe-top">
-      <AppTopBar title="预算管理" @back="router.back()"
-        ><template #right
-          ><input
-            v-model="periodKey"
-            class="month-input"
-            type="month"
-            aria-label="预算月份" /></template
-      ></AppTopBar>
+      <AppTopBar title="预算管理" @back="router.back()" />
     </div>
     <div class="content">
       <div v-if="loading" class="state">正在加载预算…</div>
@@ -223,7 +224,7 @@ onMounted(load)
           ><span
             class="mini-ring"
             :style="{
-              background: `conic-gradient(${item.overspent ? 'var(--color-expense)' : 'var(--color-primary-500)'} ${Math.min(100, item.limitMinor ? (item.spentMinor / item.limitMinor) * 100 : 0)}%,var(--color-primary-50) 0)`,
+              background: `conic-gradient(${item.overspent ? 'var(--color-expense)' : 'var(--color-primary-500)'} ${budgetRemainingRingPercent(item.limitMinor, item.spentMinor)}%,var(--color-primary-50) 0)`,
             }"
             ><i
               ><small>{{ item.overspent ? '超支' : '剩余' }}</small
@@ -323,14 +324,6 @@ onMounted(load)
   padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
-}
-.month-input {
-  width: 112px;
-  height: 38px;
-  padding: 0 8px;
-  background: var(--color-background);
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-control);
 }
 .content {
   display: grid;

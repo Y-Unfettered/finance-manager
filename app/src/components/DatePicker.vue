@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
+import { useRoutePageActive } from '@/composables/routePageActivation'
+
 const props = defineProps<{
   show: boolean
   initialDate?: string
@@ -12,6 +14,7 @@ const emit = defineEmits<{
 }>()
 
 const now = new Date()
+const pageActive = useRoutePageActive()
 const currentYear = now.getFullYear()
 
 const years = computed(() => {
@@ -98,7 +101,7 @@ function cancel(): void {
 
 <template>
   <Teleport to="body">
-    <div v-if="show" class="date-picker__overlay" @click.self="cancel">
+    <div v-if="show && pageActive" class="date-picker__overlay" @click.self="cancel">
       <div class="date-picker">
         <header class="date-picker__header">
           <button type="button" class="date-picker__btn date-picker__btn--cancel" @click="cancel">

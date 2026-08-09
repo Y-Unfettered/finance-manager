@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import { useUiPreference } from '@/composables/useUiPreference'
 import { useFinanceService, type HomeSnapshot } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
 
@@ -23,7 +24,7 @@ const queryMonth = typeof route.query.month === 'string' ? route.query.month : '
 const period = ref(
   /^\d{4}-(0[1-9]|1[0-2])$/.test(queryMonth) ? queryMonth : store.selectedHomePeriod,
 )
-const mode = ref<ReportMode>('month')
+const mode = useUiPreference<ReportMode>('monthly-report:mode', 'month', ['month', 'year'])
 const loading = ref(true)
 const points = ref<FlowPoint[]>([])
 const incomeMinor = ref(0)

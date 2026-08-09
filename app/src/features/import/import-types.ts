@@ -33,10 +33,14 @@ export interface CategoryNameMapping {
 
 export type ImportTransactionKind = 'expense' | 'income' | 'transfer'
 
+export type ImportTransferPurpose = 'loan_out'
+
 export interface ParsedImportRow {
   readonly index: number
   readonly raw: Record<string, string>
   readonly kind: ImportTransactionKind
+  /** 转账的业务含义。借出款必须保留该语义，不能退化为普通资金转账。 */
+  readonly transferPurpose?: ImportTransferPurpose
   readonly typeInferred: boolean
   readonly amountMinor: number
   readonly occurredAt: string

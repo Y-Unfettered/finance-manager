@@ -24,6 +24,7 @@ import { LedgerRepository } from './db/repositories/ledger-repository'
 import { systemClock } from './domain/time'
 import { systemIdGenerator } from './domain/identity'
 import router from './router'
+import { createRouterTouch } from './router/vue-router-touch'
 import { useAppStore } from './stores/app'
 import './design-system/tokens.css'
 import './design-system/global.css'
@@ -31,7 +32,17 @@ import './design-system/global.css'
 async function bootstrap(): Promise<void> {
   const app = createApp(App)
   const pinia = createPinia()
-  app.use(pinia).use(router)
+  app
+    .use(pinia)
+    .use(router)
+    .use(
+      createRouterTouch(router, {
+        edgeWidth: Number.POSITIVE_INFINITY,
+        minDistance: 72,
+        maxVerticalDistance: 80,
+        minVelocity: 0.35,
+      }),
+    )
 
   const appStore = useAppStore(pinia)
   appStore.markDatabaseInitializing()

@@ -8,7 +8,8 @@ import ExportView from '@/views/ExportView.vue'
 import ImportBatchesView from '@/views/ImportBatchesView.vue'
 import ImportView from '@/views/ImportView.vue'
 import NewExpenseView from '@/views/NewExpenseView.vue'
-import OverviewSwipeView from '@/views/OverviewSwipeView.vue'
+import HomeView from '@/views/HomeView.vue'
+import AccountsView from '@/views/AccountsView.vue'
 import PayablesView from '@/views/PayablesView.vue'
 import PinSetupView from '@/views/PinSetupView.vue'
 import BillsView from '@/views/BillsView.vue'
@@ -16,13 +17,19 @@ import CategoryManagementView from '@/views/CategoryManagementView.vue'
 import LedgerView from '@/views/LedgerView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import AccountStatisticsView from '@/views/AccountStatisticsView.vue'
-import AssetStatisticsView from '@/views/AssetStatisticsView.vue'
+import AccountIconManagementView from '@/views/AccountIconManagementView.vue'
 import CategoryStatisticsView from '@/views/CategoryStatisticsView.vue'
 import ReceivablesView from '@/views/ReceivablesView.vue'
 import RemindersView from '@/views/RemindersView.vue'
 import TemplatesView from '@/views/TemplatesView.vue'
 import TransactionSearchView from '@/views/TransactionSearchView.vue'
 import MonthlyReportView from '@/views/MonthlyReportView.vue'
+import {
+  applyNavigationDirection,
+  commitNavigationEntry,
+  initializeNavigationEntry,
+  prepareNavigationEntry,
+} from './navigation-transition'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -30,12 +37,13 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: OverviewSwipeView,
+      component: HomeView,
+      meta: { swipeBack: false },
     },
     {
       path: '/accounts',
       name: 'accounts',
-      component: OverviewSwipeView,
+      component: AccountsView,
     },
     {
       path: '/transactions/new',
@@ -62,6 +70,11 @@ const router = createRouter({
     { path: '/ledgers', name: 'ledgers', component: LedgerView },
     { path: '/bills', name: 'bills', component: BillsView },
     { path: '/settings', name: 'settings', component: SettingsView },
+    {
+      path: '/settings/account-icons',
+      name: 'account-icons',
+      component: AccountIconManagementView,
+    },
     { path: '/categories', name: 'categories', component: CategoryManagementView },
     {
       path: '/categories/:categoryId/statistics',
@@ -73,7 +86,16 @@ const router = createRouter({
       name: 'account-statistics',
       component: AccountStatisticsView,
     },
-    { path: '/assets/statistics', name: 'asset-statistics', component: AssetStatisticsView },
+    {
+      path: '/assets/statistics',
+      name: 'asset-statistics',
+      component: () => import('@/views/AssetStatisticsView.vue'),
+    },
+    {
+      path: '/assets/statistics/:periodKey',
+      name: 'asset-statement',
+      component: () => import('@/views/AssetStatementView.vue'),
+    },
     { path: '/reports/monthly', name: 'monthly-report', component: MonthlyReportView },
     {
       path: '/import',
@@ -128,16 +150,25 @@ const router = createRouter({
   ],
 })
 
-let historyNavigation = false
-if (typeof window !== 'undefined') {
-  window.addEventListener('popstate', () => {
-    historyNavigation = true
-  })
+function historyPosition(): number {
+  if (typeof window === 'undefined') return 0
+  const position = window.history.state?.position
+  return typeof position === 'number' ? position : 0
 }
 
-router.beforeEach((to) => {
-  to.meta.pageTransition = historyNavigation ? 'page-back' : 'page-forward'
-  historyNavigation = false
+let lastHistoryPosition = historyPosition()
+initializeNavigationEntry()
+router.beforeEach(() => {
+  const nextHistoryPosition = historyPosition()
+  applyNavigationDirection(nextHistoryPosition < lastHistoryPosition ? 'back' : 'forward')
+  prepareNavigationEntry(nextHistoryPosition !== lastHistoryPosition)
+})
+
+router.afterEach((_to, _from, failure) => {
+  if (!failure) {
+    commitNavigationEntry()
+    lastHistoryPosition = historyPosition()
+  }
 })
 
 export default router

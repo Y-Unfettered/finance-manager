@@ -11,6 +11,7 @@ import StatisticsPeriodFilter, {
   type StatisticsRangePreset,
 } from '@/components/StatisticsPeriodFilter.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
+import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
 import {
   statisticsRange,
   useStatisticsService,
@@ -47,17 +48,19 @@ const displayedActivities = computed(() =>
     : (data.value?.activities ?? []),
 )
 
-async function load(): Promise<void> {
+async function load(
+  options: { preserveSelection?: boolean; silent?: boolean } = {},
+): Promise<void> {
   if (!service) return
-  loading.value = true
+  if (!options.silent) loading.value = true
   error.value = ''
-  selectedMonth.value = undefined
+  if (!options.preserveSelection) selectedMonth.value = undefined
   try {
     data.value = await service.account(String(route.params.accountId), range.value)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
-    loading.value = false
+    if (!options.silent) loading.value = false
   }
 }
 
@@ -70,6 +73,7 @@ watch([preset, year, customStart, customEnd], () => {
   if (preset.value !== 'custom' || (customStart.value && customEnd.value)) void load()
 })
 onMounted(load)
+useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
 </script>
 
 <template>

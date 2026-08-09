@@ -6,7 +6,14 @@ const props = defineProps<{
 }>()
 
 const selectedId = ref<string>()
-const colors = ['#2a806f', '#d8a248', '#5b8def', '#d45f5a', '#8a73bd', '#55a6a6']
+const colors = [
+  'var(--color-primary-500)',
+  '#d8a248',
+  '#5b8def',
+  '#d45f5a',
+  '#8a73bd',
+  '#55a6a6',
+]
 const positivePoints = computed(() => props.points.filter((point) => point.amountMinor > 0))
 const total = computed(() =>
   positivePoints.value.reduce((sum, point) => sum + point.amountMinor, 0),

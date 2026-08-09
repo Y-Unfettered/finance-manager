@@ -7,6 +7,7 @@ import { CategoryRepository } from '@/db/repositories/category-repository'
 import { TransactionRepository } from '@/db/repositories/transaction-repository'
 import { LedgerRepository } from '@/db/repositories/ledger-repository'
 import { LedgerInitializationService } from '@/features/ledger/ledger-initialization-service'
+import { summarizeAssets } from '@/features/finance/asset-summary'
 import { NodeSqliteExecutor } from '@/test/node-sqlite-executor'
 
 import { ImportService } from './import-service'
@@ -349,7 +350,7 @@ describe('ImportService.executeImport', () => {
   })
 
   it('recognizes 还款 and 债务-借出 types as transfers with arrow-split and same-account handling', async () => {
-    const { ledger, bank, service } = await setupLedger()
+    const { database, ledger, bank, service } = await setupLedger()
     const plan = await service.previewCsv({
       ledgerId: ledger.id,
       fileName: 'qianji-export.csv',
@@ -384,15 +385,32 @@ describe('ImportService.executeImport', () => {
     // 债务-借出 → "工资卡->杨浩"拆分为 工资卡→杨浩
     const row3 = plan.validRows[2]!
     expect(row3.raw.kind).toBe('transfer')
+    expect(row3.raw.transferPurpose).toBe('loan_out')
     expect(row3.raw.sourceAccountName).toBe('工资卡')
     expect(row3.raw.targetAccountName).toBe('杨浩')
     expect(row3.sourceAccountId).toBe(bank.id)
     // 杨浩应为 pending 自动创建
-    expect(plan.pendingAccountCreations.some((p) => p.rawName === '杨浩')).toBe(true)
+    const receivable = plan.pendingAccountCreations.find((p) => p.rawName === '杨浩')
+    expect(receivable?.accountType).toBe('receivable')
+    expect(receivable?.inferredName).toBe('杨浩')
     // 工资卡信用卡应为 pending 自动创建（credit_card 类型）
     const creditCard = plan.pendingAccountCreations.find((p) => p.rawName === '工资卡信用卡')
     expect(creditCard?.accountType).toBe('credit_card')
     expect(creditCard?.inferredName).toBe('工资卡信用卡')
+
+    const result = await service.executeImport({ ledgerId: ledger.id, plan })
+    expect(result.successCount).toBe(3)
+
+    const importedAccounts = await new AccountRepository(database).listBalances(ledger.id)
+    const yangHao = importedAccounts.find((account) => account.name === '杨浩')
+    expect(yangHao?.type).toBe('receivable')
+    expect(yangHao?.balanceMinor).toBe(200_000)
+    expect(summarizeAssets(importedAccounts).lentMinor).toBe(200_000)
+
+    const loanTransactions = await database.query<{ type: string }>(
+      `SELECT type FROM transactions WHERE amount_minor = 200000`,
+    )
+    expect(loanTransactions).toEqual([{ type: 'loan_out' }])
   })
 
   it('infers kind from account count when type is unrecognized', async () => {

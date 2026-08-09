@@ -7,6 +7,7 @@ import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
+import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import type { TransactionType } from '@/domain/accounting'
 import { parseCnyInputToMinor } from '@/domain/money'
@@ -213,6 +214,10 @@ function openDetail(item: TransactionSearchResultItem): void {
 }
 
 onMounted(loadOptions)
+useRefreshOnActivated(async () => {
+  await loadOptions()
+  if (hasSearched.value) await runSearch()
+})
 </script>
 
 <template>
@@ -374,8 +379,10 @@ onMounted(loadOptions)
 
 <style scoped>
 .search-page {
+  width: 100%;
   min-height: 100dvh;
   padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
+  overflow-x: clip;
   background: var(--color-background);
 }
 .search-page__safe-top {
@@ -385,6 +392,8 @@ onMounted(loadOptions)
 }
 .search-page__content {
   display: grid;
+  width: 100%;
+  min-width: 0;
   max-width: 520px;
   padding: var(--space-3) var(--page-gutter) 0;
   margin: 0 auto;
@@ -413,6 +422,7 @@ onMounted(loadOptions)
   color: var(--color-primary-500);
 }
 .filter-card {
+  min-width: 0;
   padding: 0;
 }
 .filter-card__toggle {
@@ -440,18 +450,22 @@ onMounted(loadOptions)
 }
 .filter-form {
   display: grid;
+  min-width: 0;
   padding: 0 var(--space-4) var(--space-3);
   gap: var(--space-3);
   border-top: 1px solid var(--color-divider);
 }
 .form-row {
   display: grid;
+  min-width: 0;
   gap: 6px;
   font-size: var(--type-caption-size);
   color: var(--color-text-secondary);
 }
 .form-row input,
 .form-row select {
+  width: 100%;
+  min-width: 0;
   padding: var(--space-2) var(--space-3);
   font-size: var(--type-body-size);
   color: var(--color-text-primary);
@@ -460,11 +474,12 @@ onMounted(loadOptions)
   border-radius: var(--radius-sm);
 }
 .form-row--double {
-  grid-auto-flow: column;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
 }
 .form-row--double label {
   display: grid;
+  min-width: 0;
   gap: 6px;
   font-size: var(--type-caption-size);
   color: var(--color-text-secondary);
@@ -511,6 +526,7 @@ onMounted(loadOptions)
 }
 .results__head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   padding: var(--space-1) var(--space-2);
   color: var(--color-text-tertiary);

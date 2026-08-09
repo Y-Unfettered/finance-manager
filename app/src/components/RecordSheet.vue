@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ArrowLeftRight, ChevronLeft, Edit3, Plus, X } from '@lucide/vue'
+import { ArrowLeftRight, ChevronLeft, Plus } from '@lucide/vue'
+import { NumberKeyboard } from 'vant'
+import 'vant/es/number-keyboard/style'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CategoryIcon from '@/components/CategoryIcon.vue'
@@ -13,6 +15,7 @@ import {
   type TransactionMetadata,
 } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
+import { navigateBack } from '@/router/navigation-transition'
 import {
   useHomePreferencesService,
   type HomePreferences,
@@ -69,6 +72,7 @@ const preferences = ref<HomePreferences>({
   amountsHidden: false,
   rememberLastAccount: true,
   appearance: 'system',
+  colorTheme: 'green',
 })
 
 const mode = ref<EntryMode>('expense')
@@ -78,6 +82,7 @@ const incomeCategories = ref<IncomeCategoryOption[]>([])
 const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
+const keyboardVisible = ref(true)
 
 const amountDisplay = ref('0.0')
 const selectedCategoryId = ref('')
@@ -173,6 +178,12 @@ const canSubmit = computed(() => {
   if (loading.value || saving.value) return false
   if (amountDisplay.value === '' || amountDisplay.value === '0' || amountDisplay.value === '0.0')
     return false
+  if (
+    (mode.value === 'expense' || mode.value === 'credit_purchase') &&
+    hasDiscount.value &&
+    Number(discountAmount.value) >= Number(amountDisplay.value)
+  )
+    return false
   if (mode.value === 'refund' && originalRefundTransactionId.value === '') return false
   if (hasCategory.value) {
     return sourceAccountId.value !== '' && selectedCategoryId.value !== ''
@@ -266,7 +277,9 @@ function applyTransactionToForm(tx: TransactionMetadata): void {
   if (['expense', 'income', 'transfer', 'credit_purchase', 'repayment', 'refund'].includes(tx.type))
     mode.value = tx.type as EntryMode
   else mode.value = 'expense'
-  amountDisplay.value = formatMinorToCny(tx.amountMinor)
+  amountDisplay.value = formatMinorToCny(tx.originalAmountMinor ?? tx.amountMinor)
+  discountAmount.value = tx.discountMinor ? formatMinorToCny(tx.discountMinor) : ''
+  discountMode.value = false
   merchant.value = tx.merchant ?? ''
   note.value = tx.note ?? ''
   attachmentDataUris.value = [...tx.attachmentDataUris]
@@ -428,26 +441,38 @@ function handleDateSelect(date: string, label: string): void {
 
 function appendDiscount(char: string): void {
   if (char === 'backspace') {
-    discountAmount.value = discountAmount.value.slice(0, -1)
+    setDiscountCandidate(discountAmount.value.slice(0, -1))
     return
   }
   if (char === 'clear') {
-    discountAmount.value = ''
+    setDiscountCandidate('')
     return
   }
   if (char === '-' || char === '+') return
+  if (char === '00' && (discountAmount.value === '' || discountAmount.value === '0')) return
   if (discountAmount.value === '' || discountAmount.value === '0') {
-    discountAmount.value = char === '.' ? '0.' : char
+    setDiscountCandidate(char === '.' ? '0.' : char)
     return
   }
   if (char === '.' && !discountAmount.value.includes('.')) {
-    discountAmount.value += '.'
+    setDiscountCandidate(`${discountAmount.value}.`)
     return
   }
   const dotIndex = discountAmount.value.indexOf('.')
   if (dotIndex !== -1 && discountAmount.value.length - dotIndex >= 3) return
   if (discountAmount.value.length >= 9) return
-  discountAmount.value += char
+  setDiscountCandidate(`${discountAmount.value}${char}`)
+}
+
+function setDiscountCandidate(value: string): void {
+  const discount = Number(value)
+  const original = Number(amountDisplay.value)
+  if (value && Number.isFinite(discount) && discount >= original) {
+    errorMessage.value = '优惠金额必须小于原金额'
+    return
+  }
+  discountAmount.value = value
+  if (errorMessage.value === '优惠金额必须小于原金额') errorMessage.value = ''
 }
 
 function appendAmount(char: string): void {
@@ -464,6 +489,7 @@ function appendAmount(char: string): void {
     amountDisplay.value = '0.0'
     return
   }
+  if (char === '00' && (amountDisplay.value === '0' || amountDisplay.value === '0.0')) return
   if (amountDisplay.value === '0' || amountDisplay.value === '0.0') {
     amountDisplay.value = char === '.' ? '0.' : char
     return
@@ -486,6 +512,14 @@ function appendAmount(char: string): void {
   amountDisplay.value += char
 }
 
+function deleteKeyboardValue(): void {
+  appendAmount('backspace')
+}
+
+function handleKeyboardSave(): void {
+  if (canSubmit.value && !saving.value) void submit()
+}
+
 function swapAccounts(): void {
   if (sourceAccountId.value && targetAccountId.value) {
     ;[sourceAccountId.value, targetAccountId.value] = [targetAccountId.value, sourceAccountId.value]
@@ -493,7 +527,7 @@ function swapAccounts(): void {
 }
 
 function goBack(): void {
-  void router.replace({ name: 'home' })
+  navigateBack(router, { name: 'home' })
 }
 
 async function submit(): Promise<void> {
@@ -501,10 +535,16 @@ async function submit(): Promise<void> {
   saving.value = true
   errorMessage.value = ''
   try {
-    const amountMinor = parseCnyInputToMinor(
+    const appliesDiscount =
       (mode.value === 'expense' || mode.value === 'credit_purchase') && hasDiscount.value
-        ? actualSpending.value
-        : amountDisplay.value,
+    const originalAmountMinor = appliesDiscount
+      ? parseCnyInputToMinor(amountDisplay.value)
+      : undefined
+    const discountMinor = appliesDiscount
+      ? parseCnyInputToMinor(discountAmount.value)
+      : undefined
+    const amountMinor = parseCnyInputToMinor(
+      appliesDiscount ? actualSpending.value : amountDisplay.value,
     )
     if (amountMinor <= 0) throw new Error('优惠后金额必须大于 0')
     if (isEditMode.value && editTransactionId.value) {
@@ -524,6 +564,8 @@ async function submit(): Promise<void> {
         merchant: merchant.value || undefined,
         note: note.value || undefined,
         attachmentDataUris: attachmentDataUris.value,
+        originalAmountMinor,
+        discountMinor,
       }
       await finance.editTransactionFull(input)
     } else {
@@ -539,6 +581,8 @@ async function submit(): Promise<void> {
             merchant: merchant.value || undefined,
             note: note.value || undefined,
             attachmentDataUris: attachmentDataUris.value,
+            originalAmountMinor,
+            discountMinor,
           })
         } else {
           await finance.createExpense({
@@ -550,6 +594,8 @@ async function submit(): Promise<void> {
             merchant: merchant.value || undefined,
             note: note.value || undefined,
             attachmentDataUris: attachmentDataUris.value,
+            originalAmountMinor,
+            discountMinor,
           })
         }
       } else if (mode.value === 'income') {
@@ -609,7 +655,7 @@ async function submit(): Promise<void> {
         })
       }
     }
-    await router.replace({ name: 'home', query: { saved: '1' } })
+    navigateBack(router, { name: 'home' })
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -640,12 +686,14 @@ onMounted(async () => {
     isCopyMode.value = true
     await loadTransactionForEdit(copyId)
     amountDisplay.value = '0.0'
+    discountAmount.value = ''
     occurredAt.value = new Date().toISOString()
   } else if (typeof refundId === 'string' && refundId) {
     originalRefundTransactionId.value = refundId
     await loadTransactionForEdit(refundId)
     mode.value = 'refund'
     amountDisplay.value = '0.0'
+    discountAmount.value = ''
     occurredAt.value = new Date().toISOString()
     attachmentDataUris.value = []
     merchant.value = ''
@@ -711,7 +759,12 @@ watch(
           :class="['category-item', { active: selectedRootId === cat.id }]"
           @click="selectCategory(cat)"
         >
-          <CategoryIcon :icon-key="cat.iconKey" :color="cat.color" :size="48" :label="cat.name" />
+          <CategoryIcon
+            :icon-key="cat.iconKey"
+            color="var(--color-primary-500)"
+            :size="32"
+            :label="cat.name"
+          />
           <span class="category-item__label">{{ cat.name }}</span>
         </div>
       </div>
@@ -787,19 +840,9 @@ watch(
           <span class="discount-title">优惠</span>
           <span class="discount-sub">实际支出{{ actualSpending }}</span>
         </div>
-        <div class="discount-value-group">
-          <span class="discount-value" :style="{ color: themeColor }">
-            {{ discountAmount || '0' }}
-          </span>
-          <button
-            type="button"
-            class="discount-close"
-            aria-label="关闭优惠编辑"
-            @click="discountMode = false"
-          >
-            <X :size="18" :stroke-width="2" />
-          </button>
-        </div>
+        <span class="discount-value" :style="{ color: themeColor }">
+          {{ discountAmount || '0' }}
+        </span>
       </div>
       <!-- 正常模式：备注 + 金额 -->
       <div v-else class="note-row">
@@ -839,14 +882,9 @@ watch(
           <template v-else-if="tag.action === 'discount'">
             <span class="quick-tag__discount-label">优惠</span>
             <template v-if="discountMode">
-              <button
-                type="button"
-                class="quick-tag__discount-close"
-                aria-label="关闭优惠编辑"
-                @click.stop="toggleDiscountMode"
-              >
+              <span class="quick-tag__discount-close" aria-hidden="true">
                 ×
-              </button>
+              </span>
             </template>
             <span v-else-if="hasDiscount" class="quick-tag__discount-value">
               ({{ discountValueDisplay }})
@@ -855,6 +893,8 @@ watch(
           <template v-else>{{ tag.label }}</template>
         </button>
       </div>
+
+      <p v-if="errorMessage" class="record-error" role="alert">{{ errorMessage }}</p>
 
       <div v-if="attachmentDataUris.length" class="attachment-preview">
         <div v-for="(dataUri, index) in attachmentDataUris" :key="`${index}-${dataUri.length}`">
@@ -876,46 +916,22 @@ watch(
         multiple
         @change="handleImageSelect"
       />
-
-      <!-- 数字键盘 -->
-      <div class="numpad">
-        <button class="numpad-btn" type="button" @click="appendAmount('1')">1</button>
-        <button class="numpad-btn" type="button" @click="appendAmount('2')">2</button>
-        <button class="numpad-btn" type="button" @click="appendAmount('3')">3</button>
-        <button class="numpad-btn numpad-btn--op" type="button" @click="appendAmount('backspace')">
-          <Edit3 :size="20" :stroke-width="1.75" />
-        </button>
-
-        <button class="numpad-btn" type="button" @click="appendAmount('4')">4</button>
-        <button class="numpad-btn" type="button" @click="appendAmount('5')">5</button>
-        <button class="numpad-btn" type="button" @click="appendAmount('6')">6</button>
-        <button class="numpad-btn numpad-btn--op" type="button" @click="appendAmount('-')">
-          −
-        </button>
-
-        <button class="numpad-btn" type="button" @click="appendAmount('7')">7</button>
-        <button class="numpad-btn" type="button" @click="appendAmount('8')">8</button>
-        <button class="numpad-btn" type="button" @click="appendAmount('9')">9</button>
-        <button class="numpad-btn numpad-btn--op" type="button" @click="appendAmount('+')">
-          +
-        </button>
-
-        <button class="numpad-btn numpad-btn--wide" type="button" @click="appendAmount('clear')">
-          再记
-        </button>
-        <button class="numpad-btn" type="button" @click="appendAmount('0')">0</button>
-        <button class="numpad-btn" type="button" @click="appendAmount('.')">.</button>
-        <button
-          class="numpad-btn numpad-btn--save"
-          type="button"
-          :disabled="!canSubmit || saving"
-          :style="{ background: themeColor }"
-          @click="submit"
-        >
-          {{ saving ? '保存中…' : saveButtonLabel }}
-        </button>
-      </div>
     </section>
+
+    <NumberKeyboard
+      v-model:show="keyboardVisible"
+      class="record-keyboard"
+      :class="{ 'record-keyboard--disabled': !canSubmit || saving }"
+      theme="custom"
+      :extra-key="['00', '.']"
+      :close-button-text="saveButtonLabel"
+      :close-button-loading="saving"
+      :blur-on-close="false"
+      :hide-on-click-outside="false"
+      @input="appendAmount(String($event))"
+      @delete="deleteKeyboardValue"
+      @close="handleKeyboardSave"
+    />
 
     <!-- 账户选择弹窗 -->
     <AccountPicker
@@ -1060,8 +1076,7 @@ watch(
 }
 
 .category-item.active :deep(.category-icon) {
-  outline: 2px solid var(--color-primary-500);
-  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--color-primary-500);
 }
 
 .category-item__label {
@@ -1177,7 +1192,7 @@ watch(
 }
 
 .record-bottom {
-  padding: var(--space-2) var(--space-4) calc(var(--space-3) + env(safe-area-inset-bottom));
+  padding: var(--space-2) var(--space-4) calc(246px + env(safe-area-inset-bottom));
   background: var(--color-surface);
   border-top: 1px solid var(--color-divider);
 }
@@ -1219,6 +1234,14 @@ watch(
 
 .quick-tags::-webkit-scrollbar {
   display: none;
+}
+
+.record-error {
+  margin: 0 0 var(--space-2);
+  color: var(--color-danger);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
+  text-align: right;
 }
 
 .quick-tag {
@@ -1327,9 +1350,7 @@ watch(
 
 .note-row--discount {
   gap: var(--space-3);
-  background: var(--color-primary-50);
-  border-radius: var(--radius-control);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) 0 var(--space-3);
 }
 
 .discount-left {
@@ -1351,77 +1372,25 @@ watch(
   font-size: var(--type-caption-size);
 }
 
-.discount-value-group {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
 .discount-value {
   font-size: 36px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
-.discount-close {
-  display: flex;
-  width: 28px;
-  height: 28px;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  background: var(--color-primary-500);
-  border: 0;
-  border-radius: 50%;
-  cursor: pointer;
+.record-keyboard {
+  --van-number-keyboard-background: var(--color-background);
+  --van-number-keyboard-key-background: var(--color-surface);
+  --van-number-keyboard-key-active-color: var(--color-primary-50);
+  --van-number-keyboard-button-background: var(--color-primary-600);
+  --van-number-keyboard-title-color: var(--color-text-secondary);
+  --van-number-keyboard-key-height: 52px;
+  --van-number-keyboard-z-index: 70;
 }
 
-.numpad {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 2px;
-  background: var(--color-divider);
-  border-radius: var(--radius-control);
-  overflow: hidden;
-}
-
-.numpad-btn {
-  display: flex;
-  height: 56px;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  color: var(--color-text-primary);
-  font-size: 22px;
-  font-weight: 500;
-  background: var(--color-surface);
-  border: 0;
-  cursor: pointer;
-}
-
-.numpad-btn:active {
-  background: var(--color-background);
-}
-
-.numpad-btn--op {
-  color: var(--color-text-tertiary);
-}
-
-.numpad-btn--wide {
-  grid-column: span 1;
-  font-size: 16px;
-  color: var(--color-text-secondary);
-}
-
-.numpad-btn--save {
-  color: white;
-  font-weight: 600;
-  font-size: 17px;
-}
-
-.numpad-btn--save:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.record-keyboard--disabled :deep(.van-key--blue) {
+  pointer-events: none;
+  opacity: 0.4;
 }
 
 .confirm-content {

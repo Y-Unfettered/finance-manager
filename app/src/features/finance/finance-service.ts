@@ -46,7 +46,10 @@ import {
   type MonthlySummary,
   type DailyFlowPoint,
 } from '@/db/repositories/dashboard-repository'
-import { TransactionRepository } from '@/db/repositories/transaction-repository'
+import {
+  TransactionRepository,
+  type TransactionDiscountRecord,
+} from '@/db/repositories/transaction-repository'
 import type { AccountActivityRecord } from '@/db/repositories/transaction-repository'
 import { PayableRepository } from '@/db/repositories/payable-repository'
 import { ReceivableRepository } from '@/db/repositories/receivable-repository'
@@ -101,6 +104,8 @@ export interface CreateExpenseInput {
   merchant?: string
   note?: string
   attachmentDataUris?: readonly string[]
+  originalAmountMinor?: number
+  discountMinor?: number
 }
 
 export interface CreateIncomeInput {
@@ -133,6 +138,8 @@ export interface CreateCreditPurchaseInput {
   merchant?: string
   note?: string
   attachmentDataUris?: readonly string[]
+  originalAmountMinor?: number
+  discountMinor?: number
 }
 
 export interface CreateRepaymentInput {
@@ -267,6 +274,8 @@ export interface EditTransactionFullInput {
   merchant?: string
   note?: string
   attachmentDataUris?: readonly string[]
+  originalAmountMinor?: number
+  discountMinor?: number
 }
 
 export interface TransactionMetadata {
@@ -289,6 +298,8 @@ export interface TransactionMetadata {
   sourceAccountName?: string
   targetAccountId?: string
   targetAccountName?: string
+  originalAmountMinor?: number
+  discountMinor?: number
 }
 
 export interface FinanceServicePort {
@@ -921,6 +932,7 @@ export class FinanceService implements FinanceServicePort {
   }
 
   async createExpense(input: CreateExpenseInput): Promise<string> {
+    const discount = validateDiscount(input)
     const [account, category] = await Promise.all([
       this.accounts.findPostingRef(input.accountId),
       this.categories.findPostingRef(input.categoryId),
@@ -944,6 +956,7 @@ export class FinanceService implements FinanceServicePort {
       }),
       undefined,
       input.attachmentDataUris,
+      discount,
     )
     return transaction.id
   }
@@ -1004,6 +1017,7 @@ export class FinanceService implements FinanceServicePort {
   }
 
   async createCreditPurchase(input: CreateCreditPurchaseInput): Promise<string> {
+    const discount = validateDiscount(input)
     const [liabilityAccount, category] = await Promise.all([
       this.accounts.findPostingRef(input.liabilityAccountId),
       this.categories.findPostingRef(input.categoryId),
@@ -1023,6 +1037,7 @@ export class FinanceService implements FinanceServicePort {
       }),
       undefined,
       input.attachmentDataUris,
+      discount,
     )
     return transaction.id
   }
@@ -1136,6 +1151,7 @@ export class FinanceService implements FinanceServicePort {
   }
 
   async editTransactionFull(input: EditTransactionFullInput): Promise<string> {
+    const discount = validateDiscount(input)
     const oldTransaction = await this.transactions.findById(input.transactionId)
     if (!oldTransaction || oldTransaction.ledgerId !== input.ledgerId) {
       throw new Error('交易不存在')
@@ -1275,6 +1291,7 @@ export class FinanceService implements FinanceServicePort {
       draft,
       link,
       input.attachmentDataUris,
+      discount,
     )
     return replacement.id
   }
@@ -1287,6 +1304,7 @@ export class FinanceService implements FinanceServicePort {
         ? await this.transactions.originalTransactionId(transaction.id)
         : undefined
     const attachmentDataUris = await this.transactions.listAttachmentDataUris(transaction.id)
+    const discount = await this.transactions.findDiscount(transaction.id)
 
     const accountEntries = transaction.entries.filter((e) => e.accountId)
     const categoryEntry = transaction.entries.find((e) => e.categoryId)
@@ -1341,6 +1359,8 @@ export class FinanceService implements FinanceServicePort {
       targetAccountName: targetEntry?.accountId
         ? accountsById.get(targetEntry.accountId)?.name
         : undefined,
+      originalAmountMinor: discount?.originalAmountMinor,
+      discountMinor: discount?.discountMinor,
     }
   }
 
@@ -1385,6 +1405,31 @@ function requiredText(value: string, message: string): string {
 function optionalText(value: string | undefined): string | undefined {
   const text = value?.trim()
   return text ? text : undefined
+}
+
+function validateDiscount(input: {
+  amountMinor: number
+  originalAmountMinor?: number
+  discountMinor?: number
+}): TransactionDiscountRecord | undefined {
+  const { originalAmountMinor, discountMinor } = input
+  if (originalAmountMinor === undefined && discountMinor === undefined) return undefined
+  if (originalAmountMinor === undefined || discountMinor === undefined) {
+    throw new Error('优惠信息不完整')
+  }
+  if (!Number.isSafeInteger(originalAmountMinor) || originalAmountMinor <= 0) {
+    throw new Error('原金额必须大于 0')
+  }
+  if (!Number.isSafeInteger(discountMinor) || discountMinor <= 0) {
+    throw new Error('优惠金额必须大于 0')
+  }
+  if (discountMinor >= originalAmountMinor) {
+    throw new Error('优惠金额必须小于原金额')
+  }
+  if (originalAmountMinor - discountMinor !== input.amountMinor) {
+    throw new Error('优惠金额与实际支出不一致')
+  }
+  return { originalAmountMinor, discountMinor }
 }
 
 export function recentSummaryDateRange(

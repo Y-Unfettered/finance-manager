@@ -8,11 +8,13 @@ import { AccountRepository } from '@/db/repositories/account-repository'
 import { CategoryRepository } from '@/db/repositories/category-repository'
 import {
   StatisticsRepository,
+  type AssetMonthlyDelta,
   type DistributionRow,
   type MonthlyFlowRow,
 } from '@/db/repositories/statistics-repository'
 import { TransactionRepository } from '@/db/repositories/transaction-repository'
 import type { SqliteExecutor } from '@/db/core/types'
+import type { AccountBalanceRecord } from '@/domain/entities'
 import type { Clock } from '@/domain/time'
 import type { IdGenerator } from '@/domain/identity'
 
@@ -56,7 +58,11 @@ export class StatisticsService {
   private readonly categories: CategoryRepository
   private readonly accounts: AccountRepository
   private readonly transactions: TransactionRepository
-  constructor(database: SqliteExecutor, ids: IdGenerator, clock: Clock) {
+  constructor(
+    database: SqliteExecutor,
+    ids: IdGenerator,
+    private readonly clock: Clock,
+  ) {
     this.stats = new StatisticsRepository(database)
     this.categories = new CategoryRepository(database)
     this.accounts = new AccountRepository(database)
@@ -159,43 +165,72 @@ export class StatisticsService {
     startPeriod?: string,
     endPeriod?: string,
   ): Promise<AssetTrendPoint[]> {
-    const resolvedEnd =
-      endPeriod ??
-      `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
+    const currentPeriod = this.clock.nowIso().slice(0, 7)
+    const resolvedEnd = minPeriod(endPeriod ?? currentPeriod, currentPeriod)
+    if (startPeriod && startPeriod > resolvedEnd) return []
     const [endYear, endMonth] = resolvedEnd.split('-').map(Number)
     const endUtc = new Date(Date.UTC(endYear!, endMonth!, 1)).toISOString()
     const deltas = await this.stats.assetMonthlyDeltas(ledgerId, endUtc)
-    const resolvedStart = startPeriod ?? deltas[0]?.periodKey ?? resolvedEnd
-    let assets = 0,
-      liabilities = 0
-    const byMonth = new Map(deltas.map((row) => [row.periodKey, row]))
-    for (const row of deltas.filter((item) => item.periodKey < resolvedStart)) {
-      assets += row.assetDeltaMinor
-      liabilities += row.liabilityDeltaMinor
-    }
-    let previousNet = assets - liabilities
-    const points: AssetTrendPoint[] = []
-    const [startYear, startMonth] = resolvedStart.split('-').map(Number)
-    const cursor = new Date(Date.UTC(startYear!, startMonth! - 1, 1))
-    const endCursor = new Date(Date.UTC(endYear!, endMonth! - 1, 1))
-    while (cursor <= endCursor) {
-      const key = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}`
-      const row = byMonth.get(key)
-      assets += row?.assetDeltaMinor ?? 0
-      liabilities += row?.liabilityDeltaMinor ?? 0
-      const net = assets - liabilities
-      points.push({
-        periodKey: key,
-        assetsMinor: assets,
-        liabilitiesMinor: liabilities,
-        netAssetsMinor: net,
-        changeMinor: net - previousNet,
-      })
-      previousNet = net
-      cursor.setUTCMonth(cursor.getUTCMonth() + 1)
-    }
-    return points
+    return buildAssetTrendPoints(deltas, startPeriod, resolvedEnd)
   }
+
+  async assetStatement(ledgerId: string, periodKey: string): Promise<AccountBalanceRecord[]> {
+    const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(periodKey)
+    if (!match) throw new Error(`月份必须使用 YYYY-MM 格式：${periodKey}`)
+    const endUtc = new Date(Date.UTC(Number(match[1]), Number(match[2]), 1)).toISOString()
+    return this.accounts.listBalancesAt(ledgerId, endUtc)
+  }
+}
+
+export function buildAssetTrendPoints(
+  deltas: readonly AssetMonthlyDelta[],
+  startPeriod: string | undefined,
+  endPeriod: string,
+): AssetTrendPoint[] {
+  const firstDataPeriod = deltas[0]?.periodKey
+  if (!firstDataPeriod) return []
+
+  const resolvedStart = maxPeriod(startPeriod ?? firstDataPeriod, firstDataPeriod)
+  if (resolvedStart > endPeriod) return []
+
+  let assets = 0,
+    liabilities = 0
+  const byMonth = new Map(deltas.map((row) => [row.periodKey, row]))
+  for (const row of deltas.filter((item) => item.periodKey < resolvedStart)) {
+    assets += row.assetDeltaMinor
+    liabilities += row.liabilityDeltaMinor
+  }
+  let previousNet = assets - liabilities
+  const points: AssetTrendPoint[] = []
+  const [startYear, startMonth] = resolvedStart.split('-').map(Number)
+  const cursor = new Date(Date.UTC(startYear!, startMonth! - 1, 1))
+  const [endYear, endMonth] = endPeriod.split('-').map(Number)
+  const endCursor = new Date(Date.UTC(endYear!, endMonth! - 1, 1))
+  while (cursor <= endCursor) {
+    const key = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}`
+    const row = byMonth.get(key)
+    assets += row?.assetDeltaMinor ?? 0
+    liabilities += row?.liabilityDeltaMinor ?? 0
+    const net = assets - liabilities
+    points.push({
+      periodKey: key,
+      assetsMinor: assets,
+      liabilitiesMinor: liabilities,
+      netAssetsMinor: net,
+      changeMinor: net - previousNet,
+    })
+    previousNet = net
+    cursor.setUTCMonth(cursor.getUTCMonth() + 1)
+  }
+  return points
+}
+
+function minPeriod(left: string, right: string): string {
+  return left < right ? left : right
+}
+
+function maxPeriod(left: string, right: string): string {
+  return left > right ? left : right
 }
 
 export function yearRange(year: number): DateRange {

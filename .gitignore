@@ -9,6 +9,9 @@ app/android/app/build/
 releases/*.apk
 /*.apk
 validation/
+.tmp-bank-logo/
+.tmp-simple-icons/
+.tmp-payment-logos/
 
 # IDE and OS files
 .idea/

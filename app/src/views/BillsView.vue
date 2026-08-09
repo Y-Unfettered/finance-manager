@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { CalendarDays, List, SlidersHorizontal } from '@lucide/vue'
+import { Tab, Tabs } from 'vant'
+import 'vant/es/tab/style'
+import 'vant/es/tabs/style'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -9,6 +12,8 @@ import DailyLedgerCard from '@/components/DailyLedgerCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import MonthPickerSheet from '@/components/MonthPickerSheet.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
+import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
+import { useUiPreference } from '@/composables/useUiPreference'
 import type { LedgerListItem } from '@/db/repositories/dashboard-repository'
 import type { TransactionType } from '@/domain/accounting'
 import type { AccountBalanceRecord } from '@/domain/entities'
@@ -44,8 +49,19 @@ const loading = ref(true)
 const typeFilter = ref<BillTypeFilter>('all')
 const accountId = ref('')
 const categoryId = ref('')
-const view = ref<'list' | 'calendar'>(route.query.view === 'calendar' ? 'calendar' : 'list')
-const calendarMetric = ref<CalendarMetric>('flow')
+const explicitView = route.query.view === 'calendar' || route.query.view === 'list'
+const view = useUiPreference<'list' | 'calendar'>(
+  'bills:view',
+  route.query.view === 'calendar' ? 'calendar' : 'list',
+  ['list', 'calendar'],
+  { preferDefault: explicitView },
+)
+const calendarMetric = useUiPreference<CalendarMetric>('bills:calendar-metric', 'flow', [
+  'flow',
+  'balance',
+  'income',
+  'expense',
+])
 const selectedDate = ref('')
 const activeTransactionId = ref<string>()
 const showDetail = ref(false)
@@ -123,9 +139,9 @@ async function loadOptions(): Promise<void> {
   ])
 }
 
-async function load(): Promise<void> {
+async function load(options: { silent?: boolean } = {}): Promise<void> {
   if (!search || !appStore.ledgerId) return
-  loading.value = true
+  if (!options.silent) loading.value = true
   try {
     const [year, monthNumber] = month.value.split('-').map(Number)
     const start = new Date(year!, monthNumber! - 1, 1)
@@ -142,18 +158,36 @@ async function load(): Promise<void> {
     items.value = rows.map(toLedgerItem)
     if (selectedDate.value && !selectedDate.value.startsWith(month.value)) selectedDate.value = ''
   } finally {
-    loading.value = false
+    if (!options.silent) loading.value = false
   }
 }
 
 function toLedgerItem(item: TransactionSearchResultItem): LedgerListItem {
+  const directional = [
+    'transfer',
+    'repayment',
+    'loan_out',
+    'loan_recovery',
+    'borrowing',
+    'repay_borrowing',
+  ].includes(item.type)
+  const categoryLabel = directional
+    ? typeLabel(item.type)
+    : item.categoryName || typeLabel(item.type)
+  const noteLabel = item.merchant || item.counterparty || item.note
   return {
     id: item.id,
     type: item.type,
     amountMinor: item.amountMinor,
     occurredAt: item.occurredAt,
     title: item.merchant || item.counterparty || item.categoryName || typeLabel(item.type),
-    accountLabel: item.primaryAccountName ?? '',
+    categoryLabel,
+    noteLabel,
+    accountLabel: directional
+      ? [item.sourceAccountName, item.targetAccountName].filter(Boolean).join('→')
+      : (item.primaryAccountName ?? '未指定账户'),
+    originalAmountMinor: item.originalAmountMinor,
+    discountMinor: item.discountMinor,
   }
 }
 
@@ -190,6 +224,10 @@ watch([month, typeFilter, accountId, categoryId], () => {
 onMounted(async () => {
   await loadOptions()
   await load()
+})
+useRefreshOnActivated(async () => {
+  await loadOptions()
+  await load({ silent: true })
 })
 </script>
 
@@ -328,8 +366,13 @@ onMounted(async () => {
               >
             </template>
           </button>
-          <div class="calendar-metrics" role="tablist" aria-label="日历显示方式">
-            <button
+          <Tabs
+            v-model:active="calendarMetric"
+            class="calendar-metrics"
+            type="card"
+            aria-label="日历显示方式"
+          >
+            <Tab
               v-for="option in [
                 ['flow', '收支'],
                 ['balance', '结余'],
@@ -337,13 +380,10 @@ onMounted(async () => {
                 ['expense', '支出'],
               ] as const"
               :key="option[0]"
-              type="button"
-              :class="{ active: calendarMetric === option[0] }"
-              @click="calendarMetric = option[0]"
-            >
-              {{ option[1] }}
-            </button>
-          </div>
+              :name="option[0]"
+              :title="option[1]"
+            />
+          </Tabs>
           <p class="calendar-total">
             月收入：{{ (summary.income / 100).toFixed(2) }}，月支出：{{
               (summary.expense / 100).toFixed(2)
@@ -450,13 +490,12 @@ select {
   text-align: center;
 }
 .calendar-metrics {
-  display: flex;
   grid-column: 1 / -1;
   width: min(100%, 270px);
   margin: 12px auto 2px;
-  padding: 3px;
-  background: var(--color-surface);
-  border-radius: var(--radius-pill);
+  --van-tabs-card-height: 36px;
+  --van-tabs-default-color: var(--color-primary-600);
+  --van-tabs-nav-background: var(--color-surface);
 }
 .calendar-total {
   grid-column: 1 / -1;
@@ -465,18 +504,14 @@ select {
   font-size: 11px;
   line-height: 18px;
 }
-.calendar-metrics button {
-  flex: 1;
-  min-height: 34px;
-  color: var(--color-text-secondary);
-  background: transparent;
-  border: 0;
+.calendar-metrics :deep(.van-tabs__nav--card) {
+  margin: 0;
+  overflow: hidden;
   border-radius: var(--radius-pill);
 }
-.calendar-metrics button.active {
-  color: var(--color-primary-700);
-  background: var(--color-primary-50);
-  font-weight: 600;
+
+.calendar-metrics :deep(.van-tab--card) {
+  border-color: var(--color-primary-600);
 }
 .calendar {
   display: grid;

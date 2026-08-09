@@ -9,11 +9,13 @@ withDefaults(
     showBack?: boolean
     periodSwitchable?: boolean
     variant?: 'surface' | 'transparent'
+    titleAlignment?: 'center' | 'start'
   }>(),
   {
     showBack: true,
     periodSwitchable: false,
     variant: 'surface',
+    titleAlignment: 'center',
   },
 )
 
@@ -24,7 +26,10 @@ defineEmits<{
 </script>
 
 <template>
-  <header class="app-top-bar" :class="`app-top-bar--${variant}`">
+  <header
+    class="app-top-bar"
+    :class="[`app-top-bar--${variant}`, `app-top-bar--title-${titleAlignment}`]"
+  >
     <div class="app-top-bar__slot">
       <slot name="left">
         <AppIconButton
@@ -64,11 +69,18 @@ defineEmits<{
   height: var(--size-app-bar);
   color: var(--color-text-primary);
   background: var(--color-surface);
+  transition:
+    color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard);
 }
 
 .app-top-bar--transparent {
   color: white;
   background: transparent;
+}
+
+.app-top-bar--title-start {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .app-top-bar__slot {
@@ -103,8 +115,15 @@ defineEmits<{
   border-radius: var(--radius-pill);
 }
 
+.app-top-bar--title-start .app-top-bar__title {
+  padding-right: var(--space-2);
+  padding-left: var(--space-1);
+  justify-content: flex-start;
+  justify-self: start;
+}
+
 .app-top-bar__title--switchable:active {
-  background: rgb(23 107 93 / 8%);
+  background: rgb(var(--color-primary-rgb) / 8%);
 }
 
 .app-top-bar--transparent .app-top-bar__title--switchable:active {

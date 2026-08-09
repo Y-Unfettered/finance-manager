@@ -5,6 +5,7 @@ import {
   Download,
   FileUp,
   FolderTree,
+  Images,
   Lock,
   PiggyBank,
 } from '@lucide/vue'
@@ -32,6 +33,7 @@ const preferences = ref<HomePreferences>({
   amountsHidden: false,
   rememberLastAccount: true,
   appearance: 'system',
+  colorTheme: 'green',
 })
 const saving = ref(false)
 
@@ -65,6 +67,11 @@ async function save(): Promise<void> {
   } finally {
     saving.value = false
   }
+}
+
+function updateColorTheme(): void {
+  document.documentElement.dataset.colorTheme = preferences.value.colorTheme
+  void save()
 }
 
 onMounted(load)
@@ -126,13 +133,27 @@ onMounted(load)
         <h2>外观</h2>
         <BaseCard class="settings-card">
           <label>
-            <span><strong>主题</strong><small>跟随系统或固定明暗模式</small></span>
+            <span><strong>主题色</strong><small>全局使用绿色或蓝色界面</small></span>
+            <select v-model="preferences.colorTheme" @change="updateColorTheme">
+              <option value="green">松石绿</option>
+              <option value="blue">晴空蓝</option>
+            </select>
+          </label>
+          <label>
+            <span><strong>明暗模式</strong><small>跟随系统或固定明暗模式</small></span>
             <select v-model="preferences.appearance" @change="save">
               <option value="system">跟随系统</option>
               <option value="light">浅色</option>
               <option value="dark">深色</option>
             </select>
           </label>
+        </BaseCard>
+        <BaseCard class="entry-card appearance-entry">
+          <button type="button" @click="router.push({ name: 'account-icons' })">
+            <span class="entry-icon"><Images :size="20" /></span>
+            <span><strong>账户图标管理</strong><small>为已有账户自行替换图标</small></span>
+            <ChevronRight :size="19" />
+          </button>
         </BaseCard>
       </section>
       <section>
@@ -182,6 +203,9 @@ h2 {
 .settings-card,
 .entry-card {
   padding: 0 var(--space-4);
+}
+.appearance-entry {
+  margin-top: var(--space-3);
 }
 label,
 .entry-card button {

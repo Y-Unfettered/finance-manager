@@ -22,6 +22,7 @@ import {
   type UpdateReminderInput,
 } from '@/features/reminders/reminder-service'
 import { useAppStore } from '@/stores/app'
+import { navigateBack } from '@/router/navigation-transition'
 
 const REMINDER_TYPE_LABELS: Record<ReminderType, string> = {
   credit_card_due: '信用卡还款',
@@ -259,7 +260,7 @@ onMounted(load)
 <template>
   <main class="reminders-page">
     <div class="reminders-page__safe-top">
-      <AppTopBar title="到期提醒" @back="router.replace({ name: 'profile' })">
+      <AppTopBar title="到期提醒" @back="navigateBack(router, { name: 'settings' })">
         <template #right>
           <AppIconButton label="新增提醒" @click="openCreate">
             <Plus :size="22" :stroke-width="1.75" aria-hidden="true" />
