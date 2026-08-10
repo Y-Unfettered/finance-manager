@@ -148,10 +148,18 @@ const activeChildCategories = computed(() =>
 )
 const pickerAccounts = computed(() => {
   if (accountPickerContext.value === 'target') {
-    return mode.value === 'repayment' ? creditAccounts.value : debitAccounts.value
+    if (mode.value === 'repayment') return creditAccounts.value
+    if (mode.value === 'transfer') {
+      return activeAccounts.value.filter((a) => a.id !== sourceAccountId.value)
+    }
+    return debitAccounts.value
   }
   if (mode.value === 'expense' || mode.value === 'credit_purchase') return activeAccounts.value
   if (mode.value === 'refund') return activeAccounts.value
+  if (mode.value === 'transfer') {
+    return activeAccounts.value.filter((a) => a.id !== targetAccountId.value)
+  }
+  if (mode.value === 'repayment') return debitAccounts.value
   return debitAccounts.value
 })
 
@@ -314,10 +322,10 @@ function switchMode(next: EntryMode): void {
 
 function resetAccountsForMode(next: EntryMode): void {
   const sourceOptions =
-    next === 'expense' || next === 'credit_purchase'
+    next === 'expense' || next === 'credit_purchase' || next === 'refund' || next === 'transfer'
       ? activeAccounts.value
-      : next === 'refund'
-        ? activeAccounts.value
+      : next === 'repayment'
+        ? debitAccounts.value
         : debitAccounts.value
   const lastAccountId =
     preferences.value.rememberLastAccount && appStore.ledgerId
@@ -335,7 +343,8 @@ function resetAccountsForMode(next: EntryMode): void {
     sourceOptions[0]?.id ??
     ''
   if (next === 'transfer') {
-    targetAccountId.value = debitAccounts.value[1]?.id ?? debitAccounts.value[0]?.id ?? ''
+    targetAccountId.value =
+      activeAccounts.value.find((a) => a.id !== sourceAccountId.value)?.id ?? ''
   } else if (next === 'repayment') {
     targetAccountId.value = creditAccounts.value[0]?.id ?? ''
   } else {
@@ -827,22 +836,25 @@ onUnmounted(() => {
       <!-- 转账/还款模式账户选择 -->
       <div v-else-if="isDualAccountMode" class="transfer-panel">
         <button
-          class="transfer-row transfer-row--clickable"
+          class="transfer-card"
           type="button"
           @click="openAccountPicker('source')"
         >
-          <div class="transfer-row__label">{{ isRepayment ? '还款账户' : '转出账户' }}</div>
-          <div class="transfer-row__value">
-            <template v-if="selectedSourceAccount">
-              <span class="transfer-row__name">{{ selectedSourceAccount.name }}</span>
-              <span class="transfer-row__balance">
-                {{ formatMinorToCny(selectedSourceAccount.balanceMinor) }}
-              </span>
-            </template>
-            <span v-else class="transfer-row__placeholder">
-              {{ isRepayment ? '点击选择还款账户' : '点击选择转出账户' }}
-            </span>
+          <div class="transfer-card__header">
+            <span class="transfer-card__label">{{ isRepayment ? '还款账户' : '转出账户' }}</span>
+            <span class="transfer-card__chevron" aria-hidden="true">›</span>
           </div>
+          <template v-if="selectedSourceAccount">
+            <div class="transfer-card__name">{{ selectedSourceAccount.name }}</div>
+            <div class="transfer-card__balance">
+              {{ formatMinorToCny(selectedSourceAccount.balanceMinor) }}
+            </div>
+          </template>
+          <template v-else>
+            <div class="transfer-card__placeholder">
+              {{ isRepayment ? '点击选择还款账户' : '点击选择转出账户' }}
+            </div>
+          </template>
         </button>
         <button
           v-if="isTransfer"
@@ -851,25 +863,28 @@ onUnmounted(() => {
           aria-label="交换账户"
           @click="swapAccounts"
         >
-          <ArrowLeftRight :size="28" :stroke-width="1.75" />
+          <ArrowLeftRight :size="24" :stroke-width="1.75" />
         </button>
         <button
-          class="transfer-row transfer-row--clickable"
+          class="transfer-card"
           type="button"
           @click="openAccountPicker('target')"
         >
-          <div class="transfer-row__label">{{ isRepayment ? '信用账户' : '转入账户' }}</div>
-          <div class="transfer-row__value">
-            <template v-if="selectedTargetAccount">
-              <span class="transfer-row__name">{{ selectedTargetAccount.name }}</span>
-              <span class="transfer-row__balance">
-                {{ formatMinorToCny(selectedTargetAccount.balanceMinor) }}
-              </span>
-            </template>
-            <span v-else class="transfer-row__placeholder">
-              {{ isRepayment ? '点击选择信用账户' : '点击选择转入账户' }}
-            </span>
+          <div class="transfer-card__header">
+            <span class="transfer-card__label">{{ isRepayment ? '信用账户' : '转入账户' }}</span>
+            <span class="transfer-card__chevron" aria-hidden="true">›</span>
           </div>
+          <template v-if="selectedTargetAccount">
+            <div class="transfer-card__name">{{ selectedTargetAccount.name }}</div>
+            <div class="transfer-card__balance">
+              {{ formatMinorToCny(selectedTargetAccount.balanceMinor) }}
+            </div>
+          </template>
+          <template v-else>
+            <div class="transfer-card__placeholder">
+              {{ isRepayment ? '点击选择信用账户' : '点击选择转入账户' }}
+            </div>
+          </template>
         </button>
       </div>
     </section>
@@ -1170,60 +1185,62 @@ onUnmounted(() => {
 
 .transfer-panel {
   display: grid;
-  gap: var(--space-3);
-  padding-top: var(--space-2);
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
 }
 
-.transfer-row {
-  display: grid;
-  grid-template-columns: 80px 1fr;
-  gap: var(--space-3);
-  align-items: center;
+.transfer-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
   padding: var(--space-4);
+  text-align: left;
+  color: var(--color-text-primary);
   background: var(--color-background);
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-card);
-}
-
-.transfer-row--clickable {
   cursor: pointer;
-  width: 100%;
-  text-align: left;
 }
 
-.transfer-row__label {
+.transfer-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.transfer-card__label {
   color: var(--color-text-secondary);
   font-size: var(--type-body-size);
 }
 
-.transfer-row__value {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
+.transfer-card__chevron {
+  color: var(--color-text-tertiary);
+  font-size: 20px;
+  line-height: 1;
 }
 
-.transfer-row__name {
+.transfer-card__name {
   color: var(--color-text-primary);
   font-size: var(--type-body-size);
-  font-weight: 500;
+  font-weight: 600;
 }
 
-.transfer-row__balance {
+.transfer-card__balance {
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   font-variant-numeric: tabular-nums;
 }
 
-.transfer-row__placeholder {
+.transfer-card__placeholder {
   color: var(--color-text-tertiary);
   font-size: var(--type-body-size);
 }
 
 .swap-btn {
   display: flex;
-  width: 56px;
-  height: 56px;
+  width: 44px;
+  height: 44px;
   align-items: center;
   justify-content: center;
   color: var(--color-primary-600);
