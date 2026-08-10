@@ -189,13 +189,13 @@ export function buildAssetTrendPoints(
 ): AssetTrendPoint[] {
   const firstDataPeriod = deltas[0]?.periodKey
   if (!firstDataPeriod) return []
+  if (firstDataPeriod > endPeriod) return []
 
-  const resolvedStart = maxPeriod(startPeriod ?? firstDataPeriod, firstDataPeriod)
-  if (resolvedStart > endPeriod) return []
+  const resolvedStart = startPeriod ?? firstDataPeriod
 
+  const byMonth = new Map(deltas.map((row) => [row.periodKey, row]))
   let assets = 0,
     liabilities = 0
-  const byMonth = new Map(deltas.map((row) => [row.periodKey, row]))
   for (const row of deltas.filter((item) => item.periodKey < resolvedStart)) {
     assets += row.assetDeltaMinor
     liabilities += row.liabilityDeltaMinor
@@ -209,8 +209,10 @@ export function buildAssetTrendPoints(
   while (cursor <= endCursor) {
     const key = `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, '0')}`
     const row = byMonth.get(key)
-    assets += row?.assetDeltaMinor ?? 0
-    liabilities += row?.liabilityDeltaMinor ?? 0
+    if (row) {
+      assets += row.assetDeltaMinor
+      liabilities += row.liabilityDeltaMinor
+    }
     const net = assets - liabilities
     points.push({
       periodKey: key,

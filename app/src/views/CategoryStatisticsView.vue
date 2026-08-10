@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import DistributionBars from '@/components/DistributionBars.vue'
 import DistributionDonut from '@/components/DistributionDonut.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import MonthlyBarChart from '@/components/MonthlyBarChart.vue'
@@ -38,9 +39,6 @@ const range = computed(() =>
     startDate: customStart.value,
     endDate: customEnd.value,
   }),
-)
-const maxDistribution = computed(() =>
-  Math.max(1, ...(data.value?.distribution.map((item) => item.amountMinor) ?? [1])),
 )
 const displayedTransactions = computed(() =>
   selectedMonth.value
@@ -127,14 +125,7 @@ useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
         <BaseCard>
           <h2>分类构成</h2>
           <DistributionDonut :points="data.distribution" />
-          <div class="distribution">
-            <div v-for="item in data.distribution" :key="item.id">
-              <span>{{ item.name }}</span>
-              <i><b :style="{ width: `${(item.amountMinor / maxDistribution) * 100}%` }" /></i>
-              <MoneyText :amount-minor="item.amountMinor" />
-            </div>
-            <p v-if="!data.distribution.length">暂无支出数据</p>
-          </div>
+          <DistributionBars :items="data.distribution" />
         </BaseCard>
         <BaseCard class="tx-list">
           <h2>交易明细</h2>

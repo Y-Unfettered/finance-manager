@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import BudgetRing from '@/components/BudgetRing.vue'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
@@ -46,16 +47,6 @@ const categoryTotal = computed(() =>
 const remainingPercent = computed(() => {
   const value = progress.value
   return value ? budgetRemainingRingPercent(value.totalLimitMinor, value.spentMinor) : 0
-})
-const ringStyle = computed(() => {
-  if (progress.value?.overspent) {
-    return {
-      background: 'conic-gradient(var(--color-expense) 100%, var(--color-primary-50) 0)',
-    }
-  }
-  return {
-    background: `conic-gradient(var(--color-primary-500) ${remainingPercent.value}%, var(--color-primary-50) 0)`,
-  }
 })
 
 async function load(options: { silent?: boolean } = {}) {
@@ -187,11 +178,13 @@ useRefreshOnActivated(() => load({ silent: true }))
                   : '总预算与分类预算'
             }}</span>
           </div>
-          <div class="ring" :style="ringStyle">
-            <span
-              ><small>{{ progress.overspent ? '超支' : '剩余' }}</small
-              ><MoneyText :amount-minor="Math.abs(progress.remainingMinor)"
-            /></span></div></BaseCard
+          <BudgetRing
+            :remaining-percent="remainingPercent"
+            :overspent="progress.overspent"
+            :size="108"
+            :center-label="progress.overspent ? '超支' : '剩余'"
+            :center-value="`¥${(Math.abs(progress.remainingMinor) / 100).toFixed(2)}`"
+          /></BaseCard
         ><BaseCard v-else class="empty-card" @click="openEditor"
           ><strong>本月尚未设置预算</strong><span>点击设置总预算或一级分类预算</span></BaseCard
         ><BaseCard class="category-title" @click="openEditor"
@@ -221,16 +214,13 @@ useRefreshOnActivated(() => load({ silent: true }))
               >总额 ¥{{ (item.limitMinor / 100).toFixed(2) }} ·
               {{ item.transactionCount }} 笔支出（¥{{ (item.spentMinor / 100).toFixed(2) }}）</small
             ></span
-          ><span
-            class="mini-ring"
-            :style="{
-              background: `conic-gradient(${item.overspent ? 'var(--color-expense)' : 'var(--color-primary-500)'} ${budgetRemainingRingPercent(item.limitMinor, item.spentMinor)}%,var(--color-primary-50) 0)`,
-            }"
-            ><i
-              ><small>{{ item.overspent ? '超支' : '剩余' }}</small
-              ><b>¥{{ (Math.abs(item.remainingMinor) / 100).toFixed(0) }}</b></i
-            ></span
-          ><ChevronRight :size="18" />
+          ><BudgetRing
+            :remaining-percent="budgetRemainingRingPercent(item.limitMinor, item.spentMinor)"
+            :overspent="item.overspent"
+            :size="58"
+            :center-label="item.overspent ? '超支' : '剩余'"
+            :center-value="`¥${(Math.abs(item.remainingMinor) / 100).toFixed(0)}`"
+          /><ChevronRight :size="18" />
         </button>
         <p v-if="progress && progress.unallocatedBudgetMinor > 0" class="unallocated">
           未分配预算 ¥{{ (progress.unallocatedBudgetMinor / 100).toFixed(2) }}，分类外支出已使用 ¥{{
@@ -375,34 +365,6 @@ useRefreshOnActivated(() => load({ silent: true }))
   background: var(--color-primary-50);
   border-radius: 999px;
 }
-.ring,
-.mini-ring {
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-}
-.ring {
-  width: 108px;
-  height: 108px;
-}
-.ring > span {
-  display: grid;
-  width: 84px;
-  height: 84px;
-  place-items: center;
-  align-content: center;
-  background: var(--color-surface);
-  border-radius: 50%;
-}
-.ring small,
-.mini-ring small {
-  color: var(--color-text-tertiary);
-  font-size: 10px;
-}
-.ring :deep(.money-text) {
-  font-size: 14px;
-  font-weight: 700;
-}
 .category-title {
   display: flex;
   align-items: center;
@@ -447,23 +409,6 @@ useRefreshOnActivated(() => load({ silent: true }))
 .category-info {
   display: grid;
   gap: 4px;
-}
-.mini-ring {
-  width: 58px;
-  height: 58px;
-}
-.mini-ring i {
-  display: grid;
-  width: 44px;
-  height: 44px;
-  place-items: center;
-  align-content: center;
-  font-style: normal;
-  background: var(--color-surface);
-  border-radius: 50%;
-}
-.mini-ring b {
-  font-size: 10px;
 }
 .category-budget > svg {
   color: var(--color-text-tertiary);

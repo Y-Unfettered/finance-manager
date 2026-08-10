@@ -13,14 +13,13 @@ import {
 } from '@lucide/vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Progress as VanProgress } from 'vant'
-import 'vant/es/progress/style'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import DailyLedgerCard from '@/components/DailyLedgerCard.vue'
+import LinearProgress from '@/components/LinearProgress.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import RecentSummaryCard from '@/components/RecentSummaryCard.vue'
 import SideDrawer from '@/components/SideDrawer.vue'
@@ -583,12 +582,9 @@ onUnmounted(() => {
             </AppIconButton>
           </div>
           <div class="budget-card__track">
-            <van-progress
+            <LinearProgress
               :percentage="budgetProgress.remainingPercent"
-              :color="budgetProgress.over ? '#c0392b' : 'var(--color-primary-500)'"
-              track-color="var(--color-primary-50)"
-              :show-pivot="false"
-              :stroke-width="8"
+              :overspent="budgetProgress.over"
             />
           </div>
           <div class="budget-card__footer">

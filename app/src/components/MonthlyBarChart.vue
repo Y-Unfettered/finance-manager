@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import * as echarts from 'echarts/core'
+import { BarChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+
+echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
+
 const props = defineProps<{
   points: readonly {
     periodKey: string
@@ -10,89 +17,107 @@ const props = defineProps<{
   }[]
 }>()
 const emit = defineEmits<{ select: [periodKey: string | undefined] }>()
+
+const chartRef = ref<HTMLElement>()
+let chart: echarts.ECharts | null = null
 const selected = ref<string>()
-const max = computed(() =>
-  Math.max(
-    1,
-    ...props.points.flatMap((p) => [
-      p.incomeMinor ?? p.inflowMinor ?? 0,
-      p.expenseMinor ?? p.outflowMinor ?? 0,
-    ]),
-  ),
-)
-function height(value: number) {
-  return `${Math.max(value ? 4 : 0, (value / max.value) * 100)}px`
+
+function getCssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
-function select(periodKey: string) {
-  selected.value = selected.value === periodKey ? undefined : periodKey
-  emit('select', selected.value)
+
+function buildOption() {
+  const incomeColor = getCssVar('--color-income') || '#248561'
+  const expenseColor = getCssVar('--color-expense') || '#d45f5a'
+  const xData = props.points.map((p) => `${Number(p.periodKey.slice(5))}月`)
+  const incomeData = props.points.map((p) =>
+    Number(((p.incomeMinor ?? p.inflowMinor ?? 0) / 100).toFixed(2)),
+  )
+  const expenseData = props.points.map((p) =>
+    Number(((p.expenseMinor ?? p.outflowMinor ?? 0) / 100).toFixed(2)),
+  )
+
+  return {
+    grid: { left: 0, right: 0, top: 8, bottom: 22, containLabel: false },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: unknown) => {
+        const arr = (Array.isArray(params) ? params : []) as { seriesName: string; value: number; axisValue: string }[]
+        if (!arr.length) return ''
+        const first = arr[0]
+        if (!first) return ''
+        const lines = arr.map((p) => `${p.seriesName}：¥${p.value.toFixed(2)}`)
+        return `${first.axisValue}<br/>${lines.join('<br/>')}`
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      axisTick: { show: false },
+      axisLine: { show: false },
+      axisLabel: { color: getCssVar('--color-text-tertiary') || '#999', fontSize: 9, interval: 0 },
+    },
+    yAxis: { show: false, type: 'value' },
+    series: [
+      {
+        name: '收入',
+        type: 'bar',
+        data: incomeData,
+        itemStyle: { color: incomeColor, borderRadius: [4, 4, 0, 0] },
+        barMaxWidth: 7,
+        barGap: '20%',
+      },
+      {
+        name: '支出',
+        type: 'bar',
+        data: expenseData,
+        itemStyle: { color: expenseColor, borderRadius: [4, 4, 0, 0] },
+        barMaxWidth: 7,
+      },
+    ],
+  }
 }
+
+function renderChart(): void {
+  if (!chartRef.value) return
+  if (!chart) {
+    chart = echarts.init(chartRef.value)
+    chart.on('click', (params: unknown) => {
+      const p = params as { dataIndex: number }
+      const periodKey = props.points[p.dataIndex]?.periodKey
+      selected.value = selected.value === periodKey ? undefined : periodKey
+      emit('select', selected.value)
+    })
+  }
+  chart.setOption(buildOption(), true)
+}
+
+function handleResize(): void {
+  chart?.resize()
+}
+
+onMounted(() => {
+  nextTick(renderChart)
+  window.addEventListener('resize', handleResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  chart?.dispose()
+  chart = null
+})
+
+watch(() => props.points, () => nextTick(renderChart), { deep: true })
 </script>
+
 <template>
-  <div class="monthly-chart">
-    <button
-      v-for="point in points"
-      :key="point.periodKey"
-      class="month"
-      :class="{ active: selected === point.periodKey }"
-      type="button"
-      @click="select(point.periodKey)"
-    >
-      <span class="bars"
-        ><i
-          class="bar income"
-          :style="{ height: height(point.incomeMinor ?? point.inflowMinor ?? 0) }" /><i
-          class="bar expense"
-          :style="{ height: height(point.expenseMinor ?? point.outflowMinor ?? 0) }" /></span
-      ><small>{{ Number(point.periodKey.slice(5)) }}月</small>
-    </button>
-  </div>
+  <div ref="chartRef" class="monthly-chart" />
 </template>
+
 <style scoped>
 .monthly-chart {
-  display: flex;
+  width: 100%;
   height: 132px;
-  align-items: flex-end;
-  justify-content: space-around;
-  gap: 4px;
-  border-bottom: 1px solid var(--color-divider);
-}
-.month {
-  display: grid;
-  height: 126px;
-  min-width: 14px;
-  padding: 0;
-  align-items: end;
-  justify-items: center;
-  gap: 5px;
-  flex: 1;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-}
-.month.active {
-  background: var(--color-primary-50);
-}
-.bars {
-  display: flex;
-  height: 104px;
-  align-items: flex-end;
-  gap: 2px;
-}
-.bar {
-  display: block;
-  width: 7px;
-  border-radius: 4px 4px 0 0;
-}
-.income {
-  background: var(--color-income);
-}
-.expense {
-  background: var(--color-expense);
-}
-small {
-  color: var(--color-text-tertiary);
-  font-size: 9px;
-  white-space: nowrap;
 }
 </style>

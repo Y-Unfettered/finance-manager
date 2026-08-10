@@ -1,6 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import * as echarts from 'echarts/core'
+import { BarChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
@@ -8,6 +12,8 @@ import MoneyText from '@/components/MoneyText.vue'
 import { useUiPreference } from '@/composables/useUiPreference'
 import { useFinanceService, type HomeSnapshot } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
+
+echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
 
 type ReportMode = 'month' | 'year'
 interface FlowPoint {
@@ -43,9 +49,85 @@ const maxValue = computed(() =>
   Math.max(1, ...points.value.flatMap((point) => [point.incomeMinor, point.expenseMinor])),
 )
 
-function barHeight(value: number): string {
-  return `${Math.max(value ? 5 : 0, (value / maxValue.value) * 118)}px`
+const chartRef = ref<HTMLElement>()
+let chart: echarts.ECharts | null = null
+
+function getCssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
+
+function buildChartOption() {
+  const incomeColor = getCssVar('--color-income') || '#248561'
+  const expenseColor = getCssVar('--color-expense') || '#d45f5a'
+  const textColor = getCssVar('--color-text-tertiary') || '#999'
+  const xData = points.value.map((p) => p.label)
+  const incomeData = points.value.map((p) => Number((p.incomeMinor / 100).toFixed(2)))
+  const expenseData = points.value.map((p) => Number((p.expenseMinor / 100).toFixed(2)))
+
+  return {
+    grid: { left: 0, right: 0, top: 8, bottom: 20, containLabel: false },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: (params: unknown) => {
+        const arr = (Array.isArray(params) ? params : []) as { seriesName: string; value: number; axisValue: string }[]
+        if (!arr.length) return ''
+        const first = arr[0]
+        if (!first) return ''
+        const lines = arr.map((p) => `${p.seriesName}：¥${p.value.toFixed(2)}`)
+        return `${first.axisValue}<br/>${lines.join('<br/>')}`
+      },
+    },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      axisTick: { show: false },
+      axisLine: { show: false },
+      axisLabel: { color: textColor, fontSize: 9, interval: 0 },
+    },
+    yAxis: { show: false, type: 'value' },
+    series: [
+      {
+        name: '收入',
+        type: 'bar',
+        data: incomeData,
+        itemStyle: { color: incomeColor, borderRadius: [5, 5, 1, 1] },
+        barMaxWidth: 5,
+        barGap: '40%',
+      },
+      {
+        name: '支出',
+        type: 'bar',
+        data: expenseData,
+        itemStyle: { color: expenseColor, borderRadius: [5, 5, 1, 1] },
+        barMaxWidth: 5,
+      },
+    ],
+  }
+}
+
+function renderChart(): void {
+  if (!chartRef.value) return
+  if (!chart) {
+    chart = echarts.init(chartRef.value)
+  }
+  chart.setOption(buildChartOption(), true)
+}
+
+function handleResize(): void {
+  chart?.resize()
+}
+
+onMounted(() => {
+  nextTick(renderChart)
+  window.addEventListener('resize', handleResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  chart?.dispose()
+  chart = null
+})
 
 async function load(): Promise<void> {
   if (!finance || !store.ledgerId) return
@@ -102,6 +184,7 @@ function changeYear(event: Event): void {
 }
 
 watch([period, mode], load)
+watch(points, () => nextTick(renderChart), { deep: true })
 onMounted(load)
 </script>
 
@@ -157,21 +240,7 @@ onMounted(load)
           <span><i class="income" />收入 <i class="expense" />支出</span>
         </header>
         <div v-if="loading" class="report-state">正在生成报表…</div>
-        <div v-else class="report-chart">
-          <div v-for="point in points" :key="point.label" class="report-bar-group">
-            <div>
-              <i
-                class="report-bar report-bar--income"
-                :style="{ height: barHeight(point.incomeMinor) }"
-              />
-              <i
-                class="report-bar report-bar--expense"
-                :style="{ height: barHeight(point.expenseMinor) }"
-              />
-            </div>
-            <small>{{ point.label }}</small>
-          </div>
-        </div>
+        <div v-else ref="chartRef" class="report-chart" />
       </BaseCard>
 
       <BaseCard class="report-kpis">
@@ -313,42 +382,8 @@ onMounted(load)
   background: var(--color-expense);
 }
 .report-chart {
-  display: flex;
+  width: 100%;
   height: 158px;
-  align-items: end;
-  gap: 7px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-.report-bar-group {
-  display: grid;
-  min-width: 18px;
-  align-items: end;
-  justify-items: center;
-  gap: 5px;
-  flex: 1;
-}
-.report-bar-group > div {
-  display: flex;
-  height: 120px;
-  align-items: end;
-  gap: 2px;
-}
-.report-bar {
-  display: block;
-  width: 5px;
-  min-height: 0;
-  border-radius: 5px 5px 1px 1px;
-}
-.report-bar--income {
-  background: var(--color-income);
-}
-.report-bar--expense {
-  background: var(--color-expense);
-}
-.report-bar-group small {
-  color: var(--color-text-tertiary);
-  font-size: 9px;
 }
 .report-state {
   min-height: 158px;

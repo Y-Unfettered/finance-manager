@@ -12,6 +12,7 @@ import AppTopBar from '@/components/AppTopBar.vue'
 import AssetTrendChart from '@/components/AssetTrendChart.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import ShareBar from '@/components/ShareBar.vue'
 import { useUiPreference } from '@/composables/useUiPreference'
 import {
   assetSharePercent,
@@ -339,9 +340,7 @@ onMounted(load)
                     />
                   </div>
                 </div>
-                <div class="month-card__bar" aria-hidden="true">
-                  <span :style="{ width: `${card.assetShare}%` }" />
-                </div>
+                <ShareBar :percent="card.assetShare" />
               </button>
             </BaseCard>
           </article>
@@ -534,19 +533,6 @@ onMounted(load)
 .month-card__totals :deep(.money-text) {
   font-size: 17px;
   font-weight: 650;
-}
-.month-card__bar {
-  height: 5px;
-  margin-top: var(--space-3);
-  overflow: hidden;
-  background: var(--color-warning);
-  border-radius: var(--radius-pill);
-}
-.month-card__bar span {
-  display: block;
-  height: 100%;
-  background: var(--color-primary-500);
-  border-radius: inherit;
 }
 .picker-confirm {
   width: 100%;
