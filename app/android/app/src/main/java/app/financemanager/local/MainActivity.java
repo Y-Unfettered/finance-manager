@@ -7,6 +7,10 @@ import android.view.View;
 import android.view.WindowManager;
 import android.widget.TextView;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
@@ -15,6 +19,21 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // 拦截 IME（系统输入法）insets，防止 WebView 内部缩小布局视口。
+        // 即使 AndroidManifest 设置了 adjustNothing，WebView 仍会在收到 IME
+        // insets 时自动缩小 layout viewport，导致页面被压缩、自定义数字键盘
+        // 被推到上方。通过在 content view 层面剥离 IME insets，WebView 保持
+        // 完整的布局视口高度，系统键盘仅作为覆盖层遮挡底部区域。
+        View contentView = findViewById(android.R.id.content);
+        if (contentView != null) {
+            ViewCompat.setOnApplyWindowInsetsListener(contentView, (v, windowInsets) -> {
+                WindowInsetsCompat.Builder builder = new WindowInsetsCompat.Builder(windowInsets);
+                builder.setInsets(WindowInsetsCompat.Type.ime(), Insets.NONE);
+                return builder.build();
+            });
+            ViewCompat.requestApplyInsets(contentView);
+        }
 
         // 创建原生遮罩 View：白色背景 + 居中文字"财务经理"
         // 在窗口失去焦点时立即显示，先于系统截图。

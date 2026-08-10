@@ -2,7 +2,7 @@
 import { ArrowLeftRight, ChevronLeft, Plus } from '@lucide/vue'
 import { NumberKeyboard } from 'vant'
 import 'vant/es/number-keyboard/style'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
@@ -84,7 +84,8 @@ const saving = ref(false)
 const errorMessage = ref('')
 const keyboardVisible = ref(true)
 
-const amountDisplay = ref('0.0')
+const amountDisplay = ref('0')
+const amountStarted = ref(false)
 const selectedCategoryId = ref('')
 const selectedCategoryName = ref('')
 const merchant = ref('')
@@ -278,6 +279,7 @@ function applyTransactionToForm(tx: TransactionMetadata): void {
     mode.value = tx.type as EntryMode
   else mode.value = 'expense'
   amountDisplay.value = formatMinorToCny(tx.originalAmountMinor ?? tx.amountMinor)
+  amountStarted.value = true
   discountAmount.value = tx.discountMinor ? formatMinorToCny(tx.discountMinor) : ''
   discountMode.value = false
   merchant.value = tx.merchant ?? ''
@@ -482,17 +484,24 @@ function appendAmount(char: string): void {
   }
   if (char === 'backspace') {
     amountDisplay.value = amountDisplay.value.slice(0, -1)
-    if (amountDisplay.value === '') amountDisplay.value = '0'
+    if (amountDisplay.value === '') {
+      amountDisplay.value = '0'
+      amountStarted.value = false
+    }
     return
   }
   if (char === 'clear') {
-    amountDisplay.value = '0.0'
+    amountDisplay.value = '0'
+    amountStarted.value = false
     return
   }
-  if (char === '00' && (amountDisplay.value === '0' || amountDisplay.value === '0.0')) return
-  if (amountDisplay.value === '0' || amountDisplay.value === '0.0') {
-    amountDisplay.value = char === '.' ? '0.' : char
-    return
+  if (!amountStarted.value) {
+    amountStarted.value = true
+    if (char === '00' && (amountDisplay.value === '0' || amountDisplay.value === '0.0')) return
+    if (amountDisplay.value === '0' || amountDisplay.value === '0.0') {
+      amountDisplay.value = char === '.' ? '0.' : char
+      return
+    }
   }
   if (char === '.' && !amountDisplay.value.includes('.')) {
     amountDisplay.value += '.'
@@ -670,6 +679,18 @@ async function addNewCategory(): Promise<void> {
   })
 }
 
+const pageRef = ref<HTMLElement>()
+let frameScrollHandler: (() => void) | null = null
+
+function preventFrameScroll(): void {
+  const frame = pageRef.value?.closest('.route-page-frame') as HTMLElement | null
+  if (!frame) return
+  if (frame.scrollTop !== 0 || frame.scrollLeft !== 0) {
+    frame.scrollTop = 0
+    frame.scrollLeft = 0
+  }
+}
+
 onMounted(async () => {
   await loadOptions()
   const editId = route.query.edit
@@ -685,14 +706,16 @@ onMounted(async () => {
     editTransactionId.value = copyId
     isCopyMode.value = true
     await loadTransactionForEdit(copyId)
-    amountDisplay.value = '0.0'
+    amountDisplay.value = '0'
+    amountStarted.value = false
     discountAmount.value = ''
     occurredAt.value = new Date().toISOString()
   } else if (typeof refundId === 'string' && refundId) {
     originalRefundTransactionId.value = refundId
     await loadTransactionForEdit(refundId)
     mode.value = 'refund'
-    amountDisplay.value = '0.0'
+    amountDisplay.value = '0'
+    amountStarted.value = false
     discountAmount.value = ''
     occurredAt.value = new Date().toISOString()
     attachmentDataUris.value = []
@@ -711,6 +734,19 @@ onMounted(async () => {
   ) {
     sourceAccountId.value = requestedAccountId
   }
+  void nextTick(() => {
+    preventFrameScroll()
+    const frame = pageRef.value?.closest('.route-page-frame') as HTMLElement | null
+    if (frame) {
+      frameScrollHandler = () => {
+        if (frame.scrollTop !== 0 || frame.scrollLeft !== 0) {
+          frame.scrollTop = 0
+          frame.scrollLeft = 0
+        }
+      }
+      frame.addEventListener('scroll', frameScrollHandler, { passive: true })
+    }
+  })
 })
 
 watch(
@@ -719,10 +755,18 @@ watch(
     if (!loading.value && sourceAccountId.value === '') resetAccountsForMode(mode.value)
   },
 )
+
+onUnmounted(() => {
+  if (frameScrollHandler) {
+    const frame = pageRef.value?.closest('.route-page-frame') as HTMLElement | null
+    frame?.removeEventListener('scroll', frameScrollHandler)
+    frameScrollHandler = null
+  }
+})
 </script>
 
 <template>
-  <main class="record-page">
+  <main ref="pageRef" class="record-page">
     <header class="record-header">
       <button class="header-btn" type="button" aria-label="关闭" @click="goBack">
         <ChevronLeft :size="24" :stroke-width="2" />
@@ -955,8 +999,9 @@ watch(
 <style scoped>
 .record-page {
   display: flex;
-  min-height: 100dvh;
+  height: 100dvh;
   flex-direction: column;
+  overflow: hidden;
   background: var(--color-surface);
 }
 

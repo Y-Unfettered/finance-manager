@@ -81,7 +81,7 @@ watch(
             v-if="Component"
             :key="routeViewKey"
             :view-component="Component"
-            :contained-scroll="route.name === 'accounts'"
+            :contained-scroll="route.name === 'accounts' || route.name === 'new-expense'"
           />
         </KeepAlive>
       </Transition>
