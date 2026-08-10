@@ -36,14 +36,12 @@ const EXPENSE_QUICK_TAGS = [
   { label: '今天', action: 'date' },
   { label: '图片', action: 'image' },
   { label: '优惠', action: 'discount' },
-  { label: '备注', action: 'note' },
 ] as const
 
 const INCOME_QUICK_TAGS = [
   { label: '微信(大号)', action: 'account' },
   { label: '今天', action: 'date' },
   { label: '图片', action: 'image' },
-  { label: '备注', action: 'note' },
 ] as const
 
 const TRANSFER_QUICK_TAGS = [
@@ -51,7 +49,6 @@ const TRANSFER_QUICK_TAGS = [
   { label: '图片', action: 'image' },
   { label: '手续费', action: 'note' },
   { label: '优惠', action: 'discount' },
-  { label: '备注', action: 'note' },
 ] as const
 
 type QuickTagAction = 'account' | 'date' | 'image' | 'discount' | 'note'
@@ -934,6 +931,7 @@ onUnmounted(() => {
               ({{ discountValueDisplay }})
             </span>
           </template>
+          <template v-else-if="tag.action === 'date'">{{ dateLabel }}</template>
           <template v-else>{{ tag.label }}</template>
         </button>
       </div>
@@ -1033,8 +1031,8 @@ onUnmounted(() => {
 .mode-tabs {
   display: flex;
   min-width: 0;
-  gap: var(--space-3);
-  justify-content: flex-start;
+  gap: var(--space-6);
+  justify-content: center;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1046,7 +1044,7 @@ onUnmounted(() => {
 .mode-tab {
   position: relative;
   flex-shrink: 0;
-  padding: var(--space-3) 0;
+  padding: var(--space-3) var(--space-2);
   color: var(--color-text-tertiary);
   font-size: 15px;
   font-weight: 500;
