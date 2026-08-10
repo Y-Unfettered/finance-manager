@@ -1,37 +1,148 @@
 <script setup lang="ts">
 import { MoreHorizontal } from '@lucide/vue'
-import { computed } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import * as echarts from 'echarts/core'
+import { BarChart } from 'echarts/charts'
+import { GridComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { BarSeriesOption } from 'echarts/charts'
 
 import BaseCard from './BaseCard.vue'
 import type { RecentSummary } from '@/features/finance/finance-service'
 
+echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
+
 const props = defineProps<{ summary: RecentSummary; displayType: 'expense' | 'income_expense' }>()
 defineEmits<{ settings: [] }>()
-const maxValue = computed(() =>
-  Math.max(
-    1,
-    ...props.summary.points.flatMap((point) =>
-      props.displayType === 'expense'
-        ? [point.expenseMinor]
-        : [point.expenseMinor, point.incomeMinor],
-    ),
-  ),
-)
-function height(value: number) {
-  return `${Math.max(value ? 5 : 0, (value / maxValue.value) * 72)}px`
+
+const chartContainer = ref<HTMLElement>()
+let chart: echarts.ECharts | null = null
+
+const showIncome = computed(() => props.displayType === 'income_expense')
+
+function getCssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
-function dayLabel(date: string) {
+
+const incomeColor = ref('#248561')
+const expenseColor = ref('#d45f5a')
+
+function syncColors(): void {
+  const inc = getCssVar('--color-income')
+  const exp = getCssVar('--color-expense')
+  if (inc) incomeColor.value = inc
+  if (exp) expenseColor.value = exp
+}
+
+function dayLabel(date: string): string {
   const value = new Date(`${date}T00:00:00`)
   if (props.summary.points.length <= 7) {
     return `周${['日', '一', '二', '三', '四', '五', '六'][value.getDay()]}`
   }
   return String(value.getDate())
 }
+
+function tooltipFormatter(params: unknown): string {
+  const p = params as { name: string; value: number; seriesName: string; dataIndex: number }[]
+  const point = props.summary.points[p[0]?.dataIndex ?? 0]
+  if (!point) return ''
+  const d = new Date(`${point.date}T00:00:00`)
+  const monthDay = `${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`
+  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  const inc = `¥${(point.incomeMinor / 100).toFixed(2)}`
+  const exp = `¥${(point.expenseMinor / 100).toFixed(2)}`
+  return `<div style="background:#1a1a1a;color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.5;min-width:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+    <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:2px;">
+      <span style="font-weight:600;">${monthDay}</span>
+      <span style="color:#aaa;">${weekday}</span>
+    </div>
+    <div>收入：${inc}</div>
+    <div>支出：${exp}</div>
+  </div>`
+}
+
+function buildOption() {
+  const points = props.summary.points
+  const xData = points.map((p) => dayLabel(p.date))
+  const expenseData = points.map((p) => Number((p.expenseMinor / 100).toFixed(2)))
+  const incomeData = points.map((p) => Number((p.incomeMinor / 100).toFixed(2)))
+
+  const series: BarSeriesOption[] = [
+    {
+      name: '支出',
+      type: 'bar',
+      data: expenseData,
+      itemStyle: { color: expenseColor.value, borderRadius: [3, 3, 0, 0] },
+      barMaxWidth: 14,
+    },
+  ]
+
+  if (showIncome.value) {
+    series.unshift({
+      name: '收入',
+      type: 'bar',
+      data: incomeData,
+      itemStyle: { color: incomeColor.value, borderRadius: [3, 3, 0, 0] },
+      barMaxWidth: 14,
+    })
+  }
+
+  return {
+    grid: { left: 0, right: 0, top: 8, bottom: 20, containLabel: false },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: tooltipFormatter,
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+      padding: 0,
+      extraCssText: 'box-shadow:none;',
+    },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      axisTick: { show: false },
+      axisLine: { show: false },
+      axisLabel: { color: '#999', fontSize: 10, interval: 0 },
+    },
+    yAxis: { show: false, type: 'value' },
+    series,
+  }
+}
+
+function renderChart(): void {
+  if (!chartContainer.value) return
+  syncColors()
+  if (!chart) {
+    chart = echarts.init(chartContainer.value)
+  }
+  chart.setOption(buildOption())
+}
+
+function handleResize(): void {
+  chart?.resize()
+}
+
+onMounted(() => {
+  nextTick(renderChart)
+  window.addEventListener('resize', handleResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  chart?.dispose()
+  chart = null
+})
+
+watch(
+  () => [props.summary, props.displayType] as const,
+  () => nextTick(renderChart),
+)
 </script>
 
 <template>
-  <BaseCard class="summary-card"
-    ><header>
+  <BaseCard class="summary-card">
+    <header>
       <div>
         <strong>{{ summary.label }}</strong>
         <small>
@@ -44,18 +155,7 @@ function dayLabel(date: string) {
         <MoreHorizontal :size="22" />
       </button>
     </header>
-    <div class="chart">
-      <div v-for="point in summary.points" :key="point.date" class="bar-group">
-        <div class="bars">
-          <i
-            v-if="displayType === 'income_expense'"
-            class="bar income"
-            :style="{ height: height(point.incomeMinor) }"
-          /><i class="bar expense" :style="{ height: height(point.expenseMinor) }" />
-        </div>
-        <small>{{ dayLabel(point.date) }}</small>
-      </div>
-    </div>
+    <div ref="chartContainer" class="chart" />
   </BaseCard>
 </template>
 
@@ -93,42 +193,7 @@ header button {
   border: 0;
 }
 .chart {
-  display: flex;
+  width: 100%;
   height: 96px;
-  align-items: flex-end;
-  justify-content: space-around;
-  gap: 3px;
-}
-.bar-group {
-  display: grid;
-  height: 92px;
-  min-width: 12px;
-  align-items: end;
-  justify-items: center;
-  gap: 4px;
-  flex: 1;
-}
-.bars {
-  display: flex;
-  height: 74px;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 2px;
-}
-.bar {
-  display: block;
-  width: 7px;
-  min-height: 0;
-  border-radius: 4px 4px 0 0;
-}
-.bar.income {
-  background: var(--color-income);
-}
-.bar.expense {
-  background: var(--color-expense);
-}
-.bar-group small {
-  color: var(--color-text-tertiary);
-  font-size: 10px;
 }
 </style>

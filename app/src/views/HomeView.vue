@@ -13,6 +13,8 @@ import {
 } from '@lucide/vue'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { Progress as VanProgress } from 'vant'
+import 'vant/es/progress/style'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
@@ -128,12 +130,15 @@ const dailyGroups = computed<DailyGroup[]>(() => {
   return [...groups.values()]
 })
 const budgetProgress = computed(() => {
-  if (!budget.value) return { percent: 0, remainingMinor: 0, total: 0, over: false, has: false }
+  if (!budget.value)
+    return { remainingPercent: 0, usedPercent: 0, remainingMinor: 0, total: 0, over: false, has: false }
   const total = budget.value.totalLimitMinor
   const spent = budget.value.spentMinor
-  const percent = total > 0 ? Math.min(100, (spent / total) * 100) : 0
+  const remainingPercent = total > 0 ? Math.max(0, ((total - spent) / total) * 100) : 0
+  const usedPercent = total > 0 ? Math.min(100, (spent / total) * 100) : 0
   return {
-    percent,
+    remainingPercent,
+    usedPercent,
     remainingMinor: budget.value.remainingMinor,
     total,
     over: budget.value.overspent,
@@ -578,7 +583,13 @@ onUnmounted(() => {
             </AppIconButton>
           </div>
           <div class="budget-card__track">
-            <span :style="{ width: `${budgetProgress.percent}%` }" />
+            <van-progress
+              :percentage="budgetProgress.remainingPercent"
+              :color="budgetProgress.over ? '#c0392b' : 'var(--color-primary-500)'"
+              track-color="var(--color-primary-50)"
+              :show-pivot="false"
+              :stroke-width="8"
+            />
           </div>
           <div class="budget-card__footer">
             <span v-if="budgetProgress.has">
@@ -589,7 +600,7 @@ onUnmounted(() => {
             <span v-else>未设置预算，点击设置</span>
             <span v-if="budgetProgress.has">
               总额：¥{{ (budgetProgress.total / 100).toFixed(2) }} · 已用
-              {{ budgetProgress.percent.toFixed(0) }}%
+              {{ budgetProgress.usedPercent.toFixed(0) }}%
             </span>
           </div>
         </BaseCard>
@@ -955,23 +966,7 @@ onUnmounted(() => {
 }
 
 .budget-card__track {
-  height: 8px;
   margin: var(--space-3) 0;
-  overflow: hidden;
-  background: var(--color-primary-50);
-  border-radius: var(--radius-pill);
-}
-
-.budget-card__track span {
-  display: block;
-  width: 0;
-  height: 100%;
-  background: var(--color-primary-500);
-  transition: width var(--motion-standard) var(--ease-standard);
-}
-
-.budget-card--over .budget-card__track span {
-  background: #c0392b;
 }
 
 .budget-card__footer {
