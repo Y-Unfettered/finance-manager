@@ -60,7 +60,7 @@ const showBanks = ref(false)
 const showForm = ref(false)
 const assetsPage = ref<HTMLElement>()
 const assetActionsVisible = ref(true)
-const expandedSectionId = ref<AssetSectionId | null>(null)
+const expandedSectionIds = ref<AssetSectionId[]>([])
 const bankQuery = ref('')
 const pendingItem = ref<AccountCatalogItem>()
 const selectedBank = ref<BankCatalogItem>()
@@ -103,18 +103,13 @@ const filteredBanks = computed(() => {
     (bank) => bank.name.toLowerCase().includes(query) || bank.id.includes(query),
   )
 })
-const sectionAccounts = computed(() => {
-  const types = expandedSection.value?.accountTypes ?? []
+function getSectionAccounts(section: AssetSectionSummary) {
   return accounts.value.filter(
     (account) =>
-      types.includes(account.type) && (showArchivedAccounts.value || !account.archivedAt),
+      section.accountTypes.includes(account.type) &&
+      (showArchivedAccounts.value || !account.archivedAt),
   )
-})
-const expandedSection = computed(() =>
-  expandedSectionId.value
-    ? overview.value.sections.find((section) => section.id === expandedSectionId.value)
-    : undefined,
-)
+}
 const liabilityRatioLabel = computed(() => `${(overview.value.liabilityRatio * 100).toFixed(2)}%`)
 const pendingIsLiability = computed(() =>
   pendingItem.value ? isLiabilityAccountType(pendingItem.value.type) : false,
@@ -285,7 +280,12 @@ async function submitAccount(): Promise<void> {
 }
 
 function toggleSection(section: AssetSectionSummary): void {
-  expandedSectionId.value = expandedSectionId.value === section.id ? null : section.id
+  const index = expandedSectionIds.value.indexOf(section.id)
+  if (index === -1) {
+    expandedSectionIds.value.push(section.id)
+  } else {
+    expandedSectionIds.value.splice(index, 1)
+  }
 }
 
 function openAccount(account: AccountBalanceRecord): void {
@@ -498,12 +498,12 @@ onUnmounted(() => {
           class="section-card"
           :class="{
             'section-card--empty': section.count === 0,
-            'section-card--expanded': expandedSectionId === section.id,
+            'section-card--expanded': expandedSectionIds.includes(section.id),
           }"
         >
           <button
             type="button"
-            :aria-expanded="expandedSectionId === section.id"
+            :aria-expanded="expandedSectionIds.includes(section.id)"
             @click="toggleSection(section)"
           >
             <strong>{{ section.label }}</strong>
@@ -520,12 +520,12 @@ onUnmounted(() => {
               />
             </span>
           </button>
-          <div v-if="expandedSectionId === section.id" class="section-card__body">
-            <div v-if="sectionAccounts.length === 0" class="section-card__empty">
+          <div v-if="expandedSectionIds.includes(section.id)" class="section-card__body">
+            <div v-if="getSectionAccounts(section).length === 0" class="section-card__empty">
               还没有此类账户
             </div>
             <button
-              v-for="account in sectionAccounts"
+              v-for="account in getSectionAccounts(section)"
               :key="account.id"
               class="section-card__row"
               :class="{ 'credit-account-row': section.id === 'credit' }"

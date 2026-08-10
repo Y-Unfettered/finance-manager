@@ -13,7 +13,6 @@ import { useAppStore } from '@/stores/app'
 import {
   navigationCacheEpoch,
   navigationDirection,
-  navigationEntryId,
   resetNavigationStateCache,
 } from '@/router/navigation-transition'
 
@@ -24,8 +23,7 @@ const appLockService = inject(appLockServiceKey)
 
 const privacyVeil = ref(false)
 const routeViewKey = computed(
-  () =>
-    `${navigationCacheEpoch.value}:${navigationEntryId.value}:${String(route.name ?? route.path)}`,
+  () => `${navigationCacheEpoch.value}:${String(route.name ?? route.path)}`,
 )
 
 const showUnlock = computed(
