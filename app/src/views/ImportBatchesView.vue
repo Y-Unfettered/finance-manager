@@ -163,6 +163,7 @@ function typeLabel(type: string): string {
     expense: '支出',
     income: '收入',
     transfer: '转账',
+    credit_purchase: '信用消费',
     repayment: '还款',
     loan_out: '借出',
     loan_recovery: '收款',

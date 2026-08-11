@@ -12,6 +12,7 @@ import { appLockServiceKey } from '@/features/app-lock/app-lock-service'
 import { useAppLockStore } from '@/features/app-lock/app-lock-store'
 import { getLogger } from '@/features/debug/app-logger'
 import { ClipboardReader } from '@/features/clipboard/clipboard-reader'
+import { isConsumedFingerprint } from '@/features/clipboard/clipboard-fingerprint-cache'
 import { useAppStore } from '@/stores/app'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
 import {
@@ -120,6 +121,12 @@ async function appStateClipboardProbe(): Promise<void> {
     })
     if (!probe.ok) return
 
+    // 检查是否已消费过的指纹
+    if (isConsumedFingerprint(value)) {
+      log.debug('appStateClipboardProbe: 已消费过的指纹 -> 跳过')
+      return
+    }
+
     lastHandledCandidateText = value
     clipboardImportStore.setCandidate(value, probe.count)
     log.info('appStateClipboardProbe: 候选项入 store，弹全局确认框', { count: probe.count })
@@ -193,6 +200,11 @@ onMounted(async () => {
         })
         if (!probe.ok) {
           log.warn('probe 失败 -> 跳过')
+          return
+        }
+        // 检查是否已消费过的指纹
+        if (isConsumedFingerprint(value)) {
+          log.debug('notifyListeners: 已消费过的指纹 -> 跳过')
           return
         }
         lastHandledCandidateText = value

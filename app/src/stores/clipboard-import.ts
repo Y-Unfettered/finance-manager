@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 
 import { ClipboardReader } from '@/features/clipboard/clipboard-reader'
+import { isConsumedFingerprint } from '@/features/clipboard/clipboard-fingerprint-cache'
 
 /**
  * 全局剪贴板候选项状态。
@@ -33,6 +34,10 @@ export const useClipboardImportStore = defineStore('clipboard-import', {
      * 如果已有候选项（用户未处理），用新的覆盖。
      */
     setCandidate(text: string, count: number) {
+      // 如果已消费过，不再弹窗
+      if (isConsumedFingerprint(text)) {
+        return
+      }
       this.current = { id: nextCandidateId++, text, count }
       this.dialogVisible = true
     },

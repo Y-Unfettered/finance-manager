@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { computed, watch } from 'vue'
 
 import BaseCard from '@/components/BaseCard.vue'
+import { setConsumedFingerprint } from '@/features/clipboard/clipboard-fingerprint-cache'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
 
 const router = useRouter()
@@ -14,10 +15,14 @@ const count = computed(() => store.current?.count ?? 0)
 
 /**
  * 用户点「立即导入」：
- * 1. 调用 store.confirm() 关闭弹窗但保留候选项文本
- * 2. 跳转到导入页（ImportView 会在 onMounted 时读取 store.current 并自动填入）
+ * 1. 立即标记指纹为已消费，防止回到首页后再次弹窗
+ * 2. 调用 store.confirm() 关闭弹窗但保留候选项文本
+ * 3. 跳转到导入页（ImportView 会在 onMounted 时读取 store.current 并自动填入）
  */
 async function onConfirm(): Promise<void> {
+  if (store.current) {
+    setConsumedFingerprint(store.current.text)
+  }
   store.confirm()
   await router.push({ name: 'import' })
 }

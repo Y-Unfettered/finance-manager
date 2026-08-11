@@ -344,6 +344,16 @@ export class ImportService {
       }
     }
 
+    // 检查该文件指纹是否已有活跃的导入批次，防止重复导入
+    const existingBatch = await this.batches.findActiveByFingerprint(ledgerId, plan.sourceFingerprint)
+    if (existingBatch) {
+      throw new Error(
+        `该数据已在此前导入过（批次：${existingBatch.fileName ?? '未知'}，` +
+        `导入时间：${existingBatch.createdAt}），不允许重复导入。` +
+        `如需重新导入，请先撤销旧的导入批次。`,
+      )
+    }
+
     // 创建 pending 账户与分类，建立 临时 ID → 真实 ID 映射
     const accountIdMap = new Map<string, string>()
     const categoryIdMap = new Map<string, string>()

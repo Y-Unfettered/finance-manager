@@ -21,6 +21,7 @@ import BaseCard from '@/components/BaseCard.vue'
 import type { AccountRecord, CategoryRecord } from '@/domain/entities'
 import { getLogger } from '@/features/debug/app-logger'
 import { ClipboardReader, isNativeClipboardAvailable } from '@/features/clipboard/clipboard-reader'
+import { setConsumedFingerprint } from '@/features/clipboard/clipboard-fingerprint-cache'
 import { parseCsv } from '@/features/import/csv-parser'
 import { useImportService } from '@/features/import/import-service'
 import type {
@@ -131,6 +132,12 @@ const expenseCategories = computed(() => categories.value.filter((c) => c.kind =
 const incomeCategories = computed(() => categories.value.filter((c) => c.kind === 'income'))
 
 const canPreview = computed(() => fieldMapping.value.date >= 0 && fieldMapping.value.amount >= 0)
+
+const canImport = computed(() => {
+  if (!plan.value) return false
+  if (plan.value.duplicateWarning) return false
+  return plan.value.validRows.length > 0
+})
 
 const visibleErrors = computed(() => (plan.value?.errors ?? []).slice(0, 20))
 const hiddenErrorCount = computed(() => Math.max((plan.value?.errors.length ?? 0) - 20, 0))
@@ -396,6 +403,7 @@ async function onClipboardButton(): Promise<void> {
     }
     const result = parseJson(text.trim())
     applyParsedResult(result.headers, result.rows, result.errors, 'json', '剪贴板导入.json')
+    pasteText.value = text.trim()
     await loadMappingOptions()
     await goToPreview()
   } catch (error) {
@@ -480,6 +488,8 @@ async function checkPendingClipboard(): Promise<void> {
       await goToPreview()
       // 标记为已处理，避免下次 onResume 重复弹
       await ClipboardReader.markConsumed().catch(() => {})
+      // 持久化记录指纹，防止应用重启后同一内容重复弹窗
+      setConsumedFingerprint(candidateText)
       log.info('checkPendingClipboard: store 候选项消费成功，跳 preview')
       return
     } catch (error) {
@@ -665,6 +675,10 @@ async function confirmImport(): Promise<void> {
     })
     result.value = res
     step.value = 'done'
+    // 导入成功后，如果是剪贴板/粘贴导入，记录指纹防止重复弹窗
+    if (pasteText.value) {
+      setConsumedFingerprint(pasteText.value)
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -891,7 +905,10 @@ function goToBatches(): void {
           <BaseCard v-if="plan?.duplicateWarning" class="block-card" variant="summary">
             <div class="duplicate-warning">
               <AlertCircle :size="18" :stroke-width="1.75" />
-              <span>{{ plan.duplicateWarning }}</span>
+              <div class="duplicate-warning__text">
+                <strong>{{ plan.duplicateWarning }}</strong>
+                <span>请前往「导入批次」页面撤销旧批次后再重新导入。</span>
+              </div>
             </div>
           </BaseCard>
 
@@ -1010,10 +1027,10 @@ function goToBatches(): void {
               v-if="plan && plan.validRows.length > 0"
               type="button"
               class="primary-button"
-              :disabled="saving"
+              :disabled="saving || !canImport"
               @click="confirmImport"
             >
-              {{ saving ? '正在导入…' : '确认导入' }}
+              {{ saving ? '正在导入…' : plan?.duplicateWarning ? '请先撤销旧批次' : '确认导入' }}
             </button>
           </div>
         </template>
@@ -1033,7 +1050,7 @@ function goToBatches(): void {
                 <strong class="done-card__fail">{{ result.errorCount }} 条</strong>
               </div>
             </div>
-            <p v-if="result?.batchId" class="done-card__batch">批次 ID：{{ result.batchId }}</p>
+            <p v-if="result?.batchId" class="done-card__batch">批次编号：{{ result.batchId.slice(0, 8) }}…</p>
           </BaseCard>
 
           <BaseCard
@@ -1680,6 +1697,18 @@ function goToBatches(): void {
 .duplicate-warning svg {
   flex: none;
   margin-top: 2px;
+}
+.duplicate-warning__text {
+  display: grid;
+  gap: 4px;
+}
+.duplicate-warning__text strong {
+  color: var(--color-warning, #f0a030);
+  font-weight: 600;
+}
+.duplicate-warning__text span {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
 }
 
 .unmatched-row {
