@@ -1,4 +1,7 @@
+import { getLogger } from '@/features/debug/app-logger'
 import { inject, type InjectionKey } from 'vue'
+
+const log = getLogger('budget')
 
 import type {
   BudgetMode,
@@ -70,101 +73,123 @@ export class BudgetService implements BudgetServicePort {
   private readonly database: SqliteExecutor
 
   async createBudget(input: CreateBudgetInput): Promise<BudgetRecord> {
-    assertPeriodKey(input.periodKey)
-    assertNonNegativeMinorUnits(input.totalLimitMinor, '预算总额')
-    for (const cb of input.categoryBudgets) {
-      assertNonNegativeMinorUnits(cb.limitMinor, '分类预算')
-    }
-    const normalized = normalizeBudgetConfiguration(
-      input.mode ?? inferBudgetMode(input.totalLimitMinor, input.categoryBudgets),
-      input.totalLimitMinor,
-      input.categoryBudgets,
-    )
-    const existing = await this.budgets.findByPeriod(input.ledgerId, 'monthly', input.periodKey)
-    if (existing) {
-      throw new Error(`${input.periodKey} 已存在预算，请使用编辑功能`)
-    }
-    const now = this.clock.nowIso()
-    const record: BudgetRecord = {
-      id: this.ids.next('budget'),
-      ledgerId: input.ledgerId,
-      periodType: 'monthly',
-      periodKey: input.periodKey,
-      totalLimitMinor: normalized.totalLimitMinor,
-      mode: normalized.mode,
-      autoCopy: input.autoCopy ?? true,
-      sourcePeriodKey: input.sourcePeriodKey,
-      note: optionalText(input.note),
-      createdAt: now,
-      updatedAt: now,
-    }
-    await this.budgets.create(record, input.categoryBudgets)
-    return record
-  }
-
-  async updateBudget(input: UpdateBudgetInput): Promise<void> {
-    const budget = await this.budgets.findById(input.budgetId)
-    if (!budget || budget.ledgerId !== input.ledgerId) {
-      throw new Error('预算不存在')
-    }
-    if (input.totalLimitMinor !== undefined) {
+    log.debug('createBudget: start', { periodKey: input.periodKey })
+    try {
+      assertPeriodKey(input.periodKey)
       assertNonNegativeMinorUnits(input.totalLimitMinor, '预算总额')
-    }
-    if (input.categoryBudgets) {
       for (const cb of input.categoryBudgets) {
         assertNonNegativeMinorUnits(cb.limitMinor, '分类预算')
       }
-    }
-    const currentCategories =
-      input.categoryBudgets ?? (await this.budgets.listCategoryBudgets(budget.id))
-    const normalized = normalizeBudgetConfiguration(
-      input.mode ?? budget.mode,
-      input.totalLimitMinor ?? budget.totalLimitMinor,
-      currentCategories,
-    )
-    await this.budgets.update(
-      input.budgetId,
-      {
-        totalLimitMinor: normalized.totalLimitMinor,
-        note: input.note,
-        mode: normalized.mode,
-        autoCopy: input.autoCopy,
-      },
-      input.categoryBudgets,
-      this.clock.nowIso(),
-    )
-    if (input.applyToFuture) {
-      const future = (await this.budgets.listByLedger(input.ledgerId)).filter(
-        (item) => item.periodKey > budget.periodKey,
+      const normalized = normalizeBudgetConfiguration(
+        input.mode ?? inferBudgetMode(input.totalLimitMinor, input.categoryBudgets),
+        input.totalLimitMinor,
+        input.categoryBudgets,
       )
-      for (const target of future) {
-        await this.budgets.update(
-          target.id,
-          {
-            totalLimitMinor: normalized.totalLimitMinor,
-            note: input.note,
-            mode: normalized.mode,
-            autoCopy: input.autoCopy,
-          },
-          currentCategories.map(({ categoryId, limitMinor }) => ({ categoryId, limitMinor })),
-          this.clock.nowIso(),
-        )
+      const existing = await this.budgets.findByPeriod(input.ledgerId, 'monthly', input.periodKey)
+      if (existing) {
+        throw new Error(`${input.periodKey} 已存在预算，请使用编辑功能`)
       }
+      const now = this.clock.nowIso()
+      const record: BudgetRecord = {
+        id: this.ids.next('budget'),
+        ledgerId: input.ledgerId,
+        periodType: 'monthly',
+        periodKey: input.periodKey,
+        totalLimitMinor: normalized.totalLimitMinor,
+        mode: normalized.mode,
+        autoCopy: input.autoCopy ?? true,
+        sourcePeriodKey: input.sourcePeriodKey,
+        note: optionalText(input.note),
+        createdAt: now,
+        updatedAt: now,
+      }
+      await this.budgets.create(record, input.categoryBudgets)
+      log.info('createBudget: success', { budgetId: record.id, periodKey: record.periodKey })
+      return record
+    } catch (error) {
+      log.error('createBudget: failed', { periodKey: input.periodKey, error: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
+  }
+
+  async updateBudget(input: UpdateBudgetInput): Promise<void> {
+    log.debug('updateBudget: start', { budgetId: input.budgetId })
+    try {
+      const budget = await this.budgets.findById(input.budgetId)
+      if (!budget || budget.ledgerId !== input.ledgerId) {
+        throw new Error('预算不存在')
+      }
+      if (input.totalLimitMinor !== undefined) {
+        assertNonNegativeMinorUnits(input.totalLimitMinor, '预算总额')
+      }
+      if (input.categoryBudgets) {
+        for (const cb of input.categoryBudgets) {
+          assertNonNegativeMinorUnits(cb.limitMinor, '分类预算')
+        }
+      }
+      const currentCategories =
+        input.categoryBudgets ?? (await this.budgets.listCategoryBudgets(budget.id))
+      const normalized = normalizeBudgetConfiguration(
+        input.mode ?? budget.mode,
+        input.totalLimitMinor ?? budget.totalLimitMinor,
+        currentCategories,
+      )
+      await this.budgets.update(
+        input.budgetId,
+        {
+          totalLimitMinor: normalized.totalLimitMinor,
+          note: input.note,
+          mode: normalized.mode,
+          autoCopy: input.autoCopy,
+        },
+        input.categoryBudgets,
+        this.clock.nowIso(),
+      )
+      if (input.applyToFuture) {
+        const future = (await this.budgets.listByLedger(input.ledgerId)).filter(
+          (item) => item.periodKey > budget.periodKey,
+        )
+        for (const target of future) {
+          await this.budgets.update(
+            target.id,
+            {
+              totalLimitMinor: normalized.totalLimitMinor,
+              note: input.note,
+              mode: normalized.mode,
+              autoCopy: input.autoCopy,
+            },
+            currentCategories.map(({ categoryId, limitMinor }) => ({ categoryId, limitMinor })),
+            this.clock.nowIso(),
+          )
+        }
+      }
+      log.info('updateBudget: success', { budgetId: input.budgetId, applyToFuture: input.applyToFuture ?? false })
+    } catch (error) {
+      log.error('updateBudget: failed', { budgetId: input.budgetId, error: error instanceof Error ? error.message : String(error) })
+      throw error
     }
   }
 
   async deleteBudget(ledgerId: string, budgetId: string): Promise<void> {
-    const budget = await this.budgets.findById(budgetId)
-    if (!budget || budget.ledgerId !== ledgerId) {
-      throw new Error('预算不存在')
+    log.debug('deleteBudget: start', { budgetId })
+    try {
+      const budget = await this.budgets.findById(budgetId)
+      if (!budget || budget.ledgerId !== ledgerId) {
+        throw new Error('预算不存在')
+      }
+      await this.budgets.delete(budgetId)
+      log.info('deleteBudget: success', { budgetId })
+    } catch (error) {
+      log.error('deleteBudget: failed', { budgetId, error: error instanceof Error ? error.message : String(error) })
+      throw error
     }
-    await this.budgets.delete(budgetId)
   }
 
   async getBudgetForPeriod(
     ledgerId: string,
     periodKey: string,
   ): Promise<BudgetWithProgress | undefined> {
+    log.debug('getBudgetForPeriod: start', { ledgerId, periodKey })
     let budget = await this.budgets.findByPeriod(ledgerId, 'monthly', periodKey)
     if (!budget) {
       budget = await this.copyLatestBudget(ledgerId, periodKey)
@@ -211,10 +236,12 @@ export class BudgetService implements BudgetServicePort {
   }
 
   async listBudgets(ledgerId: string): Promise<readonly BudgetRecord[]> {
+    log.debug('listBudgets: start', { ledgerId })
     return this.budgets.listByLedger(ledgerId)
   }
 
   async getBudgetDetail(budgetId: string): Promise<BudgetSummary | undefined> {
+    log.debug('getBudgetDetail: start', { budgetId })
     const budget = await this.budgets.findById(budgetId)
     if (!budget) return undefined
     const [categoryBudgets, spentByCategory, countByCategory, allSpent] = await Promise.all([

@@ -11,6 +11,7 @@ import { summarizeAssets } from '@/features/finance/asset-summary'
 import { NodeSqliteExecutor } from '@/test/node-sqlite-executor'
 
 import { ImportService } from './import-service'
+import type { ImportSystemField } from './import-types'
 
 const clock: Clock = { nowIso: () => '2026-08-03T04:00:00.000Z' }
 
@@ -310,59 +311,75 @@ describe('ImportService.executeImport', () => {
     expect(refund?.merchant).toBe('信用卡返现')
   })
 
-  it('auto-creates unmatched accounts and categories using the account catalog', async () => {
+  it('lets user choose unmatched account via unmatchedAccounts; only categories still auto-create', async () => {
     const { database, ledger, bank, food, service } = await setupLedger()
+    const content =
+      'date,amount,type,account,category\n2026-08-01,5.00,支出,工资卡,餐饮\n2026-08-02,3.50,支出,余额宝,外卖'
+    const baseMapping: Array<{ systemField: ImportSystemField; columnIndex: number }> = [
+      { systemField: 'date', columnIndex: 0 },
+      { systemField: 'amount', columnIndex: 1 },
+      { systemField: 'type', columnIndex: 2 },
+      { systemField: 'sourceAccount', columnIndex: 3 },
+      { systemField: 'category', columnIndex: 4 },
+    ]
+
+    // 第一步：初次预览，余额宝未匹配，进入 unmatchedAccounts 让用户选择
     const plan = await service.previewCsv({
       ledgerId: ledger.id,
-      fileName: 'auto-create.csv',
-      content:
-        'date,amount,type,account,category\n2026-08-01,5.00,支出,工资卡,餐饮\n2026-08-02,3.50,支出,余额宝,外卖',
-      fieldMapping: [
-        { systemField: 'date', columnIndex: 0 },
-        { systemField: 'amount', columnIndex: 1 },
-        { systemField: 'type', columnIndex: 2 },
-        { systemField: 'sourceAccount', columnIndex: 3 },
-        { systemField: 'category', columnIndex: 4 },
-      ],
+      fileName: 'unmatched-account.csv',
+      content,
+      fieldMapping: baseMapping,
       accountMappings: [{ rawName: '工资卡', accountId: bank.id }],
       categoryMappings: [{ rawName: '餐饮', categoryId: food.id }],
     })
-
     expect(plan.validRows).toHaveLength(2)
     expect(plan.errors).toHaveLength(0)
-    expect(plan.pendingAccountCreations).toHaveLength(1)
-    expect(plan.pendingAccountCreations[0]?.rawName).toBe('余额宝')
-    expect(plan.pendingAccountCreations[0]?.accountType).toBe('platform')
+    expect(plan.unmatchedAccounts).toHaveLength(1)
+    expect(plan.unmatchedAccounts[0]?.rawName).toBe('余额宝')
+    expect(plan.unmatchedAccounts[0]?.candidates).toEqual([])
+    expect(plan.pendingAccountCreations).toHaveLength(0)
     expect(plan.pendingCategoryCreations).toHaveLength(1)
     expect(plan.pendingCategoryCreations[0]?.rawName).toBe('外卖')
     expect(plan.pendingCategoryCreations[0]?.kind).toBe('expense')
 
-    const result = await service.executeImport({ ledgerId: ledger.id, plan })
+    // 第二步：用户通过 UI 选择「余额宝 → 工资卡」后，重新预览并导入
+    const confirmedPlan = await service.previewCsv({
+      ledgerId: ledger.id,
+      fileName: 'unmatched-account.csv',
+      content,
+      fieldMapping: baseMapping,
+      accountMappings: [
+        { rawName: '工资卡', accountId: bank.id },
+        { rawName: '余额宝', accountId: bank.id },
+      ],
+      categoryMappings: [{ rawName: '餐饮', categoryId: food.id }],
+    })
+    expect(confirmedPlan.unmatchedAccounts).toHaveLength(0)
+    const result = await service.executeImport({ ledgerId: ledger.id, plan: confirmedPlan })
     expect(result.successCount).toBe(2)
-
+    // 余额宝映射到已有工资卡账户，导入不创建新账户
     const accounts = await new AccountRepository(database).listByLedger(ledger.id)
-    const yuebao = accounts.find((account) => account.name === '余额宝')
-    expect(yuebao?.type).toBe('platform')
-
+    expect(accounts.some((a) => a.name === '余额宝')).toBe(false)
     const categories = await new CategoryRepository(database).listByLedger(ledger.id)
-    const takeaway = categories.find((category) => category.name === '外卖')
-    expect(takeaway?.kind).toBe('expense')
+    expect(categories.some((c) => c.name === '外卖' && c.kind === 'expense')).toBe(true)
   })
 
   it('recognizes 还款 and 债务-借出 types as transfers with arrow-split and same-account handling', async () => {
-    const { database, ledger, bank, service } = await setupLedger()
+    const { database, ids, ledger, bank, service } = await setupLedger()
+    const content =
+      '时间,类型,金额,账户1,账户2\n2026-07-22 14:14:24,还款,125.90,中信银行,招商银行\n2026-07-22 14:13:57,还款,45.78,工资卡,工资卡\n2026-03-19 13:25:42,债务-借出,2000.00,工资卡->杨浩,'
+    const baseMapping: Array<{ systemField: ImportSystemField; columnIndex: number }> = [
+      { systemField: 'date', columnIndex: 0 },
+      { systemField: 'type', columnIndex: 1 },
+      { systemField: 'amount', columnIndex: 2 },
+      { systemField: 'sourceAccount', columnIndex: 3 },
+      { systemField: 'targetAccount', columnIndex: 4 },
+    ]
     const plan = await service.previewCsv({
       ledgerId: ledger.id,
       fileName: 'qianji-export.csv',
-      content:
-        '时间,类型,金额,账户1,账户2\n2026-07-22 14:14:24,还款,125.90,中信银行,招商银行\n2026-07-22 14:13:57,还款,45.78,工资卡,工资卡\n2026-03-19 13:25:42,债务-借出,2000.00,工资卡->杨浩,',
-      fieldMapping: [
-        { systemField: 'date', columnIndex: 0 },
-        { systemField: 'type', columnIndex: 1 },
-        { systemField: 'amount', columnIndex: 2 },
-        { systemField: 'sourceAccount', columnIndex: 3 },
-        { systemField: 'targetAccount', columnIndex: 4 },
-      ],
+      content,
+      fieldMapping: baseMapping,
       accountMappings: [
         { rawName: '工资卡', accountId: bank.id },
         { rawName: '中信银行', accountId: bank.id },
@@ -372,7 +389,7 @@ describe('ImportService.executeImport', () => {
     expect(plan.errors).toHaveLength(0)
     expect(plan.validRows).toHaveLength(3)
 
-    // 还款 → 中信银行→招商银行（不同账户转账）
+    // 还款 → 中信银行→招商银行（招商银行未匹配，进入 unmatchedAccounts）
     const row1 = plan.validRows[0]!
     expect(row1.raw.kind).toBe('transfer')
     expect(row1.sourceAccountId).toBe(bank.id)
@@ -389,16 +406,43 @@ describe('ImportService.executeImport', () => {
     expect(row3.raw.sourceAccountName).toBe('工资卡')
     expect(row3.raw.targetAccountName).toBe('杨浩')
     expect(row3.sourceAccountId).toBe(bank.id)
-    // 杨浩应为 pending 自动创建
+
+    // 招商银行：未匹配，推入 unmatchedAccounts 让用户选择
+    expect(plan.unmatchedAccounts).toHaveLength(1)
+    expect(plan.unmatchedAccounts[0]?.rawName).toBe('招商银行')
+
+    // 杨浩（借出方，可推断为 receivable）和工资卡信用卡（信用卡后缀）仍自动创建
     const receivable = plan.pendingAccountCreations.find((p) => p.rawName === '杨浩')
     expect(receivable?.accountType).toBe('receivable')
     expect(receivable?.inferredName).toBe('杨浩')
-    // 工资卡信用卡应为 pending 自动创建（credit_card 类型）
     const creditCard = plan.pendingAccountCreations.find((p) => p.rawName === '工资卡信用卡')
     expect(creditCard?.accountType).toBe('credit_card')
     expect(creditCard?.inferredName).toBe('工资卡信用卡')
 
-    const result = await service.executeImport({ ledgerId: ledger.id, plan })
+    // 用户通过 UI 选择招商银行对应新创建的独立账户后，重新预览再执行
+    const zhaoshang = {
+      id: ids.next('account'),
+      ledgerId: ledger.id,
+      name: '招商银行',
+      type: 'bank' as const,
+      normalBalance: 'debit' as const,
+      currency: 'CNY' as const,
+      createdAt: clock.nowIso(),
+      updatedAt: clock.nowIso(),
+    }
+    await new AccountRepository(database).create(zhaoshang)
+    const confirmedPlan = await service.previewCsv({
+      ledgerId: ledger.id,
+      fileName: 'qianji-export.csv',
+      content,
+      fieldMapping: baseMapping,
+      accountMappings: [
+        { rawName: '工资卡', accountId: bank.id },
+        { rawName: '中信银行', accountId: bank.id },
+        { rawName: '招商银行', accountId: zhaoshang.id },
+      ],
+    })
+    const result = await service.executeImport({ ledgerId: ledger.id, plan: confirmedPlan })
     expect(result.successCount).toBe(3)
 
     const importedAccounts = await new AccountRepository(database).listBalances(ledger.id)

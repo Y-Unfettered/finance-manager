@@ -1,9 +1,14 @@
 <script setup lang="ts">
+import { Share2 } from '@lucide/vue'
 import { Download, FileSearch, Trash2 } from '@lucide/vue'
 import { Capacitor } from '@capacitor/core'
 import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
+import { Share } from '@capacitor/share'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { showConfirmDialog, showToast } from 'vant'
+import 'vant/es/toast/style'
+import 'vant/es/dialog/style'
 
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
@@ -21,6 +26,7 @@ const levelFilter = ref<LogLevel | 'all'>('all')
 const tagFilter = ref<string>('all')
 const keyword = ref('')
 const exportHint = ref<string>('')
+const shareToast = ref<string>('')
 
 const allTags = computed(() => {
   const s = new Set<string>()
@@ -46,22 +52,26 @@ const filtered = computed<LogEntry[]>(() => {
     })
 })
 
-function onClear(): void {
-  if (!confirm(`确定清空 ${logStore.entries.length} 条日志吗？`)) return
-  logStore.clear()
-  exportHint.value = ''
+function showClearConfirm(): void {
+  const dialog = showConfirmDialog({
+    title: '清空日志',
+    message: `确定清空 ${logStore.entries.length} 条日志吗？此操作不可撤销。`,
+  })
+  dialog.then(() => {
+    logStore.clear()
+    exportHint.value = ''
+    shareToast.value = ''
+    showToast({ type: 'success', message: '已清空', position: 'bottom', duration: 1500 })
+  }).catch(() => {})
 }
 
 function makeLogFilename(): string {
   return `app-log-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
 }
 
-async function onExport(): Promise<void> {
+async function buildExportJson(): Promise<{ json: string; entries: LogEntry[] } | null> {
   const entries = filtered.value.length === 0 ? logStore.entries : filtered.value
-  if (entries.length === 0) {
-    alert('当前没有可导出的日志。')
-    return
-  }
+  if (entries.length === 0) return null
   const json = JSON.stringify(
     {
       exportedAt: new Date().toISOString(),
@@ -72,36 +82,44 @@ async function onExport(): Promise<void> {
     null,
     2,
   )
+  return { json, entries }
+}
+
+async function onExport(): Promise<void> {
+  const result = await buildExportJson()
+  if (!result) {
+    showToast({ type: 'fail', message: '没有可导出的日志', position: 'bottom', duration: 1500 })
+    return
+  }
+  const { json, entries } = result
   const name = makeLogFilename()
   exportHint.value = '正在导出…'
+  shareToast.value = ''
 
   try {
-    // Android/iOS 原生平台：写入 Documents 目录（用户可从系统文件管理器访问）
     if (Capacitor.isNativePlatform()) {
       let targetDir = Directory.Documents
       let finalPath = name
-      // Android 优先写到外部存储的 Download/ 目录（对用户最可见）；失败再 fallback 到 Documents
       try {
         await Filesystem.stat({ path: 'Download', directory: Directory.ExternalStorage })
         targetDir = Directory.ExternalStorage
         finalPath = `Download/${name}`
       } catch {
-        // ExternalStorage 无权限或不存在，fallback 用 Documents
+        // fallback 用 Documents
       }
-      const result = await Filesystem.writeFile({
+      const res = await Filesystem.writeFile({
         path: finalPath,
         data: json,
         directory: targetDir,
         encoding: Encoding.UTF8,
         recursive: true,
       })
-      const uri = result.uri ?? finalPath
+      const uri = res.uri ?? finalPath
       exportHint.value = `✓ 已导出 ${entries.length} 条 → ${uri}`
-      alert(`导出成功！\n\n路径：${uri}\n共 ${entries.length} 条日志。\n可在系统「文件」应用的「下载」或「文档」目录里找到 ${name}。`)
+      showToast({ type: 'success', message: '导出成功', position: 'bottom', duration: 2000 })
       return
     }
 
-    // Web / PWA 端：优先 showSaveFilePicker，其次 <a download>
     const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
     type FsWritable = { write: (s: Blob) => Promise<void>; close: () => Promise<void> }
     type FsHandle = { createWritable: () => Promise<FsWritable> }
@@ -117,7 +135,7 @@ async function onExport(): Promise<void> {
         exportHint.value = `✓ 已导出 ${entries.length} 条`
         return
       } catch {
-        // 用户取消了就走 fallback
+        // 用户取消了走 fallback
       }
     }
     const url = URL.createObjectURL(blob)
@@ -129,12 +147,87 @@ async function onExport(): Promise<void> {
     document.body.removeChild(a)
     setTimeout(() => URL.revokeObjectURL(url), 2000)
     exportHint.value = `✓ 已触发下载：${name}（${entries.length} 条）`
+    showToast({ type: 'success', message: '已触发下载', position: 'bottom', duration: 1500 })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     exportHint.value = `✗ 导出失败：${msg}`
-    alert(`导出失败：\n${msg}`)
+    showToast({ type: 'fail', message: `导出失败：${msg}`, position: 'bottom', duration: 2500 })
   }
 }
+
+async function onShare(): Promise<void> {
+  const result = await buildExportJson()
+  if (!result) {
+    showToast({ type: 'fail', message: '没有可分享的日志', position: 'bottom', duration: 1500 })
+    return
+  }
+  const { json, entries } = result
+  const name = makeLogFilename()
+
+  try {
+    if (Capacitor.isNativePlatform()) {
+      // 先写入临时文件，通过 URI 分享
+      let targetDir = Directory.Documents
+      let finalPath = name
+      try {
+        await Filesystem.stat({ path: 'Download', directory: Directory.ExternalStorage })
+        targetDir = Directory.ExternalStorage
+        finalPath = `Download/${name}`
+      } catch {
+        // fallback 用 Documents
+      }
+      const res = await Filesystem.writeFile({
+        path: finalPath,
+        data: json,
+        directory: targetDir,
+        encoding: Encoding.UTF8,
+        recursive: true,
+      })
+      const uri = res.uri ?? `file://${finalPath}`
+      await Share.share({
+        title: '诊断日志',
+        url: uri,
+        text: `来自 Finance Manager 的诊断日志，共 ${entries.length} 条。\n导出时间：${new Date().toISOString()}`,
+      })
+      shareToast.value = `已触发分享（${entries.length} 条）`
+      return
+    }
+
+    // Web 端：优先使用 Files API，其次 Text
+    const blob = new Blob([json], { type: 'application/json' })
+    const file = new File([blob], name, { type: 'application/json' })
+    const canShareFile = navigator.canShare?.({ files: [file] })
+    if (canShareFile) {
+      await navigator.share({ files: [file], title: '诊断日志' })
+      shareToast.value = `已分享（${entries.length} 条）`
+      return
+    }
+    // fallback：分享文本（截断到 32KB）
+    const text = json.length > 32768 ? json.slice(0, 32768) : json
+    await navigator.share({ title: '诊断日志', text })
+    shareToast.value = `已分享（${entries.length} 条）`
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') return
+    const msg = e instanceof Error ? e.message : String(e)
+    showToast({ type: 'fail', message: `分享失败：${msg}`, position: 'bottom', duration: 2500 })
+  }
+}
+
+function onToggleMode(): void {
+  if (logStore.config.globalMinLevel === 'debug') {
+    logStore.setProductionMode()
+    showToast({ type: 'text', message: '已切到正式版（仅 warn/error）', position: 'bottom', duration: 2000 })
+  } else {
+    logStore.setDevMode()
+    showToast({ type: 'success', message: '已切到开发模式（全开）', position: 'bottom', duration: 2000 })
+  }
+}
+
+const modeLabel = computed(() => {
+  const cfg = logStore.config
+  if (cfg.globalMinLevel === 'debug') return '开发模式（全开）'
+  return '正式版（仅 warn/error）'
+})
 
 const LEVEL_META: Record<LogLevel, { label: string; cls: string }> = {
   debug: { label: 'D', cls: 'chip chip--debug' },
@@ -203,10 +296,20 @@ const LEVEL_META: Record<LogLevel, { label: string; cls: string }> = {
       </section>
 
       <section>
+        <div class="config-row">
+          <button type="button" class="mode-toggle" @click="onToggleMode">
+            <span class="dot" />
+            <span>{{ modeLabel }}</span>
+          </button>
+        </div>
         <div class="action-row">
-          <button type="button" class="secondary-button" :disabled="!logStore.entries.length" @click="onClear">
+          <button type="button" class="secondary-button" :disabled="!logStore.entries.length" @click="showClearConfirm">
             <Trash2 :size="16" :stroke-width="1.75" />
             <span>清空</span>
+          </button>
+          <button type="button" class="accent-button" :disabled="!logStore.entries.length" @click="onShare">
+            <Share2 :size="16" :stroke-width="1.75" />
+            <span>分享</span>
           </button>
           <button type="button" class="primary-button" :disabled="!logStore.entries.length" @click="onExport">
             <Download :size="16" :stroke-width="1.75" />
@@ -214,6 +317,7 @@ const LEVEL_META: Record<LogLevel, { label: string; cls: string }> = {
           </button>
         </div>
         <p v-if="exportHint" class="export-hint">{{ exportHint }}</p>
+        <p v-if="shareToast" class="share-hint">{{ shareToast }}</p>
       </section>
 
       <section v-if="filtered.length === 0">
@@ -331,8 +435,58 @@ section h2 {
 
 .action-row {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--space-2);
+}
+
+.config-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  margin-bottom: var(--space-1);
+}
+
+.mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease;
+}
+.mode-toggle:active {
+  background: var(--color-primary-50);
+}
+.mode-toggle .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary-600);
+}
+
+.accent-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  color: #fff;
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  background: #1677ff;
+  border: 0;
+  border-radius: var(--radius-pill);
+  height: 44px;
+  cursor: pointer;
+}
+.accent-button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .export-hint {

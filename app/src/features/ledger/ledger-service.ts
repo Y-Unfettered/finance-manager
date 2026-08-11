@@ -1,5 +1,9 @@
 import { inject, type InjectionKey } from 'vue'
 
+import { getLogger } from '@/features/debug/app-logger'
+
+const log = getLogger('ledger')
+
 import { normalBalanceForAccountType } from '@/domain/accounts'
 import type { AccountRecord, CategoryRecord, LedgerRecord } from '@/domain/entities'
 import type { IdGenerator } from '@/domain/identity'
@@ -37,6 +41,7 @@ export class LedgerService {
   }
 
   async create(name: string): Promise<LedgerRecord> {
+    log.debug('create: start', { name })
     const trimmed = name.trim()
     if (!trimmed) throw new Error('请输入账本名称')
     const now = this.clock.nowIso()
@@ -68,16 +73,19 @@ export class LedgerService {
       updatedAt: now,
     }))
     await this.ledgers.createWithDefaults({ ledger, cashAccount, categories })
+    log.info('create: success', { ledgerId: ledger.id, name: ledger.name })
     return ledger
   }
 
   async rename(id: string, name: string): Promise<void> {
+    log.debug('rename: start', { ledgerId: id })
     const trimmed = name.trim()
     if (!trimmed) throw new Error('请输入账本名称')
     await this.ledgers.rename(id, trimmed, this.clock.nowIso())
   }
 
   async setArchived(id: string, archived: boolean): Promise<void> {
+    log.debug('setArchived: start', { ledgerId: id, archived })
     const all = await this.ledgers.list()
     const target = all.find((item) => item.id === id)
     if (!target) throw new Error('账本不存在')

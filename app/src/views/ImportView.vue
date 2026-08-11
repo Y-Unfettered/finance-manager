@@ -446,6 +446,8 @@ async function checkPendingClipboard(): Promise<void> {
       await ClipboardReader.markConsumed().catch(() => {})
       // 持久化记录指纹，防止应用重启后同一内容重复弹窗
       setConsumedFingerprint(candidateText)
+      // 更新去重内容，防止 store 路径消费后剪贴板路径再次弹窗
+      lastClipboardCheckContent = candidateText
       log.info('checkPendingClipboard: store 候选项消费成功，跳 preview')
       return
     } catch (error) {

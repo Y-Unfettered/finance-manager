@@ -1,4 +1,7 @@
+import { getLogger } from '@/features/debug/app-logger'
 import { inject, type InjectionKey } from 'vue'
+
+const log = getLogger('import')
 
 import {
   createCreditIncome,
@@ -16,7 +19,6 @@ import {
   type AccountType,
 } from '@/domain/accounts'
 import type { AccountRecord, CategoryRecord } from '@/domain/entities'
-import { findAccountCatalogItem } from '@/features/finance/account-catalog'
 import { parseCnyInputToMinor } from '@/domain/money'
 import type { Clock } from '@/domain/time'
 import type { IdGenerator } from '@/domain/identity'
@@ -102,7 +104,8 @@ export class ImportService {
   async previewCsv(input: PreviewCsvInput): Promise<ImportPlan> {
     const delimiter = detectDelimiter(input.content)
     const parsed = parseCsv(input.content, { delimiter })
-    return this.previewRows({
+    log.debug('previewCsv: start', { fileName: input.fileName, rowCount: parsed.rows.length })
+    const plan = await this.previewRows({
       ledgerId: input.ledgerId,
       fileName: input.fileName,
       source: input.source ?? 'csv',
@@ -113,6 +116,12 @@ export class ImportService {
       accountMappings: input.accountMappings,
       categoryMappings: input.categoryMappings,
     })
+    log.info('previewCsv: done', {
+      validRows: plan.validRows.length,
+      errors: plan.errors.length,
+      unmatchedAccounts: plan.unmatchedAccounts.length,
+    })
+    return plan
   }
 
   async previewRows(input: PreviewRowsInput): Promise<ImportPlan> {
@@ -121,6 +130,9 @@ export class ImportService {
     const errors: ImportError[] = [
       ...(input.parseErrors ?? []).map((message) => ({ rowIndex: 0, message })),
     ]
+    if (input.parseErrors && input.parseErrors.length > 0) {
+      log.info('previewRows: parseErrors', { count: input.parseErrors.length, fileName: input.fileName })
+    }
 
     if (headers.length === 0) {
       return emptyPlan(input.fileName, source, rows, input.fieldMapping, errors, '文件为空或无表头')
@@ -234,6 +246,12 @@ export class ImportService {
       duplicateWarning = `该文件似乎已经导入过（批次 ${existingBatch.fileName}），是否继续？`
     }
 
+    log.debug('previewRows: pending', {
+      unmatchedAccounts: unmatchedAccounts.length,
+      pendingAccountCreations: pendingAccounts.length,
+      pendingCategoryCreations: pendingCategories.length,
+    })
+
     return {
       fileName: input.fileName,
       source,
@@ -328,130 +346,142 @@ export class ImportService {
 
   async checkBatchDuplicate(ledgerId: string, plan: ImportPlan): Promise<boolean> {
     const existing = await this.batches.findActiveByFingerprint(ledgerId, plan.sourceFingerprint)
+    log.info('checkBatchDuplicate: checked', { duplicate: Boolean(existing), ledgerId })
     return Boolean(existing)
   }
 
   async executeImport(input: ExecuteImportInput): Promise<ImportResult> {
     const { ledgerId, plan, note } = input
-    if (plan.validRows.length === 0) {
-      return {
-        batchId: '',
-        successCount: 0,
-        duplicateCount: 0,
-        errorCount: plan.errors.length,
-        importedTransactionIds: [],
-        executionErrors: [],
-      }
-    }
-
-    // 检查该文件指纹是否已有活跃的导入批次，防止重复导入
-    const existingBatch = await this.batches.findActiveByFingerprint(ledgerId, plan.sourceFingerprint)
-    if (existingBatch) {
-      throw new Error(
-        `该数据已在此前导入过（批次：${existingBatch.fileName ?? '未知'}，` +
-        `导入时间：${existingBatch.createdAt}），不允许重复导入。` +
-        `如需重新导入，请先撤销旧的导入批次。`,
-      )
-    }
-
-    // 创建 pending 账户与分类，建立 临时 ID → 真实 ID 映射
-    const accountIdMap = new Map<string, string>()
-    const categoryIdMap = new Map<string, string>()
-    await this.createPendingAccounts(ledgerId, plan.pendingAccountCreations, accountIdMap)
-    await this.createPendingCategories(ledgerId, plan.pendingCategoryCreations, categoryIdMap)
-
-    const batchId = this.ctx.ids.next('import_batch')
-    const now = this.ctx.clock.nowIso()
-    await this.batches.create({
-      id: batchId,
+    log.debug('executeImport: start', {
       ledgerId,
-      source: plan.source,
-      fileName: plan.fileName,
-      parserVersion: 'csv-v1',
-      fieldMappingJson: JSON.stringify(plan.fieldMapping),
-      sourceFingerprint: plan.sourceFingerprint,
-      recordCount: plan.totalRows,
-      note,
-      createdAt: now,
+      plan: { validRows: plan.validRows.length, errorRows: plan.errors.length },
     })
-
-    const importedTransactionIds: string[] = []
-    const executionErrors: ExecutionError[] = []
-    let successCount = 0
-    let errorCount = plan.errors.length
-
-    for (const row of plan.validRows) {
-      try {
-        const resolved = this.resolvePendingIds(row, accountIdMap, categoryIdMap)
-        const transactionId = await this.createTransactionForRow(resolved, ledgerId)
-        await this.batches.attachTransaction(transactionId, batchId, this.ctx.clock.nowIso())
-        importedTransactionIds.push(transactionId)
-        successCount += 1
-      } catch (error) {
-        executionErrors.push({
-          rowIndex: row.index,
-          message: error instanceof Error ? error.message : String(error),
-        })
-        errorCount += 1
+    try {
+      if (plan.validRows.length === 0) {
+        return {
+          batchId: '',
+          successCount: 0,
+          duplicateCount: 0,
+          errorCount: plan.errors.length,
+          importedTransactionIds: [],
+          executionErrors: [],
+        }
       }
-    }
 
-    await this.batches.updateCounters(
-      batchId,
-      {
-        successCount,
-        duplicateCount: 0,
-        errorCount,
-      },
-      this.ctx.clock.nowIso(),
-    )
-
-    if (executionErrors.length > 0) {
-      const validRowsSnapshot = plan.validRows
-        .filter((r) => executionErrors.some((e) => e.rowIndex === r.index))
-        .map((r) => {
-          const d = new Date(r.raw.occurredAt)
-          const y = d.getFullYear()
-          const m = String(d.getMonth() + 1).padStart(2, '0')
-          const day = String(d.getDate()).padStart(2, '0')
-          const hh = String(d.getHours()).padStart(2, '0')
-          const mm = String(d.getMinutes()).padStart(2, '0')
-          return {
-            index: r.index,
-            date: `${y}-${m}-${day}`,
-            time: `${hh}:${mm}`,
-            amountMinor: r.raw.amountMinor,
-            kind: r.raw.kind,
-            sourceAccount: r.raw.sourceAccountName,
-            targetAccount: r.raw.targetAccountName,
-            category: r.raw.categoryName,
-            merchant: r.raw.merchant,
-            note: r.raw.note,
-            sourceTransactionId: r.raw.sourceTransactionId,
-          }
-        })
-      const payload = {
-        executionErrors,
-        preflightErrors: plan.errors,
-        failedValidRows: validRowsSnapshot,
-      }
-      try {
-        await this.batches.saveExecutionErrors(batchId, JSON.stringify(payload))
-      } catch {
-        // 持久化失败详情失败不影响主流程，静默忽略
-      }
-    } else if (plan.errors.length > 0) {
-      // 没有执行阶段错误，但有前验（预览）阶段错误，也存一份，避免 UI 完全看不见
-      try {
-        await this.batches.saveExecutionErrors(
-          batchId,
-          JSON.stringify({ executionErrors: [], preflightErrors: plan.errors, failedValidRows: [] }),
+      // 检查该文件指纹是否已有活跃的导入批次，防止重复导入
+      const existingBatch = await this.batches.findActiveByFingerprint(ledgerId, plan.sourceFingerprint)
+      if (existingBatch) {
+        throw new Error(
+          `该数据已在此前导入过（批次：${existingBatch.fileName ?? '未知'}，` +
+          `导入时间：${existingBatch.createdAt}），不允许重复导入。` +
+          `如需重新导入，请先撤销旧的导入批次。`,
         )
-      } catch {
-        // 静默忽略
       }
-    }
 
+      // 创建 pending 账户与分类，建立 临时 ID → 真实 ID 映射
+      const accountIdMap = new Map<string, string>()
+      const categoryIdMap = new Map<string, string>()
+      await this.createPendingAccounts(ledgerId, plan.pendingAccountCreations, accountIdMap)
+      await this.createPendingCategories(ledgerId, plan.pendingCategoryCreations, categoryIdMap)
+
+      const batchId = this.ctx.ids.next('import_batch')
+      const now = this.ctx.clock.nowIso()
+      await this.batches.create({
+        id: batchId,
+        ledgerId,
+        source: plan.source,
+        fileName: plan.fileName,
+        parserVersion: 'csv-v1',
+        fieldMappingJson: JSON.stringify(plan.fieldMapping),
+        sourceFingerprint: plan.sourceFingerprint,
+        recordCount: plan.totalRows,
+        note,
+        createdAt: now,
+      })
+
+      const importedTransactionIds: string[] = []
+      const executionErrors: ExecutionError[] = []
+      let successCount = 0
+      let errorCount = plan.errors.length
+
+      for (const row of plan.validRows) {
+        try {
+          const resolved = this.resolvePendingIds(row, accountIdMap, categoryIdMap)
+          const transactionId = await this.createTransactionForRow(resolved, ledgerId)
+          await this.batches.attachTransaction(transactionId, batchId, this.ctx.clock.nowIso())
+          importedTransactionIds.push(transactionId)
+          successCount += 1
+        } catch (error) {
+          executionErrors.push({
+            rowIndex: row.index,
+            message: error instanceof Error ? error.message : String(error),
+          })
+          errorCount += 1
+        }
+      }
+
+      await this.batches.updateCounters(
+        batchId,
+        {
+          successCount,
+          duplicateCount: 0,
+          errorCount,
+        },
+        this.ctx.clock.nowIso(),
+      )
+
+      if (executionErrors.length > 0) {
+        const validRowsSnapshot = plan.validRows
+          .filter((r) => executionErrors.some((e) => e.rowIndex === r.index))
+          .map((r) => {
+            const d = new Date(r.raw.occurredAt)
+            const y = d.getFullYear()
+            const m = String(d.getMonth() + 1).padStart(2, '0')
+            const day = String(d.getDate()).padStart(2, '0')
+            const hh = String(d.getHours()).padStart(2, '0')
+            const mm = String(d.getMinutes()).padStart(2, '0')
+            return {
+              index: r.index,
+              date: `${y}-${m}-${day}`,
+              time: `${hh}:${mm}`,
+              amountMinor: r.raw.amountMinor,
+              kind: r.raw.kind,
+              sourceAccount: r.raw.sourceAccountName,
+              targetAccount: r.raw.targetAccountName,
+              category: r.raw.categoryName,
+              merchant: r.raw.merchant,
+              note: r.raw.note,
+              sourceTransactionId: r.raw.sourceTransactionId,
+            }
+          })
+        const payload = {
+          executionErrors,
+          preflightErrors: plan.errors,
+          failedValidRows: validRowsSnapshot,
+        }
+        try {
+          await this.batches.saveExecutionErrors(batchId, JSON.stringify(payload))
+        } catch {
+          // 持久化失败详情失败不影响主流程，静默忽略
+        }
+      } else if (plan.errors.length > 0) {
+        // 没有执行阶段错误，但有前验（预览）阶段错误，也存一份，避免 UI 完全看不见
+        try {
+          await this.batches.saveExecutionErrors(
+            batchId,
+            JSON.stringify({ executionErrors: [], preflightErrors: plan.errors, failedValidRows: [] }),
+          )
+        } catch {
+          // 静默忽略
+        }
+      }
+
+    log.info('executeImport: success', {
+      batchId,
+      inserted: successCount,
+      skipped: 0,
+      errorRows: executionErrors.length,
+    })
     return {
       batchId,
       successCount,
@@ -460,17 +490,31 @@ export class ImportService {
       importedTransactionIds,
       executionErrors,
     }
+    } catch (error) {
+      const e = error instanceof Error ? error : new Error(String(error))
+      log.error('executeImport: failed', { error: e.message, context: { ledgerId, fileName: plan.fileName } })
+      throw e
+    }
   }
 
   async voidBatch(ledgerId: string, batchId: string): Promise<string[]> {
-    const batch = await this.batches.findById(batchId)
-    if (!batch || batch.ledgerId !== ledgerId) {
-      throw new Error('导入批次不存在')
+    try {
+      log.debug('voidBatch: start', { batchId, ledgerId })
+      const batch = await this.batches.findById(batchId)
+      if (!batch || batch.ledgerId !== ledgerId) {
+        throw new Error('导入批次不存在')
+      }
+      if (batch.status === 'void') {
+        throw new Error('导入批次已撤销')
+      }
+      const txIds = await this.batches.voidBatch(batchId, this.ctx.clock.nowIso())
+      log.info('voidBatch: voided', { batchId, transactionCount: txIds.length })
+      return txIds
+    } catch (error) {
+      const e = error instanceof Error ? error : new Error(String(error))
+      log.error('voidBatch: failed', { error: e.message, batchId })
+      throw e
     }
-    if (batch.status === 'void') {
-      throw new Error('导入批次已撤销')
-    }
-    return this.batches.voidBatch(batchId, this.ctx.clock.nowIso())
   }
 
   async listBatches(ledgerId: string) {
@@ -579,6 +623,7 @@ export class ImportService {
       updatedAt: now,
     }
     await this.accounts.create(record)
+    log.info('createAccountForImport: created', { name, accountId: record.id })
     return record.id
   }
 
@@ -1128,8 +1173,9 @@ function emptyPlan(
 }
 
 /**
- * 收集行中未匹配的账户名，用 account-catalog 推断类型，生成 pending 创建项。
- * 已存在的账户（按名称匹配）直接补入 accountMap。
+ * 收集行中未匹配的账户名，推入 unmatchedAccounts 让用户在预览中确认。
+ * 已存在的账户（按名称匹配或唯一子串匹配）直接补入 accountMap。
+ * 可推断类型的账户（借出方、信用卡后缀）仍加入 pendingAccountCreations。
  */
 function collectPendingAccounts(
   row: ParsedImportRow,
@@ -1159,68 +1205,77 @@ function collectPendingAccounts(
       continue
     }
     // 子串匹配：检查 key 与已有账户名是否存在双向子串关系
-    // 例外：还款场景生成的 "XXX信用卡" 不应与原始借记卡 "XXX" 视为同一账户
     const substringMatches: Array<{ id: string; name: string }> = []
     for (const [existingName, existingAccountId] of existingByName) {
       if (key === existingName) continue
-      const isCreditCardSuffix = key.endsWith('信用卡') && key.slice(0, -3) === existingName
-      if (isCreditCardSuffix) continue
       if (key.includes(existingName) || existingName.includes(key)) {
         substringMatches.push({ id: existingAccountId, name: existingName })
       }
     }
-    if (substringMatches.length === 1) {
-      accountMap.set(key, substringMatches[0]!.id)
+    // 信用卡后缀例外：还款场景自动生成 "工资卡信用卡"，它与已有 "工资卡" 存在子串关系，
+    // 但应视为不同账户（否则转账会变成同账户转账）；跳过该匹配
+    const baseName = key.endsWith('信用卡') ? key.slice(0, -3) : ''
+    const matches = substringMatches.length === 1 && baseName && substringMatches[0]!.name === baseName
+      ? []
+      : substringMatches
+    if (matches.length === 1) {
+      accountMap.set(key, matches[0]!.id)
       continue
     }
-    if (substringMatches.length > 1) {
+    if (matches.length > 1) {
       unmatchedAccounts.push({
         rawName: key,
         role,
-        candidates: substringMatches.map((m) => ({ accountId: m.id, accountName: m.name })),
+        candidates: matches.map((m) => ({ accountId: m.id, accountName: m.name })),
       })
       continue
     }
-    // 完全未匹配，根据上下文和 account catalog 推断类型并生成 pending 创建项
-    if (!pendingIds.has(key)) {
-      const catalog = findAccountCatalogItem(key)
+    // 对可推断类型的账户（借出款转入方、还款的信用卡后缀），加入 pending 自动创建
+    const canInfer =
+      (role === 'target' && row.transferPurpose === 'loan_out') ||
+      (key.endsWith('信用卡') && row.kind === 'transfer')
+    if (canInfer && !pendingIds.has(key)) {
+      const accountType: AccountType =
+        role === 'target' && row.transferPurpose === 'loan_out' ? 'receivable' : 'credit_card'
       const tempId = `pending:account:${key}`
       pendingIds.set(key, tempId)
-      let accountType = catalog.type
-      // 借出款的转入方应为应收/借出账户
-      if (role === 'target' && row.transferPurpose === 'loan_out') {
-        accountType = 'receivable'
-      }
-      // 还款场景自动生成的 "XXX信用卡" 目标账户应为信用账户
-      if (key.endsWith('信用卡') && row.kind === 'transfer') {
-        accountType = 'credit_card'
-      }
       pending.push({
         rawName: key,
         accountType,
         inferredName: key,
-        institution: catalog.institution,
       })
       accountMap.set(key, tempId)
-    } else {
-      accountMap.set(key, pendingIds.get(key)!)
+      continue
+    }
+    // 完全未匹配：加入 accountMap 以便行能解析，推入 unmatchedAccounts 让用户选择。
+    // 不加入 pendingAccountCreations，避免导入时静默创建账户。
+    const tempId = `pending:account:${key}`
+    pendingIds.set(key, tempId)
+    accountMap.set(key, tempId)
+    const alreadyListed = unmatchedAccounts.some((u) => u.rawName === key)
+    if (!alreadyListed) {
+      unmatchedAccounts.push({
+        rawName: key,
+        role,
+        candidates: [], // 无候选，用户需从所有账户中手动选择
+      })
     }
   }
 
-  // 支出/收入行缺少账户名时，生成占位 pending 账户以便预览/导入继续
+  // 支出/收入行缺少账户名时，生成占位条目让用户在预览中选择
   if ((row.kind === 'expense' || row.kind === 'income') && (!row.sourceAccountName || !row.sourceAccountName.trim())) {
     const missingKey = `__missing_source_${row.index}__`
-    if (!accountMap.has(missingKey) && !pendingIds.has(missingKey)) {
+    if (!accountMap.has(missingKey)) {
       const tempId = `pending:account:${missingKey}`
-      pendingIds.set(missingKey, tempId)
-      pending.push({
-        rawName: missingKey,
-        accountType: 'platform',
-        inferredName: '未指定账户',
-      })
       accountMap.set(missingKey, tempId)
-    } else {
-      accountMap.set(missingKey, pendingIds.get(missingKey)!)
+      const alreadyListed = unmatchedAccounts.some((u) => u.rawName === missingKey)
+      if (!alreadyListed) {
+        unmatchedAccounts.push({
+          rawName: missingKey,
+          role: 'source',
+          candidates: [],
+        })
+      }
     }
   }
 }

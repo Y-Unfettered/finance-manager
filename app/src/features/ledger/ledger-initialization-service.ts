@@ -1,7 +1,10 @@
+import { getLogger } from '@/features/debug/app-logger'
 import type { AccountRecord, CategoryRecord, LedgerRecord } from '@/domain/entities'
 import type { Clock } from '@/domain/time'
 import type { IdGenerator } from '@/domain/identity'
 import { LedgerRepository } from '@/db/repositories/ledger-repository'
+
+const log = getLogger('ledger-init')
 
 const DEFAULT_CATEGORIES = [
   { kind: 'expense', name: '餐饮' },
@@ -32,8 +35,10 @@ export class LedgerInitializationService {
   ) {}
 
   async initialize(): Promise<LedgerInitializationResult> {
+    log.debug('initialize: start')
     const existing = await this.ledgers.findFirst()
     if (existing) {
+      log.info('initialize: using existing', { ledgerId: existing.id })
       return { ledger: existing, created: false }
     }
 
@@ -67,6 +72,7 @@ export class LedgerInitializationService {
     }))
 
     await this.ledgers.createWithDefaults({ ledger, cashAccount, categories })
+    log.info('initialize: created', { ledgerId: ledger.id, name: ledger.name })
     return { ledger, created: true }
   }
 }

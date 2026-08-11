@@ -1,8 +1,11 @@
 /**
  * 应用内诊断日志模块。
  *
- * 提供分级日志记录（debug/info/warn/error），容量上限（默认 2000 条，超过后裁剪旧记录）。
- * 用于在设置页展示，方便排查功能问题（如剪贴板检测、导入流程等）。
+ * 提供分级日志记录（debug/info/warn/error），支持按 tag 开关和全局级别过滤。
+ * 开发阶段默认全开，正式版可通过 setConfig 关闭不需要的日志。
+ * 容量上限（默认 2000 条，超过后裁剪旧记录）。
+ *
+ * 配置持久化到 localStorage，key: `app-log-config`
  */
 
 import { defineStore } from 'pinia'
@@ -13,14 +16,56 @@ export interface LogEntry {
   id: number
   timestamp: number // ms
   level: LogLevel
-  tag: string // 业务分类标签，如 clipboard/import/app-lock
+  tag: string // 业务分类标签，如 clipboard/import/finance/nav
   message: string
   data?: Record<string, unknown>
 }
 
 const DEFAULT_MAX_ENTRIES = 2000
+const CONFIG_KEY = 'app-log-config'
 
-/** 构造一条日志，用全局自增 id */
+/** 级别排序，数字越大越严格 */
+const LEVEL_ORDER: Record<LogLevel, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+}
+
+/** 开发环境默认配置：全开。 */
+const DEV_DEFAULT_CONFIG: LogConfig = {
+  enabled: true,
+  maxEntries: DEFAULT_MAX_ENTRIES,
+  tagMinLevels: {}, // 空 = 所有 tag 从全局级别开始
+  globalMinLevel: 'debug',
+}
+
+/** 正式发布环境默认配置：只保留 warn/error。 */
+export const PRODUCTION_DEFAULT_CONFIG: LogConfig = {
+  enabled: true,
+  maxEntries: 500,
+  tagMinLevels: {},
+  globalMinLevel: 'warn',
+}
+
+export interface TagFilter {
+  /** 该 tag 允许的最小级别（null = 关闭该 tag）。 */
+  minLevel: LogLevel | null
+}
+
+export interface LogConfig {
+  /** 日志系统总开关。 */
+  enabled: boolean
+  /** 最大条目数。 */
+  maxEntries: number
+  /** 全局最小级别过滤。 */
+  globalMinLevel: LogLevel
+  /** 按 tag 的独立级别覆盖（高优先级）。 */
+  tagMinLevels: Record<string, LogLevel | null>
+}
+
+const defaultConfig = (): LogConfig => ({ ...DEV_DEFAULT_CONFIG })
+
 let nextLogId = 1
 function makeEntry(level: LogLevel, tag: string, message: string, data?: Record<string, unknown>): LogEntry {
   return {
@@ -43,10 +88,39 @@ export function formatTimestamp(ts: number): string {
   )
 }
 
+function loadConfig(): LogConfig {
+  try {
+    const raw = localStorage.getItem(CONFIG_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<LogConfig>
+      return { ...defaultConfig(), ...parsed }
+    }
+  } catch {
+    // 忽略损坏的配置
+  }
+  return defaultConfig()
+}
+
+function saveConfig(config: LogConfig): void {
+  try {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(config))
+  } catch {
+    // 忽略存储失败
+  }
+}
+
+/** 判断某条日志是否应该被记录（基于配置）。 */
+function shouldLog(config: LogConfig, tag: string, level: LogLevel): boolean {
+  if (!config.enabled) return false
+  const tagLevel = config.tagMinLevels[tag]
+  const effectiveLevel = tagLevel === null ? 'error' : tagLevel ?? config.globalMinLevel
+  return LEVEL_ORDER[level] >= LEVEL_ORDER[effectiveLevel]
+}
+
 export const useAppLogStore = defineStore('app-log', {
   state: () => ({
     entries: [] as LogEntry[],
-    maxEntries: DEFAULT_MAX_ENTRIES,
+    config: loadConfig(),
   }),
   getters: {
     byLevel(state) {
@@ -59,9 +133,10 @@ export const useAppLogStore = defineStore('app-log', {
   actions: {
     /** 追加一条日志，超过容量上限时裁剪最旧的记录。 */
     append(level: LogLevel, tag: string, message: string, data?: Record<string, unknown>) {
+      if (!shouldLog(this.config, tag, level)) return
       this.entries.push(makeEntry(level, tag, message, data))
-      if (this.entries.length > this.maxEntries) {
-        const over = this.entries.length - this.maxEntries
+      if (this.entries.length > this.config.maxEntries) {
+        const over = this.entries.length - this.config.maxEntries
         this.entries.splice(0, over)
       }
     },
@@ -83,12 +158,31 @@ export const useAppLogStore = defineStore('app-log', {
       this.entries = []
     },
 
+    /** 更新日志配置并持久化。 */
+    setConfig(next: Partial<LogConfig>) {
+      this.config = { ...this.config, ...next }
+      saveConfig(this.config)
+    },
+
+    /** 一键切换到开发配置（全开）。 */
+    setDevMode() {
+      this.config = { ...DEV_DEFAULT_CONFIG }
+      saveConfig(this.config)
+    },
+
+    /** 一键切换到正式发布配置（仅 warn/error）。 */
+    setProductionMode() {
+      this.config = { ...PRODUCTION_DEFAULT_CONFIG }
+      saveConfig(this.config)
+    },
+
     /** 导出为 JSON 文件，方便发给开发者或本地分析。 */
     exportJson(): string {
       return JSON.stringify(
         {
           exportedAt: new Date().toISOString(),
           totalEntries: this.entries.length,
+          config: this.config,
           entries: this.entries,
         },
         null,
