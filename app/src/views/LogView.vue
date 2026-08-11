@@ -6,9 +6,12 @@ import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
 import { Share } from '@capacitor/share'
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { showConfirmDialog, showToast } from 'vant'
+import { Field as VanField, Picker as VanPicker, Popup as VanPopup, showConfirmDialog, showToast } from 'vant'
 import 'vant/es/toast/style'
 import 'vant/es/dialog/style'
+import 'vant/es/picker/style'
+import 'vant/es/field/style'
+import 'vant/es/popup/style'
 
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
@@ -27,12 +30,46 @@ const tagFilter = ref<string>('all')
 const keyword = ref('')
 const exportHint = ref<string>('')
 const shareToast = ref<string>('')
+const showLevelPicker = ref(false)
+const showTagPicker = ref(false)
+
+const levelPickerOptions = [
+  { text: '全部级别', value: 'all' },
+  { text: 'DEBUG', value: 'debug' },
+  { text: 'INFO', value: 'info' },
+  { text: 'WARN', value: 'warn' },
+  { text: 'ERROR', value: 'error' },
+]
+
+const levelDisplay = computed(() => {
+  const opt = levelPickerOptions.find(o => o.value === levelFilter.value)
+  return opt ? opt.text : '全部级别'
+})
 
 const allTags = computed(() => {
   const s = new Set<string>()
   logStore.entries.forEach((e) => s.add(e.tag))
   return ['all', ...Array.from(s).sort()]
 })
+
+const tagPickerOptions = computed(() =>
+  allTags.value.map(t => ({
+    text: t === 'all' ? '全部分类' : t,
+    value: t,
+  })),
+)
+
+const tagDisplay = computed(() => (tagFilter.value === 'all' ? '全部分类' : tagFilter.value))
+
+function onLevelConfirm(val: { selectedOptions: { text: string; value: string }[] }): void {
+  levelFilter.value = val.selectedOptions[0]?.value as LogLevel | 'all'
+  showLevelPicker.value = false
+}
+
+function onTagConfirm(val: { selectedOptions: { text: string; value: string }[] }): void {
+  tagFilter.value = val.selectedOptions[0]?.value ?? 'all'
+  showTagPicker.value = false
+}
 
 const filtered = computed<LogEntry[]>(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -272,28 +309,51 @@ const LEVEL_META: Record<LogLevel, { label: string; cls: string }> = {
       <section>
         <h2>筛选</h2>
         <BaseCard class="filter-card">
-          <label>
-            <span>级别</span>
-            <select v-model="levelFilter">
-              <option value="all">全部级别</option>
-              <option value="debug">DEBUG</option>
-              <option value="info">INFO</option>
-              <option value="warn">WARN</option>
-              <option value="error">ERROR</option>
-            </select>
-          </label>
-          <label>
-            <span>分类</span>
-            <select v-model="tagFilter">
-              <option v-for="t in allTags" :key="t" :value="t">{{ t === 'all' ? '全部分类' : t }}</option>
-            </select>
-          </label>
-          <label>
-            <span>搜索</span>
-            <input v-model="keyword" type="search" placeholder="关键词过滤消息和数据" />
-          </label>
+          <VanField
+            is-link
+            readonly
+            clickable
+            label="级别"
+            :model-value="levelDisplay"
+            placeholder="选择级别"
+            name="level"
+            @click="showLevelPicker = true"
+          />
+          <VanField
+            is-link
+            readonly
+            clickable
+            label="分类"
+            :model-value="tagDisplay"
+            placeholder="选择分类"
+            name="tag"
+            @click="showTagPicker = true"
+          />
+          <VanField
+            v-model="keyword"
+            label="搜索"
+            placeholder="关键词过滤消息和数据"
+            name="keyword"
+            clearable
+          />
         </BaseCard>
       </section>
+
+      <VanPopup v-model:show="showLevelPicker" position="bottom">
+        <VanPicker
+          :columns="levelPickerOptions"
+          @confirm="onLevelConfirm"
+          @cancel="showLevelPicker = false"
+        />
+      </VanPopup>
+
+      <VanPopup v-model:show="showTagPicker" position="bottom">
+        <VanPicker
+          :columns="tagPickerOptions"
+          @confirm="onTagConfirm"
+          @cancel="showTagPicker = false"
+        />
+      </VanPopup>
 
       <section>
         <div class="config-row">

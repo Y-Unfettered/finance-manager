@@ -19,6 +19,7 @@ import AppIconButton from '@/components/AppIconButton.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import DailyLedgerCard from '@/components/DailyLedgerCard.vue'
+import DeleteVerifyPopup from '@/components/DeleteVerifyPopup.vue'
 import LinearProgress from '@/components/LinearProgress.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import RecentSummaryCard from '@/components/RecentSummaryCard.vue'
@@ -76,6 +77,8 @@ const activeTxId = ref<string>()
 const selectedIds = ref<string[]>([])
 const showBulkDelete = ref(false)
 const showBulkEdit = ref(false)
+const showDeleteVerify = ref(false)
+const deleteVerifyExpected = ref('')
 const bulkDeleting = ref(false)
 const bulkEditing = ref(false)
 const bulkEditDate = ref('')
@@ -435,6 +438,16 @@ async function deleteSelection(): Promise<void> {
   }
 }
 
+function startBulkDelete(): void {
+  showBulkDelete.value = false
+  deleteVerifyExpected.value = String(Math.floor(1000 + Math.random() * 9000))
+  showDeleteVerify.value = true
+}
+
+function closeDeleteVerify(): void {
+  showDeleteVerify.value = false
+}
+
 function handleTxUpdated(): void {
   void loadHome()
 }
@@ -719,14 +732,22 @@ onUnmounted(() => {
           <button
             type="button"
             class="danger-button"
-            :disabled="bulkDeleting"
-            @click="deleteSelection"
+            @click="startBulkDelete"
           >
-            {{ bulkDeleting ? '删除中…' : '确认删除' }}
+            继续
           </button>
         </div>
       </div>
     </AppBottomSheet>
+
+    <DeleteVerifyPopup
+      :show="showDeleteVerify"
+      :expected-number="deleteVerifyExpected"
+      :count-label="`确定删除选中的 ${selectedIds.length} 笔账目吗？删除后相关余额会同步回退。`"
+      :deleting="bulkDeleting"
+      @update:show="closeDeleteVerify"
+      @confirm="deleteSelection"
+    />
 
     <AppBottomSheet v-model:show="showBulkEdit" title="批量修改">
       <form class="bulk-edit" @submit.prevent="applyBulkEdit">

@@ -1,30 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-import FoundationView from '@/views/FoundationView.vue'
-import AccountDetailView from '@/views/AccountDetailView.vue'
-import BackupView from '@/views/BackupView.vue'
-import BudgetView from '@/views/BudgetView.vue'
-import ExportView from '@/views/ExportView.vue'
-import ImportBatchesView from '@/views/ImportBatchesView.vue'
-import ImportView from '@/views/ImportView.vue'
-import NewExpenseView from '@/views/NewExpenseView.vue'
 import HomeView from '@/views/HomeView.vue'
 import AccountsView from '@/views/AccountsView.vue'
+import NewExpenseView from '@/views/NewExpenseView.vue'
+import AccountDetailView from '@/views/AccountDetailView.vue'
 import PayablesView from '@/views/PayablesView.vue'
-import PinSetupView from '@/views/PinSetupView.vue'
-import BillsView from '@/views/BillsView.vue'
-import CategoryManagementView from '@/views/CategoryManagementView.vue'
-import LedgerView from '@/views/LedgerView.vue'
-import LogView from '@/views/LogView.vue'
-import SettingsView from '@/views/SettingsView.vue'
-import AccountStatisticsView from '@/views/AccountStatisticsView.vue'
-import AccountIconManagementView from '@/views/AccountIconManagementView.vue'
-import CategoryStatisticsView from '@/views/CategoryStatisticsView.vue'
 import ReceivablesView from '@/views/ReceivablesView.vue'
-import RemindersView from '@/views/RemindersView.vue'
-import TemplatesView from '@/views/TemplatesView.vue'
-import TransactionSearchView from '@/views/TransactionSearchView.vue'
-import MonthlyReportView from '@/views/MonthlyReportView.vue'
+import BillsView from '@/views/BillsView.vue'
 import {
   applyNavigationDirection,
   commitNavigationEntry,
@@ -68,29 +50,46 @@ const router = createRouter({
     },
     { path: '/analysis', redirect: '/bills' },
     { path: '/profile', redirect: '/settings' },
-    { path: '/ledgers', name: 'ledgers', component: LedgerView },
     { path: '/bills', name: 'bills', component: BillsView },
-    { path: '/settings', name: 'settings', component: SettingsView },
+    {
+      path: '/ledgers',
+      name: 'ledgers',
+      component: () => import('@/views/LedgerView.vue'),
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/views/SettingsView.vue'),
+    },
     {
       path: '/settings/account-icons',
       name: 'account-icons',
-      component: AccountIconManagementView,
+      component: () => import('@/views/AccountIconManagementView.vue'),
+    },
+    {
+      path: '/settings/ai-prompt',
+      name: 'ai-prompt',
+      component: () => import('@/views/AIPromptView.vue'),
     },
     {
       path: '/settings/logs',
       name: 'app-logs',
-      component: LogView,
+      component: () => import('@/views/LogView.vue'),
     },
-    { path: '/categories', name: 'categories', component: CategoryManagementView },
+    {
+      path: '/categories',
+      name: 'categories',
+      component: () => import('@/views/CategoryManagementView.vue'),
+    },
     {
       path: '/categories/:categoryId/statistics',
       name: 'category-statistics',
-      component: CategoryStatisticsView,
+      component: () => import('@/views/CategoryStatisticsView.vue'),
     },
     {
       path: '/accounts/:accountId/statistics',
       name: 'account-statistics',
-      component: AccountStatisticsView,
+      component: () => import('@/views/AccountStatisticsView.vue'),
     },
     {
       path: '/assets/statistics',
@@ -102,56 +101,60 @@ const router = createRouter({
       name: 'asset-statement',
       component: () => import('@/views/AssetStatementView.vue'),
     },
-    { path: '/reports/monthly', name: 'monthly-report', component: MonthlyReportView },
+    {
+      path: '/reports/monthly',
+      name: 'monthly-report',
+      component: () => import('@/views/MonthlyReportView.vue'),
+    },
     {
       path: '/import',
       name: 'import',
-      component: ImportView,
+      component: () => import('@/views/ImportView.vue'),
     },
     {
       path: '/import-batches',
       name: 'import-batches',
-      component: ImportBatchesView,
+      component: () => import('@/views/ImportBatchesView.vue'),
     },
     {
       path: '/backup',
       name: 'backup',
-      component: BackupView,
-    },
-    {
-      path: '/app-lock',
-      name: 'app-lock',
-      component: PinSetupView,
+      component: () => import('@/views/BackupView.vue'),
     },
     {
       path: '/export',
       name: 'export',
-      component: ExportView,
-    },
-    {
-      path: '/foundation',
-      name: 'foundation',
-      component: FoundationView,
+      component: () => import('@/views/ExportView.vue'),
     },
     {
       path: '/budget',
       name: 'budget',
-      component: BudgetView,
+      component: () => import('@/views/BudgetView.vue'),
     },
     {
       path: '/templates',
       name: 'templates',
-      component: TemplatesView,
+      component: () => import('@/views/TemplatesView.vue'),
     },
     {
       path: '/reminders',
       name: 'reminders',
-      component: RemindersView,
+      component: () => import('@/views/RemindersView.vue'),
     },
     {
       path: '/search',
       name: 'search',
-      component: TransactionSearchView,
+      component: () => import('@/views/TransactionSearchView.vue'),
+    },
+    {
+      path: '/app-lock',
+      name: 'app-lock',
+      component: () => import('@/views/PinSetupView.vue'),
+    },
+    {
+      path: '/foundation',
+      name: 'foundation',
+      component: () => import('@/views/FoundationView.vue'),
     },
   ],
 })

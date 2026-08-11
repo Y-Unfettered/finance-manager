@@ -8,6 +8,7 @@ import {
   FolderTree,
   Images,
   Lock,
+  MessageSquare,
   PiggyBank,
 } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
@@ -48,6 +49,7 @@ const entries = [
   },
   { label: '应用锁', description: 'PIN 码保护账本', icon: Lock, route: 'app-lock' },
   { label: '导入账单', description: '导入历史交易', icon: FileUp, route: 'import' },
+  { label: 'AI 记账提示词', description: '复制提示词到豆包/AI，截图生成 JSON', icon: MessageSquare, route: 'ai-prompt' },
   { label: '备份与恢复', description: '完整本地备份', icon: DatabaseBackup, route: 'backup' },
   { label: '导出账单', description: 'CSV 或 JSON', icon: Download, route: 'export' },
 ] as const

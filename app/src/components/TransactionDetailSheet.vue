@@ -4,6 +4,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from './AppBottomSheet.vue'
+import DeleteVerifyPopup from './DeleteVerifyPopup.vue'
 import MoneyText from './MoneyText.vue'
 import type { TransactionMetadata } from '@/features/finance/finance-service'
 import { useFinanceService } from '@/features/finance/finance-service'
@@ -28,7 +29,7 @@ const tx = ref<TransactionMetadata>()
 // 删除三步确认
 type DeleteStep = 'none' | 'confirm1' | 'confirm2'
 const deleteStep = ref<DeleteStep>('none')
-const verifyNumber = ref('')
+const sheetVisible = computed(() => props.show && deleteStep.value !== 'confirm2')
 const expectedNumber = ref('')
 
 const displayAmount = computed(() => {
@@ -63,11 +64,6 @@ const formattedOccurredAt = computed(() => {
 const formattedCreatedAt = computed(() => {
   if (!tx.value) return ''
   return formatDateTime(tx.value.createdAt)
-})
-
-const canDelete = computed(() => {
-  if (!tx.value || tx.value.status === 'void') return false
-  return verifyNumber.value.trim() === expectedNumber.value
 })
 
 function formatDateTime(iso: string): string {
@@ -106,7 +102,6 @@ onMounted(() => {
 function close(): void {
   emit('update:show', false)
   deleteStep.value = 'none'
-  verifyNumber.value = ''
 }
 
 function handleEdit(): void {
@@ -146,7 +141,6 @@ async function handleOriginal(): Promise<void> {
 }
 
 function startDelete(): void {
-  verifyNumber.value = ''
   expectedNumber.value = String(Math.floor(1000 + Math.random() * 9000))
   deleteStep.value = 'confirm1'
 }
@@ -157,11 +151,10 @@ function proceedToDelete(): void {
 
 function cancelDelete(): void {
   deleteStep.value = 'none'
-  verifyNumber.value = ''
 }
 
 async function confirmDelete(): Promise<void> {
-  if (!tx.value || !finance || !canDelete.value || deleting.value) return
+  if (!tx.value || !finance || deleting.value) return
   deleting.value = true
   errorMessage.value = ''
   try {
@@ -189,7 +182,7 @@ function goCategory(categoryId?: string): void {
 </script>
 
 <template>
-  <AppBottomSheet :show="show" title="详情" @update:show="$emit('update:show', $event)">
+  <AppBottomSheet :show="sheetVisible" title="详情" @update:show="$emit('update:show', $event)">
     <template v-if="tx" #actions>
       <button
         type="button"
@@ -335,7 +328,7 @@ function goCategory(categoryId?: string): void {
 
       <div v-if="errorMessage" class="form-error" role="alert">{{ errorMessage }}</div>
 
-      <!-- 删除第一步确认 -->
+      <!-- 删除第一步确认：留在底部面板内 -->
       <div v-if="deleteStep === 'confirm1'" class="confirm-box" role="alertdialog">
         <strong>确认删除此笔交易？</strong>
         <p>删除后账目会回退，此操作不可恢复。</p>
@@ -344,35 +337,17 @@ function goCategory(categoryId?: string): void {
           <button type="button" class="danger-button" @click="proceedToDelete">继续</button>
         </div>
       </div>
-
-      <!-- 删除第二步：数字校验 -->
-      <div v-if="deleteStep === 'confirm2'" class="confirm-box" role="alertdialog">
-        <strong>最终确认</strong>
-        <p>请输入下方数字以确认删除：</p>
-        <div class="verify-number">{{ expectedNumber }}</div>
-        <input
-          v-model="verifyNumber"
-          class="verify-input"
-          type="text"
-          inputmode="numeric"
-          maxlength="4"
-          placeholder="输入上方数字"
-          :aria-label="`请输入数字 ${expectedNumber} 以确认删除`"
-        />
-        <div class="confirm-box__actions">
-          <button type="button" class="ghost-button" @click="cancelDelete">取消</button>
-          <button
-            type="button"
-            class="danger-button"
-            :disabled="!canDelete || deleting"
-            @click="confirmDelete"
-          >
-            {{ deleting ? '删除中…' : '确认删除' }}
-          </button>
-        </div>
-      </div>
     </div>
   </AppBottomSheet>
+
+  <!-- 删除第二步：数字校验 — 居中弹窗，键盘弹出时不受影响 -->
+  <DeleteVerifyPopup
+    :show="deleteStep === 'confirm2'"
+    :expected-number="expectedNumber"
+    :deleting="deleting"
+    @update:show="cancelDelete"
+    @confirm="confirmDelete"
+  />
 </template>
 
 <style scoped>
@@ -490,34 +465,6 @@ function goCategory(categoryId?: string): void {
   font-size: var(--type-body-size);
   line-height: var(--type-body-line);
 }
-.verify-number {
-  display: grid;
-  place-items: center;
-  padding: var(--space-3);
-  color: var(--color-text-primary);
-  font-size: var(--type-money-summary-size);
-  font-weight: 700;
-  letter-spacing: 8px;
-  background: var(--color-surface);
-  border: 2px solid var(--color-divider);
-  border-radius: var(--radius-control);
-}
-.verify-input {
-  width: 100%;
-  height: 48px;
-  text-align: center;
-  color: var(--color-text-primary);
-  font-size: var(--type-money-summary-size);
-  font-weight: 600;
-  letter-spacing: 4px;
-  background: var(--color-background);
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-control);
-  outline: 0;
-}
-.verify-input:focus {
-  border-color: var(--color-danger);
-}
 .confirm-box__actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -551,5 +498,35 @@ function goCategory(categoryId?: string): void {
   font-size: var(--type-body-size);
   background: rgb(185 67 67 / 8%);
   border-radius: var(--radius-control);
+}
+</style>
+
+<style>
+/* 居中弹窗样式（VanPopup teleport=body，需非 scoped 生效） */
+.delete-verify-panel {
+  display: grid;
+  padding: var(--space-5) var(--space-4);
+  gap: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-card);
+  box-shadow: 0 8px 32px rgb(0 0 0 / 16%);
+}
+.delete-verify-panel strong {
+  font-size: var(--type-section-title-size);
+  font-weight: 600;
+  text-align: center;
+}
+.delete-verify-panel p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+  text-align: center;
+}
+.delete-verify-panel .delete-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
 }
 </style>

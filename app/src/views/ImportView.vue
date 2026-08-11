@@ -36,8 +36,11 @@ import type {
 import { detectSourceType, parseJson, parseXlsx } from '@/features/import/source-parser'
 import { useAppStore } from '@/stores/app'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
-import { showToast } from 'vant'
+import { showToast, Field as VanField, Picker as VanPicker, Popup as VanPopup } from 'vant'
 import 'vant/es/toast/style'
+import 'vant/es/picker/style'
+import 'vant/es/field/style'
+import 'vant/es/popup/style'
 import { readFileAsArrayBuffer, readFileAsText } from '@/utils/file-io'
 
 const router = useRouter()
@@ -108,6 +111,10 @@ const unmatchedSelections = ref<Record<string, string>>({})
 // 用户选择「创建新账户」时的新账户名称
 const unmatchedNewAccountNames = ref<Record<string, string>>({})
 
+// 账户选择弹窗状态
+const showAccountPicker = ref(false)
+const activeUnmatchedRawName = ref('')
+
 const hasUnmatchedSelections = computed(() => {
   if (!plan.value) return false
   return plan.value.unmatchedAccounts.some(item => {
@@ -125,6 +132,59 @@ function unmatchedDisplayLabel(item: { rawName: string; role: string }): string 
     return `第${m[1]}行 · 缺少${item.role === 'source' ? '转出' : '转入'}账户`
   }
   return `「${item.rawName}」`
+}
+
+// 账户选择弹窗：打开时设置当前操作的 unmatched item
+function openAccountPicker(rawName: string): void {
+  activeUnmatchedRawName.value = rawName
+  showAccountPicker.value = true
+}
+
+function closeAccountPicker(): void {
+  showAccountPicker.value = false
+  activeUnmatchedRawName.value = ''
+}
+
+// 计算当前选中账户的显示文本
+function accountPickerDisplayLabel(): string {
+  if (!activeUnmatchedRawName.value) return ''
+  const sel = unmatchedSelections.value[activeUnmatchedRawName.value]
+  if (!sel) return '请选择对应账户'
+  if (sel === '__create_new__') return '+ 创建新账户'
+  const acct = accounts.value.find(a => a.id === sel)
+  return acct ? acct.name : sel
+}
+
+function onAccountPickerConfirm(val: { selectedOptions: { text: string; value: string }[] }): void {
+  if (!activeUnmatchedRawName.value) return
+  const valStr = val.selectedOptions[0]?.value as string
+  if (valStr) {
+    unmatchedSelections.value[activeUnmatchedRawName.value] = valStr
+  }
+  closeAccountPicker()
+}
+
+function buildAccountPickerColumns(): { text: string; value: string }[] {
+  const cols: { text: string; value: string }[] = []
+  const rawName = activeUnmatchedRawName.value
+  if (!rawName || !plan.value) return cols
+
+  const item = plan.value.unmatchedAccounts.find(u => u.rawName === rawName)
+  if (!item) return cols
+
+  // 推荐匹配
+  if (item.candidates.length > 0) {
+    cols.push({ text: '—— 推荐匹配 ——', value: '' })
+    cols.push(...item.candidates.map(c => ({ text: c.accountName, value: c.accountId })))
+  }
+
+  // 所有账户
+  cols.push({ text: '—— 所有账户 ——', value: '' })
+  cols.push(...accounts.value.map(a => ({ text: a.name, value: a.id })))
+
+  // 创建新账户
+  cols.push({ text: '+ 创建新账户', value: '__create_new__' })
+  return cols
 }
 
 function emptyMapping(): Record<ImportSystemField, number> {
@@ -963,28 +1023,20 @@ function goToBatches(): void {
                 <span class="unmatched-row__role">{{ item.role === 'source' ? '转出账户' : '转入账户' }}</span>
               </div>
               <div class="unmatched-row__right">
-                <select v-model="unmatchedSelections[item.rawName]" class="unmatched-row__select">
-                  <option value="" disabled>请选择对应账户</option>
-                  <optgroup v-if="item.candidates.length > 0" label="推荐匹配">
-                    <option v-for="candidate in item.candidates" :key="candidate.accountId" :value="candidate.accountId">
-                      {{ candidate.accountName }}
-                    </option>
-                  </optgroup>
-                  <optgroup label="所有账户">
-                    <option v-for="account in accounts" :key="account.id" :value="account.id">
-                      {{ account.name }}
-                    </option>
-                  </optgroup>
-                  <optgroup label="其他">
-                    <option value="__create_new__">+ 创建新账户</option>
-                  </optgroup>
-                </select>
-                <input
+                <VanField
+                  is-link
+                  readonly
+                  clickable
+                  :model-value="unmatchedSelections[item.rawName] === '__create_new__' ? '+ 创建新账户' : (unmatchedSelections[item.rawName] ? (accounts.find(a => a.id === unmatchedSelections[item.rawName])?.name ?? unmatchedSelections[item.rawName]) : '请选择对应账户')"
+                  placeholder="请选择对应账户"
+                  name="account-select"
+                  @click="openAccountPicker(item.rawName)"
+                />
+                <VanField
                   v-if="unmatchedSelections[item.rawName] === '__create_new__'"
                   v-model="unmatchedNewAccountNames[item.rawName]"
-                  type="text"
-                  class="unmatched-row__new-name"
                   placeholder="输入新账户名称"
+                  name="new-account-name"
                 />
               </div>
             </div>
@@ -992,6 +1044,14 @@ function goToBatches(): void {
               <RefreshCw :size="16" :stroke-width="1.75" />重新检查
             </button>
           </BaseCard>
+
+          <VanPopup v-model:show="showAccountPicker" position="bottom">
+            <VanPicker
+              :columns="buildAccountPickerColumns()"
+              @confirm="onAccountPickerConfirm"
+              @cancel="closeAccountPicker"
+            />
+          </VanPopup>
 
           <BaseCard
             v-if="
@@ -1816,31 +1876,6 @@ function goToBatches(): void {
 .unmatched-row__right {
   display: grid;
   gap: var(--space-2);
-}
-.unmatched-row__select {
-  width: 100%;
-  height: 40px;
-  padding: 0 var(--space-3);
-  color: var(--color-text-primary);
-  font-size: var(--type-body-size);
-  background: var(--color-background);
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-control);
-  outline: 0;
-}
-.unmatched-row__new-name {
-  width: 100%;
-  height: 36px;
-  padding: 0 var(--space-3);
-  color: var(--color-text-primary);
-  font-size: var(--type-body-size);
-  background: var(--color-background);
-  border: 1px solid var(--color-primary-300);
-  border-radius: var(--radius-control);
-  outline: 0;
-}
-.unmatched-row__new-name::placeholder {
-  color: var(--color-text-tertiary);
 }
 </style>
 
