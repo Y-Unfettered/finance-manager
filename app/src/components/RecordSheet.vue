@@ -323,6 +323,8 @@ async function initializeFormState(): Promise<void> {
   originalOccurredAt.value = ''
   originalRefundTransactionId.value = ''
   errorMessage.value = ''
+  accountPickerShow.value = false
+  datePickerShow.value = false
 
   await loadOptions()
 
@@ -612,6 +614,7 @@ function swapAccounts(): void {
 }
 
 function goBack(): void {
+  ;(document.activeElement as HTMLElement | null)?.blur()
   navigateBack(router, { name: 'home' })
 }
 
@@ -740,6 +743,7 @@ async function submit(): Promise<void> {
         })
       }
     }
+    ;(document.activeElement as HTMLElement | null)?.blur()
     navigateBack(router, { name: 'home' })
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
