@@ -44,6 +44,10 @@ const showUnlock = computed(
 let appStateListener: { remove: () => void } | undefined
 let clipboardCandidateListener: { remove: () => void } | undefined
 
+// 前台剪贴板轮询定时器：app 在前台时定期探测剪贴板，确保用户在前台复制数据后能立即弹窗
+let clipboardPollInterval: ReturnType<typeof setInterval> | null = null
+const CLIPBOARD_POLL_INTERVAL_MS = 3000 // 3 秒轮询一次
+
 /**
  * 探测剪贴板文本是否像「待导入的交易 JSON 数组」。
  * 与原生侧 ClipboardReaderPlugin.looksLikeTransactionJson 保持一致。
@@ -73,6 +77,26 @@ function probeClipboardJson(text: string): { ok: boolean; count: number } {
 let lastProbedContent = ''
 let lastProbedAt = 0
 let lastHandledCandidateText = ''
+
+/**
+ * 前台剪贴板轮询：app 在前台时每隔 3 秒探测一次剪贴板，
+ * 确保用户在前台复制数据后能立即弹窗，无需切换到后台再回来。
+ */
+function startClipboardPolling(): void {
+  stopClipboardPolling()
+  clipboardPollInterval = setInterval(async () => {
+    void appStateClipboardProbe()
+  }, CLIPBOARD_POLL_INTERVAL_MS)
+  log.debug('前台剪贴板轮询已启动', { interval: CLIPBOARD_POLL_INTERVAL_MS })
+}
+
+function stopClipboardPolling(): void {
+  if (clipboardPollInterval !== null) {
+    clearInterval(clipboardPollInterval)
+    clipboardPollInterval = null
+    log.debug('前台剪贴板轮询已停止')
+  }
+}
 
 /**
  * AppStateChange 兜底：切回前台时主动读剪贴板。
@@ -146,15 +170,15 @@ onMounted(async () => {
   if (Capacitor.isNativePlatform()) {
     appStateListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
       if (!isActive) {
-        // 切到后台：显示隐私遮挡 + 锁定
+        // 切到后台：显示隐私遮挡 + 锁定 + 停止轮询
         privacyVeil.value = true
         lockStore.lock()
+        stopClipboardPolling()
       } else {
-        // 回到前台：隐藏遮挡（如已锁定，解锁页会显示）
+        // 回到前台：隐藏遮挡 + 启动轮询
         privacyVeil.value = false
-        // 兜底：切回前台时主动再读一次剪贴板
-        // 即便 Java 插件 notifyListeners 事件丢失（addListener 注册时序问题），这里也能触发
         void appStateClipboardProbe()
+        startClipboardPolling()
       }
     })
 
@@ -218,6 +242,7 @@ onMounted(async () => {
     // 所以在监听器注册完成后，等数据库就绪时主动查一次剪贴板。
     if (appStore.databaseStatus === 'ready') {
       void appStateClipboardProbe()
+      startClipboardPolling()
     } else {
       const stopWatch = watch(
         () => appStore.databaseStatus,
@@ -225,6 +250,7 @@ onMounted(async () => {
           if (status === 'ready') {
             stopWatch()
             void appStateClipboardProbe()
+            startClipboardPolling()
           }
         },
       )
@@ -237,6 +263,7 @@ onMounted(async () => {
 onUnmounted(() => {
   appStateListener?.remove()
   clipboardCandidateListener?.remove()
+  stopClipboardPolling()
 })
 
 watch(

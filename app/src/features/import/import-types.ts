@@ -99,6 +99,11 @@ export interface ImportPlan {
   readonly pendingAccountCreations: readonly PendingAccountCreation[]
   readonly pendingCategoryCreations: readonly PendingCategoryCreation[]
   readonly duplicateWarning?: string
+  readonly existingActiveBatch?: {
+    id: string
+    fileName: string | null
+    createdAt: string
+  }
   readonly unmatchedAccounts: ReadonlyArray<{
     rawName: string
     role: 'source' | 'target'

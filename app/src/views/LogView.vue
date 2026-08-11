@@ -61,7 +61,7 @@ function showClearConfirm(): void {
     logStore.clear()
     exportHint.value = ''
     shareToast.value = ''
-    showToast({ type: 'success', message: '已清空', position: 'bottom', duration: 1500 })
+    showToast({ type: 'success', message: '已清空', position: 'bottom', duration: 800 })
   }).catch(() => {})
 }
 
@@ -88,7 +88,7 @@ async function buildExportJson(): Promise<{ json: string; entries: LogEntry[] } 
 async function onExport(): Promise<void> {
   const result = await buildExportJson()
   if (!result) {
-    showToast({ type: 'fail', message: '没有可导出的日志', position: 'bottom', duration: 1500 })
+    showToast({ type: 'fail', message: '没有可导出的日志', position: 'bottom', duration: 1000 })
     return
   }
   const { json, entries } = result
@@ -116,7 +116,7 @@ async function onExport(): Promise<void> {
       })
       const uri = res.uri ?? finalPath
       exportHint.value = `✓ 已导出 ${entries.length} 条 → ${uri}`
-      showToast({ type: 'success', message: '导出成功', position: 'bottom', duration: 2000 })
+      showToast({ type: 'success', message: '导出成功', position: 'bottom', duration: 800, className: 'logview-toast-sm' })
       return
     }
 
@@ -147,7 +147,7 @@ async function onExport(): Promise<void> {
     document.body.removeChild(a)
     setTimeout(() => URL.revokeObjectURL(url), 2000)
     exportHint.value = `✓ 已触发下载：${name}（${entries.length} 条）`
-    showToast({ type: 'success', message: '已触发下载', position: 'bottom', duration: 1500 })
+    showToast({ type: 'success', message: '已触发下载', position: 'bottom', duration: 800, className: 'logview-toast-sm' })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     exportHint.value = `✗ 导出失败：${msg}`
@@ -637,5 +637,15 @@ section h2 {
   .overview-item strong {
     font-size: 18px;
   }
+}
+</style>
+
+<style>
+.van-toast.logview-toast-sm {
+  width: auto !important;
+  min-width: 160px !important;
+  max-width: 240px !important;
+  padding: 8px 16px !important;
+  font-size: 13px !important;
 }
 </style>

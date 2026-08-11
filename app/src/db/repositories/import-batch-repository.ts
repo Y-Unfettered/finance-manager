@@ -1,4 +1,3 @@
-import type { SqlValue } from '../core/types'
 import { BaseRepository } from './base-repository'
 
 export type ImportSource = 'csv' | 'xlsx' | 'json' | 'qianji' | 'other'
@@ -130,31 +129,28 @@ const BATCH_TRANSACTION_SELECT = `
 
 export class ImportBatchRepository extends BaseRepository {
   async create(input: CreateImportBatchInput): Promise<void> {
-    await this.database.executeSet(
-      [
-        {
-          statement: `
-            INSERT INTO import_batches (
-              id, ledger_id, source, file_name, parser_version,
-              field_mapping_json, source_fingerprint, record_count,
-              success_count, duplicate_count, error_count, status, note,
-              created_at, voided_at, execution_errors_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'active', ?, ?, NULL, NULL)
-          `,
-          values: [
-            input.id,
-            input.ledgerId,
-            input.source,
-            input.fileName?.trim() || null,
-            input.parserVersion ?? null,
-            input.fieldMappingJson ?? null,
-            input.sourceFingerprint ?? null,
-            input.recordCount,
-            input.note?.trim() || null,
-            input.createdAt,
-          ],
-        },
-      ],
+    const fileName = input.fileName?.trim() || null
+    const parserVersion = input.parserVersion ?? null
+    const fieldMappingJson = input.fieldMappingJson ?? null
+    const sourceFingerprint = input.sourceFingerprint ?? null
+    const note = input.note?.trim() || null
+    await this.database.execute(
+      `INSERT INTO import_batches (
+        id, ledger_id, source, file_name, parser_version,
+        field_mapping_json, source_fingerprint, record_count,
+        success_count, duplicate_count, error_count, status, note,
+        created_at, voided_at, execution_errors_json
+      ) VALUES (
+        '${sqlEscapeString(input.id)}',
+        '${sqlEscapeString(input.ledgerId)}',
+        '${sqlEscapeString(input.source)}',
+        ${fileName !== null ? `'${sqlEscapeString(fileName)}'` : 'NULL'},
+        ${parserVersion !== null ? `'${sqlEscapeString(parserVersion)}'` : 'NULL'},
+        ${fieldMappingJson !== null ? `'${sqlEscapeString(fieldMappingJson)}'` : 'NULL'},
+        ${sourceFingerprint !== null ? `'${sqlEscapeString(sourceFingerprint)}'` : 'NULL'},
+        ${input.recordCount}, 0, 0, 0, 'active',
+        ${note !== null ? `'${sqlEscapeString(note)}'` : 'NULL'},
+        '${sqlEscapeString(input.createdAt)}', NULL, NULL)`,
       true,
     )
   }
@@ -202,17 +198,10 @@ export class ImportBatchRepository extends BaseRepository {
     counters: ImportBatchCounters,
     updatedAt: string,
   ): Promise<void> {
-    await this.database.executeSet(
-      [
-        {
-          statement: `
-            UPDATE import_batches
-            SET success_count = ?, duplicate_count = ?, error_count = ?
-            WHERE id = ?
-          `,
-          values: [counters.successCount, counters.duplicateCount, counters.errorCount, id],
-        },
-      ],
+    await this.database.execute(
+      `UPDATE import_batches
+        SET success_count = ${counters.successCount}, duplicate_count = ${counters.duplicateCount}, error_count = ${counters.errorCount}
+        WHERE id = '${sqlEscapeString(id)}'`,
       true,
     )
     void updatedAt
@@ -222,17 +211,10 @@ export class ImportBatchRepository extends BaseRepository {
     id: string,
     executionErrorsJson: string,
   ): Promise<void> {
-    await this.database.executeSet(
-      [
-        {
-          statement: `
-            UPDATE import_batches
-            SET execution_errors_json = ?
-            WHERE id = ?
-          `,
-          values: [executionErrorsJson, id],
-        },
-      ],
+    await this.database.execute(
+      `UPDATE import_batches
+        SET execution_errors_json = '${sqlEscapeString(executionErrorsJson)}'
+        WHERE id = '${sqlEscapeString(id)}'`,
       true,
     )
   }
@@ -242,13 +224,8 @@ export class ImportBatchRepository extends BaseRepository {
     batchId: string,
     updatedAt: string,
   ): Promise<void> {
-    await this.database.executeSet(
-      [
-        {
-          statement: `UPDATE transactions SET import_batch_id = ?, updated_at = ? WHERE id = ?`,
-          values: [batchId, updatedAt, transactionId],
-        },
-      ],
+    await this.database.execute(
+      `UPDATE transactions SET import_batch_id = '${sqlEscapeString(batchId)}', updated_at = '${sqlEscapeString(updatedAt)}' WHERE id = '${sqlEscapeString(transactionId)}'`,
       true,
     )
   }
@@ -274,17 +251,22 @@ export class ImportBatchRepository extends BaseRepository {
       await this.markBatchVoided(batchId, voidedAt)
       return []
     }
-    const statements = [
-      ...transactionIds.map((id) => ({
-        statement: `UPDATE transactions SET status = 'void', updated_at = ? WHERE id = ?`,
-        values: [voidedAt, id] as SqlValue[],
-      })),
-      {
-        statement: `UPDATE import_batches SET status = 'void', voided_at = ? WHERE id = ?`,
-        values: [voidedAt, batchId] as SqlValue[],
-      },
-    ]
-    await this.database.executeSet(statements, true)
+    const escapedBatchId = sqlEscapeString(batchId)
+    const escapedVoidedAt = sqlEscapeString(voidedAt)
+    // Capacitor executeSet has a known bug with ? parameter binding and may
+    // misbehave with empty values arrays. Use execute() with inline values and
+    // call each statement separately (execute() only runs the first statement
+    // when multiple are semicolon-separated).
+    for (const id of transactionIds) {
+      await this.database.execute(
+        `UPDATE transactions SET status = 'void', updated_at = '${escapedVoidedAt}' WHERE id = '${sqlEscapeString(id)}'`,
+        true,
+      )
+    }
+    await this.database.execute(
+      `UPDATE import_batches SET status = 'void', voided_at = '${escapedVoidedAt}' WHERE id = '${escapedBatchId}'`,
+      true,
+    )
     return transactionIds
   }
 
@@ -297,14 +279,14 @@ export class ImportBatchRepository extends BaseRepository {
   }
 
   private async markBatchVoided(batchId: string, voidedAt: string): Promise<void> {
-    await this.database.executeSet(
-      [
-        {
-          statement: `UPDATE import_batches SET status = 'void', voided_at = ? WHERE id = ?`,
-          values: [voidedAt, batchId],
-        },
-      ],
+    await this.database.execute(
+      `UPDATE import_batches SET status = 'void', voided_at = '${sqlEscapeString(voidedAt)}' WHERE id = '${sqlEscapeString(batchId)}'`,
       true,
     )
   }
+}
+
+/** Minimal SQL string escaper for values that are safely sourced (UUIDs / ISO timestamps). */
+function sqlEscapeString(value: string): string {
+  return value.replace(/'/g, "''")
 }

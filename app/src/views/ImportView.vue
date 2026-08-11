@@ -8,6 +8,7 @@ import {
   FileText,
   ListChecks,
   RefreshCw,
+  RotateCcw,
   Upload,
   X,
 } from '@lucide/vue'
@@ -35,6 +36,8 @@ import type {
 import { detectSourceType, parseJson, parseXlsx } from '@/features/import/source-parser'
 import { useAppStore } from '@/stores/app'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
+import { showToast } from 'vant'
+import 'vant/es/toast/style'
 import { readFileAsArrayBuffer, readFileAsText } from '@/utils/file-io'
 
 const router = useRouter()
@@ -69,6 +72,7 @@ const plan = ref<ImportPlan>()
 const result = ref<ImportResult>()
 const loading = ref(false)
 const saving = ref(false)
+const voidingBatch = ref(false)
 const errorMessage = ref('')
 const clipboardDialog = ref(false)
 const clipboardCandidateCount = ref(0)
@@ -398,7 +402,6 @@ function probeClipboardJson(text: string): ClipboardProbeResult {
 }
 
 async function confirmUseClipboard(): Promise<void> {
-  clipboardDialog.value = false
   if (!importService || !appStore.ledgerId) return
   loading.value = true
   errorMessage.value = ''
@@ -408,6 +411,7 @@ async function confirmUseClipboard(): Promise<void> {
     await loadMappingOptions()
     pasteText.value = lastClipboardCheckContent
     await goToPreview()
+    clipboardDialog.value = false
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -650,6 +654,60 @@ async function confirmImport(): Promise<void> {
   }
 }
 
+async function voidExistingBatchAndRetry(): Promise<void> {
+  if (!importService || !appStore.ledgerId || voidingBatch.value) return
+  voidingBatch.value = true
+  errorMessage.value = ''
+  try {
+    // 撤销全部与当前文件指纹相同的 active 批次（可能因历史 bug 累积了多个）
+    let voidedCount = 0
+    let hasDuplicate = true
+    let retryCount = 0
+    const maxRetry = 10
+    while (hasDuplicate && retryCount < maxRetry) {
+      const built = await importService.previewRows({
+        ledgerId: appStore.ledgerId,
+        fileName: fileName.value,
+        source: sourceType.value,
+        headers: headers.value,
+        rows: rows.value,
+        parseErrors: parseErrors.value,
+        fieldMapping: buildFieldMappings(),
+        accountMappings: buildAccountMappings(),
+        categoryMappings: buildCategoryMappings(),
+      })
+      plan.value = built
+      if (!built.existingActiveBatch) {
+        hasDuplicate = false
+        break
+      }
+      await importService.voidBatch(appStore.ledgerId, built.existingActiveBatch.id)
+      voidedCount += 1
+      retryCount += 1
+    }
+    if (voidedCount > 0) {
+      showToast({
+        message: voidedCount > 1 ? `已撤销 ${voidedCount} 个旧批次` : '已撤销旧批次',
+        duration: 1200,
+        position: 'bottom',
+        className: 'import-toast-sm',
+      })
+    }
+    if (!plan.value?.duplicateWarning) {
+      showToast({
+        message: '重复检查通过，可直接导入',
+        duration: 1500,
+        position: 'bottom',
+        className: 'import-toast-sm',
+      })
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    voidingBatch.value = false
+  }
+}
+
 function resetWizard(): void {
   step.value = 'select'
   fileName.value = ''
@@ -871,7 +929,26 @@ function goToBatches(): void {
               <AlertCircle :size="18" :stroke-width="1.75" />
               <div class="duplicate-warning__text">
                 <strong>{{ plan.duplicateWarning }}</strong>
-                <span>请前往「导入批次」页面撤销旧批次后再重新导入。</span>
+                <span>该文件已在之前导入过，不允许重复导入。</span>
+                <div v-if="plan.existingActiveBatch" class="existing-batch-info">
+                  <div class="existing-batch-info__row">
+                    <span class="existing-batch-info__label">已有批次</span>
+                    <span class="existing-batch-info__value">{{ plan.existingActiveBatch.fileName ?? '未知文件名' }}</span>
+                  </div>
+                  <div class="existing-batch-info__row">
+                    <span class="existing-batch-info__label">导入时间</span>
+                    <span class="existing-batch-info__value">{{ plan.existingActiveBatch.createdAt }}</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="primary-button primary-button--sm"
+                    :disabled="voidingBatch"
+                    @click="voidExistingBatchAndRetry"
+                  >
+                    <RotateCcw :size="16" :stroke-width="1.75" />
+                    {{ voidingBatch ? '正在撤销…' : '撤销此批次并重新导入' }}
+                  </button>
+                </div>
               </div>
             </div>
           </BaseCard>
@@ -988,13 +1065,13 @@ function goToBatches(): void {
               返回重新选择
             </button>
             <button
-              v-if="plan && plan.validRows.length > 0"
+              v-if="plan && plan.validRows.length > 0 && !plan.duplicateWarning"
               type="button"
               class="primary-button"
-              :disabled="saving || !canImport"
+              :disabled="saving"
               @click="confirmImport"
             >
-              {{ saving ? '正在导入…' : plan?.duplicateWarning ? '请先撤销旧批次' : '确认导入' }}
+              {{ saving ? '正在导入…' : '确认导入' }}
             </button>
           </div>
         </template>
@@ -1674,6 +1751,38 @@ function goToBatches(): void {
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
 }
+.existing-batch-info {
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-background-raised, #ffffff);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+}
+.existing-batch-info__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.existing-batch-info__label {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  flex: none;
+}
+.existing-batch-info__value {
+  color: var(--color-text-primary);
+  font-size: var(--type-caption-size);
+  font-weight: 500;
+  text-align: right;
+}
+.primary-button--sm {
+  padding: 10px var(--space-3);
+  font-size: var(--type-caption-size);
+  margin-top: var(--space-1);
+  justify-self: start;
+}
 
 .unmatched-row {
   display: grid;
@@ -1732,5 +1841,16 @@ function goToBatches(): void {
 }
 .unmatched-row__new-name::placeholder {
   color: var(--color-text-tertiary);
+}
+</style>
+
+<style>
+/* Vant Toast 是全局 fixed 元素，需要非 scoped 覆盖宽度 */
+.van-toast.import-toast-sm {
+  width: auto !important;
+  min-width: 180px !important;
+  max-width: 260px !important;
+  padding: 10px 20px !important;
+  font-size: 14px !important;
 }
 </style>

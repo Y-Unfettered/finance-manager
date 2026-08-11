@@ -264,6 +264,9 @@ export class ImportService {
       pendingAccountCreations: pendingAccounts,
       pendingCategoryCreations: pendingCategories,
       duplicateWarning,
+      existingActiveBatch: existingBatch
+        ? { id: existingBatch.id, fileName: existingBatch.fileName, createdAt: existingBatch.createdAt }
+        : undefined,
       unmatchedAccounts,
     }
   }
