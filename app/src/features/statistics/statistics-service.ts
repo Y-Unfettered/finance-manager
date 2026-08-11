@@ -231,10 +231,6 @@ function minPeriod(left: string, right: string): string {
   return left < right ? left : right
 }
 
-function maxPeriod(left: string, right: string): string {
-  return left > right ? left : right
-}
-
 export function yearRange(year: number): DateRange {
   return {
     startUtc: new Date(Date.UTC(year, 0, 1)).toISOString(),

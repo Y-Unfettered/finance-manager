@@ -2,7 +2,7 @@
 import { ArrowLeftRight, ChevronLeft, Plus } from '@lucide/vue'
 import { NumberKeyboard } from 'vant'
 import 'vant/es/number-keyboard/style'
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
@@ -297,6 +297,76 @@ function applyTransactionToForm(tx: TransactionMetadata): void {
   if (tx.categoryId) selectedCategoryId.value = tx.categoryId
   if (tx.categoryName) selectedCategoryName.value = tx.categoryName
   originalOccurredAt.value = tx.occurredAt
+}
+
+let initialActivation = true
+
+async function initializeFormState(): Promise<void> {
+  // 重置所有表单状态，避免上次记账残留（KeepAlive 缓存场景下 onMounted 不会再次触发）
+  mode.value = 'expense'
+  amountDisplay.value = '0'
+  amountStarted.value = false
+  selectedCategoryId.value = ''
+  selectedCategoryName.value = ''
+  merchant.value = ''
+  note.value = ''
+  attachmentDataUris.value = []
+  sourceAccountId.value = ''
+  targetAccountId.value = ''
+  occurredAt.value = ''
+  dateLabel.value = '今天'
+  discountMode.value = false
+  discountAmount.value = ''
+  editTransactionId.value = ''
+  isEditMode.value = false
+  isCopyMode.value = false
+  originalOccurredAt.value = ''
+  originalRefundTransactionId.value = ''
+  errorMessage.value = ''
+
+  await loadOptions()
+
+  const editId = route.query.edit
+  const copyId = route.query.copy
+  const refundId = route.query.refund
+  const requestedMode = route.query.mode
+  const requestedAccountId = route.query.accountId
+  if (typeof editId === 'string' && editId) {
+    editTransactionId.value = editId
+    isEditMode.value = true
+    await loadTransactionForEdit(editId)
+  } else if (typeof copyId === 'string' && copyId) {
+    editTransactionId.value = copyId
+    isCopyMode.value = true
+    await loadTransactionForEdit(copyId)
+    amountDisplay.value = '0'
+    amountStarted.value = false
+    discountAmount.value = ''
+    occurredAt.value = new Date().toISOString()
+  } else if (typeof refundId === 'string' && refundId) {
+    originalRefundTransactionId.value = refundId
+    await loadTransactionForEdit(refundId)
+    mode.value = 'refund'
+    amountDisplay.value = '0'
+    amountStarted.value = false
+    discountAmount.value = ''
+    occurredAt.value = new Date().toISOString()
+    attachmentDataUris.value = []
+    merchant.value = ''
+    note.value = '关联原支出退款'
+  } else if (requestedMode === 'repayment') {
+    mode.value = 'repayment'
+    sourceAccountId.value = debitAccounts.value[0]?.id ?? ''
+    targetAccountId.value =
+      typeof requestedAccountId === 'string'
+        ? requestedAccountId
+        : (creditAccounts.value[0]?.id ?? '')
+  } else if (
+    typeof requestedAccountId === 'string' &&
+    activeAccounts.value.some((item) => item.id === requestedAccountId)
+  ) {
+    sourceAccountId.value = requestedAccountId
+  }
 }
 
 function switchMode(next: EntryMode): void {
@@ -698,48 +768,8 @@ function preventFrameScroll(): void {
 }
 
 onMounted(async () => {
-  await loadOptions()
-  const editId = route.query.edit
-  const copyId = route.query.copy
-  const refundId = route.query.refund
-  const requestedMode = route.query.mode
-  const requestedAccountId = route.query.accountId
-  if (typeof editId === 'string' && editId) {
-    editTransactionId.value = editId
-    isEditMode.value = true
-    await loadTransactionForEdit(editId)
-  } else if (typeof copyId === 'string' && copyId) {
-    editTransactionId.value = copyId
-    isCopyMode.value = true
-    await loadTransactionForEdit(copyId)
-    amountDisplay.value = '0'
-    amountStarted.value = false
-    discountAmount.value = ''
-    occurredAt.value = new Date().toISOString()
-  } else if (typeof refundId === 'string' && refundId) {
-    originalRefundTransactionId.value = refundId
-    await loadTransactionForEdit(refundId)
-    mode.value = 'refund'
-    amountDisplay.value = '0'
-    amountStarted.value = false
-    discountAmount.value = ''
-    occurredAt.value = new Date().toISOString()
-    attachmentDataUris.value = []
-    merchant.value = ''
-    note.value = '关联原支出退款'
-  } else if (requestedMode === 'repayment') {
-    mode.value = 'repayment'
-    sourceAccountId.value = debitAccounts.value[0]?.id ?? ''
-    targetAccountId.value =
-      typeof requestedAccountId === 'string'
-        ? requestedAccountId
-        : (creditAccounts.value[0]?.id ?? '')
-  } else if (
-    typeof requestedAccountId === 'string' &&
-    activeAccounts.value.some((item) => item.id === requestedAccountId)
-  ) {
-    sourceAccountId.value = requestedAccountId
-  }
+  await initializeFormState()
+  initialActivation = false
   void nextTick(() => {
     preventFrameScroll()
     const frame = pageRef.value?.closest('.route-page-frame') as HTMLElement | null
@@ -753,6 +783,12 @@ onMounted(async () => {
       frame.addEventListener('scroll', frameScrollHandler, { passive: true })
     }
   })
+})
+
+onActivated(async () => {
+  // 首次激活由 onMounted 处理；后续从 KeepAlive 缓存恢复时重新初始化表单
+  if (initialActivation) return
+  await initializeFormState()
 })
 
 watch(

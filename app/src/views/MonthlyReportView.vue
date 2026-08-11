@@ -45,9 +45,6 @@ const balanceMinor = computed(() => incomeMinor.value - expenseMinor.value)
 const balanceRate = computed(() =>
   incomeMinor.value > 0 ? Math.round((balanceMinor.value / incomeMinor.value) * 1000) / 10 : 0,
 )
-const maxValue = computed(() =>
-  Math.max(1, ...points.value.flatMap((point) => [point.incomeMinor, point.expenseMinor])),
-)
 
 const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
