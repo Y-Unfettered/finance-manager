@@ -1,0 +1,487 @@
+<script setup lang="ts">
+import { Download, FileSearch, Trash2 } from '@lucide/vue'
+import { Capacitor } from '@capacitor/core'
+import { Directory, Encoding, Filesystem } from '@capacitor/filesystem'
+import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
+
+import AppTopBar from '@/components/AppTopBar.vue'
+import BaseCard from '@/components/BaseCard.vue'
+import {
+  formatTimestamp,
+  useAppLogStore,
+  type LogEntry,
+  type LogLevel,
+} from '@/features/debug/app-logger'
+
+const router = useRouter()
+const logStore = useAppLogStore()
+
+const levelFilter = ref<LogLevel | 'all'>('all')
+const tagFilter = ref<string>('all')
+const keyword = ref('')
+const exportHint = ref<string>('')
+
+const allTags = computed(() => {
+  const s = new Set<string>()
+  logStore.entries.forEach((e) => s.add(e.tag))
+  return ['all', ...Array.from(s).sort()]
+})
+
+const filtered = computed<LogEntry[]>(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return logStore.entries
+    .slice()
+    .reverse()
+    .filter((e) => {
+      if (levelFilter.value !== 'all' && e.level !== levelFilter.value) return false
+      if (tagFilter.value !== 'all' && e.tag !== tagFilter.value) return false
+      if (kw) {
+        const hit =
+          e.message.toLowerCase().includes(kw) ||
+          (e.data && JSON.stringify(e.data).toLowerCase().includes(kw))
+        if (!hit) return false
+      }
+      return true
+    })
+})
+
+function onClear(): void {
+  if (!confirm(`确定清空 ${logStore.entries.length} 条日志吗？`)) return
+  logStore.clear()
+  exportHint.value = ''
+}
+
+function makeLogFilename(): string {
+  return `app-log-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+}
+
+async function onExport(): Promise<void> {
+  const entries = filtered.value.length === 0 ? logStore.entries : filtered.value
+  if (entries.length === 0) {
+    alert('当前没有可导出的日志。')
+    return
+  }
+  const json = JSON.stringify(
+    {
+      exportedAt: new Date().toISOString(),
+      total: entries.length,
+      filterApplied: filtered.value.length !== logStore.entries.length,
+      entries,
+    },
+    null,
+    2,
+  )
+  const name = makeLogFilename()
+  exportHint.value = '正在导出…'
+
+  try {
+    // Android/iOS 原生平台：写入 Documents 目录（用户可从系统文件管理器访问）
+    if (Capacitor.isNativePlatform()) {
+      let targetDir = Directory.Documents
+      let finalPath = name
+      // Android 优先写到外部存储的 Download/ 目录（对用户最可见）；失败再 fallback 到 Documents
+      try {
+        await Filesystem.stat({ path: 'Download', directory: Directory.ExternalStorage })
+        targetDir = Directory.ExternalStorage
+        finalPath = `Download/${name}`
+      } catch {
+        // ExternalStorage 无权限或不存在，fallback 用 Documents
+      }
+      const result = await Filesystem.writeFile({
+        path: finalPath,
+        data: json,
+        directory: targetDir,
+        encoding: Encoding.UTF8,
+        recursive: true,
+      })
+      const uri = result.uri ?? finalPath
+      exportHint.value = `✓ 已导出 ${entries.length} 条 → ${uri}`
+      alert(`导出成功！\n\n路径：${uri}\n共 ${entries.length} 条日志。\n可在系统「文件」应用的「下载」或「文档」目录里找到 ${name}。`)
+      return
+    }
+
+    // Web / PWA 端：优先 showSaveFilePicker，其次 <a download>
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' })
+    type FsWritable = { write: (s: Blob) => Promise<void>; close: () => Promise<void> }
+    type FsHandle = { createWritable: () => Promise<FsWritable> }
+    const showSaveFilePicker = (window as unknown as {
+      showSaveFilePicker?: (opts: { suggestedName: string }) => Promise<FsHandle>
+    }).showSaveFilePicker
+    if (showSaveFilePicker) {
+      try {
+        const fh = await showSaveFilePicker({ suggestedName: name })
+        const writable = await fh.createWritable()
+        await writable.write(blob)
+        await writable.close()
+        exportHint.value = `✓ 已导出 ${entries.length} 条`
+        return
+      } catch {
+        // 用户取消了就走 fallback
+      }
+    }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 2000)
+    exportHint.value = `✓ 已触发下载：${name}（${entries.length} 条）`
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    exportHint.value = `✗ 导出失败：${msg}`
+    alert(`导出失败：\n${msg}`)
+  }
+}
+
+const LEVEL_META: Record<LogLevel, { label: string; cls: string }> = {
+  debug: { label: 'D', cls: 'chip chip--debug' },
+  info: { label: 'I', cls: 'chip chip--info' },
+  warn: { label: 'W', cls: 'chip chip--warn' },
+  error: { label: 'E', cls: 'chip chip--error' },
+}
+</script>
+
+<template>
+  <main class="log-page">
+    <div class="safe-top">
+      <AppTopBar title="诊断日志" @back="router.back()" />
+    </div>
+    <div class="content">
+      <section>
+        <h2>总览</h2>
+        <BaseCard class="overview-card">
+          <div class="overview-item">
+            <strong>{{ logStore.entries.length }}</strong>
+            <small>条日志</small>
+          </div>
+          <div class="overview-item overview-item--debug">
+            <strong>{{ logStore.entries.filter(e => e.level === 'debug').length }}</strong>
+            <small>DEBUG</small>
+          </div>
+          <div class="overview-item overview-item--info">
+            <strong>{{ logStore.entries.filter(e => e.level === 'info').length }}</strong>
+            <small>INFO</small>
+          </div>
+          <div class="overview-item overview-item--warn">
+            <strong>{{ logStore.entries.filter(e => e.level === 'warn').length }}</strong>
+            <small>WARN</small>
+          </div>
+          <div class="overview-item overview-item--error">
+            <strong>{{ logStore.entries.filter(e => e.level === 'error').length }}</strong>
+            <small>ERROR</small>
+          </div>
+        </BaseCard>
+      </section>
+
+      <section>
+        <h2>筛选</h2>
+        <BaseCard class="filter-card">
+          <label>
+            <span>级别</span>
+            <select v-model="levelFilter">
+              <option value="all">全部级别</option>
+              <option value="debug">DEBUG</option>
+              <option value="info">INFO</option>
+              <option value="warn">WARN</option>
+              <option value="error">ERROR</option>
+            </select>
+          </label>
+          <label>
+            <span>分类</span>
+            <select v-model="tagFilter">
+              <option v-for="t in allTags" :key="t" :value="t">{{ t === 'all' ? '全部分类' : t }}</option>
+            </select>
+          </label>
+          <label>
+            <span>搜索</span>
+            <input v-model="keyword" type="search" placeholder="关键词过滤消息和数据" />
+          </label>
+        </BaseCard>
+      </section>
+
+      <section>
+        <div class="action-row">
+          <button type="button" class="secondary-button" :disabled="!logStore.entries.length" @click="onClear">
+            <Trash2 :size="16" :stroke-width="1.75" />
+            <span>清空</span>
+          </button>
+          <button type="button" class="primary-button" :disabled="!logStore.entries.length" @click="onExport">
+            <Download :size="16" :stroke-width="1.75" />
+            <span>导出 JSON</span>
+          </button>
+        </div>
+        <p v-if="exportHint" class="export-hint">{{ exportHint }}</p>
+      </section>
+
+      <section v-if="filtered.length === 0">
+        <BaseCard class="empty-card">
+          <FileSearch :size="28" :stroke-width="1.5" />
+          <strong>没有匹配的日志</strong>
+          <small>{{ logStore.entries.length ? '调整筛选条件再试试' : '还没有日志记录，去操作一下相关功能吧' }}</small>
+        </BaseCard>
+      </section>
+
+      <section v-else>
+        <h2>日志（{{ filtered.length }} 条）</h2>
+        <div class="log-list">
+          <div v-for="entry in filtered" :key="entry.id" class="log-entry">
+            <div class="log-entry__head">
+              <span :class="LEVEL_META[entry.level].cls">{{ LEVEL_META[entry.level].label }}</span>
+              <span class="tag-chip" title="分类">{{ entry.tag }}</span>
+              <span class="ts">{{ formatTimestamp(entry.timestamp) }}</span>
+            </div>
+            <p class="log-entry__msg">{{ entry.message }}</p>
+            <pre v-if="entry.data && Object.keys(entry.data).length" class="log-entry__data">{{ JSON.stringify(entry.data, null, 2) }}</pre>
+          </div>
+        </div>
+      </section>
+
+      <div class="bottom-pad" />
+    </div>
+  </main>
+</template>
+
+<style scoped>
+.log-page {
+  min-height: 100dvh;
+  background: var(--color-background);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--color-background);
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.content {
+  padding: var(--space-5) var(--page-gutter);
+  display: grid;
+  gap: var(--space-4);
+  max-width: var(--container-max-width);
+  margin: 0 auto;
+}
+
+section {
+  display: grid;
+  gap: var(--space-2);
+}
+section h2 {
+  margin: 0;
+  padding: 0 var(--space-1);
+  font-size: var(--type-section-title-size);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.overview-card {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-2);
+  text-align: center;
+  padding: var(--space-4) var(--space-3);
+}
+.overview-item {
+  display: grid;
+  gap: 2px;
+}
+.overview-item strong {
+  font-size: 22px;
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+.overview-item small {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+.overview-item--debug strong { color: var(--color-text-tertiary); }
+.overview-item--info strong { color: var(--color-primary-600); }
+.overview-item--warn strong { color: #c77700; }
+.overview-item--error strong { color: #c23b3b; }
+
+.filter-card {
+  display: grid;
+  gap: var(--space-3);
+}
+.filter-card label {
+  display: grid;
+  gap: var(--space-1);
+}
+.filter-card label > span {
+  padding: 0 var(--space-1);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.filter-card select,
+.filter-card input {
+  height: 42px;
+  padding: 0 var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  color: var(--color-text-primary);
+  font-size: var(--type-body-size);
+}
+
+.action-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.export-hint {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-card);
+  word-break: break-all;
+}
+
+.primary-button {
+  display: flex;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  color: #fff;
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  background: var(--color-primary-600);
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.primary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.secondary-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: 44px;
+  color: var(--color-text-primary);
+  font-size: var(--type-body-size);
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.secondary-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.empty-card {
+  display: grid;
+  gap: var(--space-2);
+  place-items: center;
+  text-align: center;
+  padding: var(--space-6) var(--space-5);
+  color: var(--color-text-tertiary);
+}
+.empty-card strong {
+  color: var(--color-text-secondary);
+}
+.empty-card small {
+  font-size: 13px;
+}
+
+.log-list {
+  display: grid;
+  gap: var(--space-2);
+}
+.log-entry {
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-lg);
+  display: grid;
+  gap: var(--space-2);
+}
+.log-entry__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.chip {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+.chip--debug { background: #9ea5ad; }
+.chip--info { background: var(--color-primary-600); }
+.chip--warn { background: #c77700; }
+.chip--error { background: #c23b3b; }
+
+.tag-chip {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  background: var(--color-background);
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-divider);
+}
+
+.ts {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.log-entry__msg {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+
+.log-entry__data {
+  margin: 0;
+  padding: var(--space-2);
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bottom-pad {
+  height: calc(env(safe-area-inset-bottom) + 32px);
+}
+
+@media (max-width: 480px) {
+  .overview-card {
+    grid-template-columns: repeat(5, 1fr);
+  }
+  .overview-item strong {
+    font-size: 18px;
+  }
+}
+</style>

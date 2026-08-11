@@ -11,7 +11,7 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "cap:sync": "npm run build && cap sync",
+    "cap:sync": "npm run build && cap sync && node scripts/patch-capacitor-plugins.mjs",
     "android:open": "cap open android"
   },
   "dependencies": {

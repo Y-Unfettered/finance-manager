@@ -23,7 +23,7 @@ import type { IdGenerator } from '@/domain/identity'
 import type { SqliteExecutor } from '@/db/core/types'
 import { AccountRepository } from '@/db/repositories/account-repository'
 import { CategoryRepository } from '@/db/repositories/category-repository'
-import { ImportBatchRepository } from '@/db/repositories/import-batch-repository'
+import { ImportBatchRepository, type ImportBatchRecord } from '@/db/repositories/import-batch-repository'
 import { TransactionRepository } from '@/db/repositories/transaction-repository'
 
 import { parseCsv, detectDelimiter } from './csv-parser'
@@ -175,6 +175,11 @@ export class ImportService {
     const pendingAccountIds = new Map<string, string>() // rawName → 临时 ID
     const pendingCategories: PendingCategoryCreation[] = []
     const pendingCategoryIds = new Map<string, string>() // rawName → 临时 ID
+    const unmatchedAccounts: Array<{
+      rawName: string
+      role: 'source' | 'target'
+      candidates: Array<{ accountId: string; accountName: string }>
+    }> = []
 
     const parsedRows: ParsedImportRow[] = []
     rows.forEach((rawRow, index) => {
@@ -197,6 +202,7 @@ export class ImportService {
           accountByName,
           pendingAccounts,
           pendingAccountIds,
+          unmatchedAccounts,
         )
         collectPendingCategories(
           parsedRow,
@@ -220,6 +226,14 @@ export class ImportService {
       validRows.push(resolved)
     }
 
+    // 5. 检测指纹重复
+    const sourceFingerprint = computeBatchFingerprint(input.fileName, rows)
+    let duplicateWarning: string | undefined
+    const existingBatch = await this.batches.findActiveByFingerprint(input.ledgerId, sourceFingerprint)
+    if (existingBatch) {
+      duplicateWarning = `该文件似乎已经导入过（批次 ${existingBatch.fileName}），是否继续？`
+    }
+
     return {
       fileName: input.fileName,
       source,
@@ -228,9 +242,11 @@ export class ImportService {
       errors,
       duplicates,
       fieldMapping: input.fieldMapping,
-      sourceFingerprint: computeBatchFingerprint(input.fileName, rows),
+      sourceFingerprint,
       pendingAccountCreations: pendingAccounts,
       pendingCategoryCreations: pendingCategories,
+      duplicateWarning,
+      unmatchedAccounts,
     }
   }
 
@@ -311,8 +327,8 @@ export class ImportService {
   }
 
   async checkBatchDuplicate(ledgerId: string, plan: ImportPlan): Promise<boolean> {
-    const existing = await this.batches.findByFingerprint(ledgerId, plan.sourceFingerprint)
-    return Boolean(existing && existing.status === 'active')
+    const existing = await this.batches.findActiveByFingerprint(ledgerId, plan.sourceFingerprint)
+    return Boolean(existing)
   }
 
   async executeImport(input: ExecuteImportInput): Promise<ImportResult> {
@@ -322,18 +338,6 @@ export class ImportService {
         batchId: '',
         successCount: 0,
         duplicateCount: 0,
-        errorCount: plan.errors.length,
-        importedTransactionIds: [],
-        executionErrors: [],
-      }
-    }
-
-    const duplicateBatch = await this.checkBatchDuplicate(ledgerId, plan)
-    if (duplicateBatch) {
-      return {
-        batchId: '',
-        successCount: 0,
-        duplicateCount: plan.validRows.length,
         errorCount: plan.errors.length,
         importedTransactionIds: [],
         executionErrors: [],
@@ -392,6 +396,52 @@ export class ImportService {
       this.ctx.clock.nowIso(),
     )
 
+    if (executionErrors.length > 0) {
+      const validRowsSnapshot = plan.validRows
+        .filter((r) => executionErrors.some((e) => e.rowIndex === r.index))
+        .map((r) => {
+          const d = new Date(r.raw.occurredAt)
+          const y = d.getFullYear()
+          const m = String(d.getMonth() + 1).padStart(2, '0')
+          const day = String(d.getDate()).padStart(2, '0')
+          const hh = String(d.getHours()).padStart(2, '0')
+          const mm = String(d.getMinutes()).padStart(2, '0')
+          return {
+            index: r.index,
+            date: `${y}-${m}-${day}`,
+            time: `${hh}:${mm}`,
+            amountMinor: r.raw.amountMinor,
+            kind: r.raw.kind,
+            sourceAccount: r.raw.sourceAccountName,
+            targetAccount: r.raw.targetAccountName,
+            category: r.raw.categoryName,
+            merchant: r.raw.merchant,
+            note: r.raw.note,
+            sourceTransactionId: r.raw.sourceTransactionId,
+          }
+        })
+      const payload = {
+        executionErrors,
+        preflightErrors: plan.errors,
+        failedValidRows: validRowsSnapshot,
+      }
+      try {
+        await this.batches.saveExecutionErrors(batchId, JSON.stringify(payload))
+      } catch {
+        // 持久化失败详情失败不影响主流程，静默忽略
+      }
+    } else if (plan.errors.length > 0) {
+      // 没有执行阶段错误，但有前验（预览）阶段错误，也存一份，避免 UI 完全看不见
+      try {
+        await this.batches.saveExecutionErrors(
+          batchId,
+          JSON.stringify({ executionErrors: [], preflightErrors: plan.errors, failedValidRows: [] }),
+        )
+      } catch {
+        // 静默忽略
+      }
+    }
+
     return {
       batchId,
       successCount,
@@ -417,12 +467,109 @@ export class ImportService {
     return this.batches.listByLedger(ledgerId)
   }
 
+  async listBatchesWithSummary(ledgerId: string): Promise<
+    Array<{ batch: ImportBatchRecord; summary: string }>
+  > {
+    const batches = await this.batches.listByLedger(ledgerId)
+    const results: Array<{ batch: ImportBatchRecord; summary: string }> = []
+    for (const batch of batches) {
+      let summary = ''
+      try {
+        const items = await this.batches.listBatchActivity(batch.id)
+        const posted = items.filter((i) => i.status === 'posted')
+        const labels = posted.slice(0, 3).map((i) => {
+          const label = i.merchant ?? i.counterparty ?? i.note
+          return label ? label.trim() : ''
+        }).filter((s) => s.length > 0)
+        if (labels.length > 0) {
+          summary = labels.join('、')
+          if (posted.length > 3) {
+            summary += `等 ${posted.length} 笔`
+          }
+        } else if (items.length > 0) {
+          // 没有可读摘要但有交易记录（可能全 void）
+          summary = `${items.length} 笔交易（已撤销）`
+        }
+      } catch (error) {
+        console.error('listBatchesWithSummary detail failed', error)
+      }
+      results.push({ batch, summary })
+    }
+    return results
+  }
+
   async getBatch(batchId: string) {
     return this.batches.findById(batchId)
   }
 
+  async getBatchDetail(ledgerId: string, batchId: string) {
+    const batch = await this.batches.findById(batchId)
+    if (!batch || batch.ledgerId !== ledgerId) {
+      throw new Error('导入批次不存在')
+    }
+    const transactions = await this.batches.listBatchActivity(batchId)
+    let executionErrors: {
+      rowIndex: number
+      message: string
+      row?: Record<string, unknown>
+    }[] = []
+    let preflightErrors: {
+      rowIndex: number
+      message: string
+    }[] = []
+    if (batch.executionErrorsJson) {
+      try {
+        const parsed = JSON.parse(batch.executionErrorsJson) as {
+          executionErrors?: { rowIndex: number; message: string }[]
+          preflightErrors?: { rowIndex: number; message: string }[]
+          failedValidRows?: Array<Record<string, unknown> & { index: number }>
+        }
+        const rowByIndex = new Map<number, Record<string, unknown>>()
+        for (const r of parsed.failedValidRows ?? []) {
+          rowByIndex.set(r.index, r as Record<string, unknown>)
+        }
+        executionErrors = (parsed.executionErrors ?? []).map((e) => ({
+          ...e,
+          row: rowByIndex.get(e.rowIndex),
+        }))
+        preflightErrors = parsed.preflightErrors ?? []
+      } catch {
+        // 解析失败就当没有
+      }
+    }
+    return {
+      batch,
+      transactions,
+      executionErrors,
+      preflightErrors,
+    }
+  }
+
   async listAccountsForMapping(ledgerId: string) {
     return this.accounts.listByLedger(ledgerId)
+  }
+
+  async createAccountForImport(
+    ledgerId: string,
+    name: string,
+    accountType: string = 'platform',
+  ): Promise<string> {
+    const existing = await this.accounts.listByLedger(ledgerId)
+    const match = existing.find((a) => a.name === name)
+    if (match) return match.id
+    const now = this.ctx.clock.nowIso()
+    const record: AccountRecord = {
+      id: this.ctx.ids.next('account'),
+      ledgerId,
+      name,
+      type: accountType as AccountType,
+      normalBalance: normalBalanceForAccountType(accountType as AccountType),
+      currency: 'CNY',
+      createdAt: now,
+      updatedAt: now,
+    }
+    await this.accounts.create(record)
+    return record.id
   }
 
   async listCategoriesForMapping(ledgerId: string) {
@@ -727,6 +874,13 @@ function resolveRow(
       if (!sourceAccountId) {
         return new ErrorRow(`第 ${row.index} 行：未匹配到账户「${row.sourceAccountName}」`)
       }
+    } else {
+      // 账户名缺失：尝试从 accountMap 中查找占位键（用户在预览中选择了账户后生成）
+      const missingKey = `__missing_source_${row.index}__`
+      sourceAccountId = accountMap.get(missingKey)
+      if (!sourceAccountId) {
+        return new ErrorRow(`第 ${row.index} 行：缺少转出账户`)
+      }
     }
     if (row.categoryName) {
       const resolution = categoryMap.get(row.categoryName.trim())
@@ -959,6 +1113,7 @@ function emptyPlan(
     sourceFingerprint: computeBatchFingerprint(fileName, rows),
     pendingAccountCreations: [],
     pendingCategoryCreations: [],
+    unmatchedAccounts: [],
   }
 }
 
@@ -972,6 +1127,11 @@ function collectPendingAccounts(
   existingByName: Map<string, string>,
   pending: PendingAccountCreation[],
   pendingIds: Map<string, string>,
+  unmatchedAccounts: Array<{
+    rawName: string
+    role: 'source' | 'target'
+    candidates: Array<{ accountId: string; accountName: string }>
+  }>,
 ): void {
   const accounts = [
     { rawName: row.sourceAccountName, role: 'source' as const },
@@ -988,26 +1148,53 @@ function collectPendingAccounts(
       accountMap.set(key, existingId)
       continue
     }
-    // 未匹配，用 catalog 推断类型并生成 pending 创建项
-    if (pendingIds.has(key)) continue
-    const catalog = findAccountCatalogItem(key)
-    const isLoanReceivable = row.transferPurpose === 'loan_out' && role === 'target'
-    const tempId = `pending:account:${key}`
-    pendingIds.set(key, tempId)
-    accountMap.set(key, tempId)
-    // 当 rawName 比 catalog.name 更具体时（如"中信银行信用卡"包含"信用卡"），
-    // 用 rawName 作为账户名，保留完整信息
-    const inferredName = isLoanReceivable
-      ? key
-      : key !== catalog.name && key.includes(catalog.name)
-        ? key
-        : catalog.name
-    pending.push({
-      rawName: key,
-      accountType: isLoanReceivable ? 'receivable' : catalog.type,
-      inferredName,
-      institution: isLoanReceivable ? key : catalog.institution,
-    })
+    // 子串匹配：检查 key 与已有账户名是否存在双向子串关系
+    const substringMatches: Array<{ id: string; name: string }> = []
+    for (const [existingName, existingAccountId] of existingByName) {
+      if (key.includes(existingName) || existingName.includes(key)) {
+        substringMatches.push({ id: existingAccountId, name: existingName })
+      }
+    }
+    if (substringMatches.length === 1) {
+      accountMap.set(key, substringMatches[0]!.id)
+      continue
+    }
+    if (substringMatches.length > 1) {
+      unmatchedAccounts.push({
+        rawName: key,
+        role,
+        candidates: substringMatches.map((m) => ({ accountId: m.id, accountName: m.name })),
+      })
+      continue
+    }
+    // 完全未匹配，推入 unmatchedAccounts 让用户在预览中选择
+    // 不再自动创建 pending 账户，避免用户不知道系统偷偷创建了什么
+    if (!pendingIds.has(key)) {
+      // 去重：同一个 rawName 可能出现在多行中
+      const alreadyListed = unmatchedAccounts.some((u) => u.rawName === key)
+      if (!alreadyListed) {
+        unmatchedAccounts.push({
+          rawName: key,
+          role,
+          candidates: [], // 无候选，用户需从所有账户中手动选择
+        })
+      }
+    }
+  }
+
+  // 支出/收入行缺少账户名时，生成占位条目让用户在预览中选择
+  if ((row.kind === 'expense' || row.kind === 'income') && (!row.sourceAccountName || !row.sourceAccountName.trim())) {
+    const missingKey = `__missing_source_${row.index}__`
+    if (!accountMap.has(missingKey) && !pendingIds.has(missingKey)) {
+      const alreadyListed = unmatchedAccounts.some((u) => u.rawName === missingKey)
+      if (!alreadyListed) {
+        unmatchedAccounts.push({
+          rawName: missingKey,
+          role: 'source',
+          candidates: [],
+        })
+      }
+    }
   }
 }
 

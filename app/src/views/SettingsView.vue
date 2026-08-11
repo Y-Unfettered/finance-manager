@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {
+  Bug,
   ChevronRight,
   DatabaseBackup,
   Download,
@@ -49,6 +50,10 @@ const entries = [
   { label: '导入账单', description: '导入历史交易', icon: FileUp, route: 'import' },
   { label: '备份与恢复', description: '完整本地备份', icon: DatabaseBackup, route: 'backup' },
   { label: '导出账单', description: 'CSV 或 JSON', icon: Download, route: 'export' },
+] as const
+
+const debugEntries = [
+  { label: '诊断日志', description: '查看剪贴板检测、导入流程等运行记录', icon: Bug, route: 'app-logs' },
 ] as const
 
 async function load(): Promise<void> {
@@ -161,6 +166,24 @@ onMounted(load)
         <BaseCard class="entry-card">
           <button
             v-for="entry in entries"
+            :key="entry.route"
+            type="button"
+            @click="router.push({ name: entry.route })"
+          >
+            <span class="entry-icon"><component :is="entry.icon" :size="20" /></span>
+            <span
+              ><strong>{{ entry.label }}</strong
+              ><small>{{ entry.description }}</small></span
+            >
+            <ChevronRight :size="19" />
+          </button>
+        </BaseCard>
+      </section>
+      <section>
+        <h2>诊断</h2>
+        <BaseCard class="entry-card">
+          <button
+            v-for="entry in debugEntries"
             :key="entry.route"
             type="button"
             @click="router.push({ name: entry.route })"

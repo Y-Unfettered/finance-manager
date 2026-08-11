@@ -98,6 +98,12 @@ export interface ImportPlan {
   readonly sourceFingerprint: string
   readonly pendingAccountCreations: readonly PendingAccountCreation[]
   readonly pendingCategoryCreations: readonly PendingCategoryCreation[]
+  readonly duplicateWarning?: string
+  readonly unmatchedAccounts: ReadonlyArray<{
+    rawName: string
+    role: 'source' | 'target'
+    candidates: ReadonlyArray<{ accountId: string; accountName: string }>
+  }>
 }
 
 export interface ImportResult {

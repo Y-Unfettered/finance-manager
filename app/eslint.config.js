@@ -29,5 +29,17 @@ export default tseslint.config(
       'no-undef': 'off',
     },
   },
+  {
+    files: ['scripts/**/*.mjs', 'scripts/**/*.js'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        __dirname: 'off',
+        __filename: 'off',
+      },
+    },
+  },
   eslintConfigPrettier,
 )

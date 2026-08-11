@@ -2,23 +2,27 @@ package app.financemanager.local;
 
 import android.graphics.Color;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.TextView;
-
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
-
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {
     private View privacyOverlay;
+    private static final String TAG = "MainActivity";
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // 注册自定义插件：原生剪贴板读取 + onResume 自动检测
+        this.registerPlugin(ClipboardReaderPlugin.class);
+        Log.d(TAG, "onCreate: ClipboardReaderPlugin 已注册");
 
         // 拦截 IME（系统输入法）insets，防止 WebView 内部缩小布局视口。
         // 即使 AndroidManifest 设置了 adjustNothing，WebView 仍会在收到 IME
@@ -64,6 +68,31 @@ public class MainActivity extends BridgeActivity {
         // 窗口重新获得焦点时隐藏遮罩。
         if (privacyOverlay != null) {
             privacyOverlay.setVisibility(hasFocus ? View.GONE : View.VISIBLE);
+        }
+    }
+
+    /**
+     * onResume 时主动触发 Bridge.onResume 通知插件。
+     *
+     * 虽然 BridgeActivity 本身会调用 super.onResume，但部分 Capacitor 版本对
+     * 自定义插件（未通过 capacitor.plugins.json 注册的本地插件）的生命周期分
+     * 发不一致。这里再显式调用一次，确保 ClipboardReaderPlugin.handleOnResume
+     * 必定被触发。两次空触发不影响逻辑（有 lastSeenContent 去重保护）。
+     */
+    @Override
+    public void onResume() {
+        super.onResume();
+        Log.d(TAG, "onResume: 触发 Bridge.onResume");
+        if (getBridge() != null) {
+            getBridge().onResume();
+        }
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        if (getBridge() != null) {
+            getBridge().onPause();
         }
     }
 }

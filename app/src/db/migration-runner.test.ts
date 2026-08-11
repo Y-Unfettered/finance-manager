@@ -15,7 +15,7 @@ describe('database migrations', () => {
     const executor = new NodeSqliteExecutor()
 
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     ])
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([])
 
@@ -65,6 +65,7 @@ describe('database migrations', () => {
       { version: 8 },
       { version: 9 },
       { version: 10 },
+      { version: 11 },
     ])
   })
 
@@ -112,7 +113,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '原有账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '原有账本' },
     ])
@@ -135,7 +136,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '升级账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9, 10])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '升级账本' },
     ])
@@ -220,7 +221,7 @@ describe('database migrations', () => {
     )
 
     // 升级到 v5/v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9, 10])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9, 10, 11])
 
     // 旧数据保留
     const rows = await executor.query<{ id: string; source: string; record_count: number }>(
@@ -291,7 +292,7 @@ describe('database migrations', () => {
     `)
 
     // 升级到 v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9, 10])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9, 10, 11])
 
     // 旧数据保留
     const tx = await executor.query<{ id: string; type: string }>(

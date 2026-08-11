@@ -20,6 +20,7 @@ export interface ImportBatchRecord {
   note: string | null
   createdAt: string
   voidedAt: string | null
+  executionErrorsJson: string | null
 }
 
 export interface CreateImportBatchInput {
@@ -41,6 +42,38 @@ export interface ImportBatchCounters {
   errorCount: number
 }
 
+export interface ImportBatchTransactionItem {
+  id: string
+  transactionId: string
+  type: string
+  amountMinor: number
+  occurredAt: string
+  merchant: string | null
+  counterparty: string | null
+  note: string | null
+  categoryName: string | null
+  primaryAccountName: string | null
+  sourceAccountName: string | null
+  targetAccountName: string | null
+  status: string
+}
+
+interface ImportBatchTransactionRow {
+  id: string
+  transactionId: string
+  type: string
+  amountMinor: number
+  occurredAt: string
+  merchant: string | null
+  counterparty: string | null
+  note: string | null
+  categoryName: string | null
+  primaryAccountName: string | null
+  sourceAccountName: string | null
+  targetAccountName: string | null
+  status: string
+}
+
 const IMPORT_BATCH_SELECT = `
   SELECT
     id,
@@ -57,8 +90,42 @@ const IMPORT_BATCH_SELECT = `
     status,
     note,
     created_at AS createdAt,
-    voided_at AS voidedAt
+    voided_at AS voidedAt,
+    execution_errors_json AS executionErrorsJson
   FROM import_batches
+`
+
+const BATCH_TRANSACTION_SELECT = `
+  SELECT
+    transactions.id AS id,
+    transactions.id AS transactionId,
+    transactions.type,
+    transactions.amount_minor AS amountMinor,
+    transactions.occurred_at AS occurredAt,
+    transactions.merchant,
+    transactions.counterparty,
+    transactions.note,
+    transactions.status,
+    MAX(categories.name) AS categoryName,
+    MAX(CASE
+      WHEN transactions.type NOT IN ('transfer','repayment','loan_out','loan_recovery','borrowing','repay_borrowing')
+        AND accounts.id IS NOT NULL THEN accounts.name
+    END) AS primaryAccountName,
+    MAX(CASE
+      WHEN transactions.type IN ('transfer','repayment','loan_out','loan_recovery','borrowing','repay_borrowing')
+        AND entries.side = 'credit' THEN accounts.name
+    END) AS sourceAccountName,
+    MAX(CASE
+      WHEN transactions.type IN ('transfer','repayment','loan_out','loan_recovery','borrowing','repay_borrowing')
+        AND entries.side = 'debit' THEN accounts.name
+    END) AS targetAccountName
+  FROM transactions
+  LEFT JOIN entries ON entries.transaction_id = transactions.id
+  LEFT JOIN accounts ON accounts.id = entries.account_id
+  LEFT JOIN categories ON categories.id = entries.category_id
+  WHERE transactions.import_batch_id = ?
+  GROUP BY transactions.id
+  ORDER BY transactions.occurred_at DESC, transactions.created_at DESC
 `
 
 export class ImportBatchRepository extends BaseRepository {
@@ -71,8 +138,8 @@ export class ImportBatchRepository extends BaseRepository {
               id, ledger_id, source, file_name, parser_version,
               field_mapping_json, source_fingerprint, record_count,
               success_count, duplicate_count, error_count, status, note,
-              created_at, voided_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'active', ?, ?, NULL)
+              created_at, voided_at, execution_errors_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'active', ?, ?, NULL, NULL)
           `,
           values: [
             input.id,
@@ -108,6 +175,17 @@ export class ImportBatchRepository extends BaseRepository {
     return rows
   }
 
+  async findActiveByFingerprint(
+    ledgerId: string,
+    sourceFingerprint: string,
+  ): Promise<ImportBatchRecord | undefined> {
+    const rows = await this.database.query<ImportBatchRecord>(
+      `${IMPORT_BATCH_SELECT} WHERE ledger_id = ? AND source_fingerprint = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+      [ledgerId, sourceFingerprint],
+    )
+    return rows[0]
+  }
+
   async findByFingerprint(
     ledgerId: string,
     sourceFingerprint: string,
@@ -140,6 +218,25 @@ export class ImportBatchRepository extends BaseRepository {
     void updatedAt
   }
 
+  async saveExecutionErrors(
+    id: string,
+    executionErrorsJson: string,
+  ): Promise<void> {
+    await this.database.executeSet(
+      [
+        {
+          statement: `
+            UPDATE import_batches
+            SET execution_errors_json = ?
+            WHERE id = ?
+          `,
+          values: [executionErrorsJson, id],
+        },
+      ],
+      true,
+    )
+  }
+
   async attachTransaction(
     transactionId: string,
     batchId: string,
@@ -162,6 +259,13 @@ export class ImportBatchRepository extends BaseRepository {
       [batchId],
     )
     return rows.map((row) => row.id)
+  }
+
+  async listBatchActivity(batchId: string): Promise<ImportBatchTransactionItem[]> {
+    const rows = await this.database.query<ImportBatchTransactionRow>(BATCH_TRANSACTION_SELECT, [
+      batchId,
+    ])
+    return rows.map((row) => ({ ...row }))
   }
 
   async voidBatch(batchId: string, voidedAt: string): Promise<string[]> {

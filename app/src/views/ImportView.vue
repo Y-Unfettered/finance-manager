@@ -3,18 +3,24 @@ import {
   AlertCircle,
   CheckCircle2,
   ChevronRight,
+  ClipboardPaste,
+  FileJson,
   FileText,
+  ListChecks,
   Plus,
   RefreshCw,
   Trash2,
   Upload,
+  X,
 } from '@lucide/vue'
-import { computed, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import type { AccountRecord, CategoryRecord } from '@/domain/entities'
+import { getLogger } from '@/features/debug/app-logger'
+import { ClipboardReader, isNativeClipboardAvailable } from '@/features/clipboard/clipboard-reader'
 import { parseCsv } from '@/features/import/csv-parser'
 import { useImportService } from '@/features/import/import-service'
 import type {
@@ -29,13 +35,17 @@ import type {
 } from '@/features/import/import-types'
 import { detectSourceType, parseJson, parseXlsx } from '@/features/import/source-parser'
 import { useAppStore } from '@/stores/app'
+import { useClipboardImportStore } from '@/stores/clipboard-import'
 import { readFileAsArrayBuffer, readFileAsText } from '@/utils/file-io'
 
 const router = useRouter()
 const appStore = useAppStore()
 const importService = useImportService()
+const clipboardImportStore = useClipboardImportStore()
+const log = getLogger('clipboard')
 
-type Step = 'select' | 'mapping' | 'preview' | 'done'
+type Step = 'select' | 'preview' | 'done'
+type InputMode = 'file' | 'paste'
 
 interface FieldOption {
   field: ImportSystemField
@@ -84,12 +94,13 @@ const fieldOptions = computed<readonly FieldOption[]>(() => {
 
 const STEPS: readonly { label: string }[] = [
   { label: '选择' },
-  { label: '映射' },
   { label: '预览' },
   { label: '完成' },
 ]
 
 const step = ref<Step>('select')
+const inputMode = ref<InputMode>('file')
+const pasteText = ref('')
 const fileName = ref('')
 const sourceType = ref<ImportSourceType>('csv')
 const headers = ref<string[]>([])
@@ -105,11 +116,14 @@ const result = ref<ImportResult>()
 const loading = ref(false)
 const saving = ref(false)
 const errorMessage = ref('')
+const clipboardDialog = ref(false)
+const clipboardCandidateCount = ref(0)
+let lastClipboardCheckContent = ''
 
 const isReady = computed(() => Boolean(importService && appStore.ledgerId))
 
 const stepIndex = computed(() => {
-  const map: Record<Step, number> = { select: 1, mapping: 2, preview: 3, done: 4 }
+  const map: Record<Step, number> = { select: 1, preview: 2, done: 3 }
   return map[step.value]
 })
 
@@ -121,6 +135,30 @@ const canPreview = computed(() => fieldMapping.value.date >= 0 && fieldMapping.v
 const visibleErrors = computed(() => (plan.value?.errors ?? []).slice(0, 20))
 const hiddenErrorCount = computed(() => Math.max((plan.value?.errors.length ?? 0) - 20, 0))
 const previewRows = computed(() => (plan.value?.validRows ?? []).slice(0, 5))
+
+// 未匹配账户的用户选择映射
+const unmatchedSelections = ref<Record<string, string>>({})
+// 用户选择「创建新账户」时的新账户名称
+const unmatchedNewAccountNames = ref<Record<string, string>>({})
+
+const hasUnmatchedSelections = computed(() => {
+  if (!plan.value) return false
+  return plan.value.unmatchedAccounts.some(item => {
+    const sel = unmatchedSelections.value[item.rawName]
+    if (sel === '__create_new__') {
+      return Boolean(unmatchedNewAccountNames.value[item.rawName]?.trim())
+    }
+    return Boolean(sel)
+  })
+})
+
+function unmatchedDisplayLabel(item: { rawName: string; role: string }): string {
+  const m = item.rawName.match(/^__missing_source_(\d+)__$/)
+  if (m) {
+    return `第${m[1]}行 · 缺少${item.role === 'source' ? '转出' : '转入'}账户`
+  }
+  return `「${item.rawName}」`
+}
 
 function emptyMapping(): Record<ImportSystemField, number> {
   return {
@@ -278,13 +316,229 @@ async function onFileChange(event: Event): Promise<void> {
     plan.value = undefined
     result.value = undefined
     await loadMappingOptions()
-    step.value = 'mapping'
+    await goToPreview()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
     loading.value = false
   }
 }
+
+function applyParsedResult(
+  parsedHeaders: string[],
+  parsedRows: string[][],
+  parsedErrors: string[],
+  source: ImportSourceType,
+  name: string,
+): void {
+  if (parsedHeaders.length === 0) {
+    throw new Error(parsedErrors[0] ?? '解析结果为空')
+  }
+  fileName.value = name
+  sourceType.value = source
+  headers.value = parsedHeaders
+  rows.value = parsedRows
+  parseErrors.value = parsedErrors
+  fieldMapping.value = autoDetectMapping(parsedHeaders)
+  accountMappings.value = []
+  categoryMappings.value = []
+  plan.value = undefined
+  result.value = undefined
+}
+
+async function onPasteSubmit(): Promise<void> {
+  const text = pasteText.value.trim()
+  if (!text) return
+  if (!importService || !appStore.ledgerId) return
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    const result = parseJson(text)
+    applyParsedResult(result.headers, result.rows, result.errors, 'json', '粘贴导入.json')
+    await loadMappingOptions()
+    await goToPreview()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+async function readFromClipboard(): Promise<string | null> {
+  // 优先使用原生插件（Android ClipboardManager，无权限限制）
+  if (isNativeClipboardAvailable()) {
+    try {
+      const { value, hasContent } = await ClipboardReader.getText()
+      return hasContent ? value : null
+    } catch {
+      return null
+    }
+  }
+  // Web fallback（浏览器/非原生环境）
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      return await navigator.clipboard.readText()
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+async function onClipboardButton(): Promise<void> {
+  if (!importService || !appStore.ledgerId) return
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    const text = await readFromClipboard()
+    if (!text || !text.trim()) {
+      throw new Error('剪贴板为空')
+    }
+    const result = parseJson(text.trim())
+    applyParsedResult(result.headers, result.rows, result.errors, 'json', '剪贴板导入.json')
+    await loadMappingOptions()
+    await goToPreview()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+interface ClipboardProbeResult {
+  ok: boolean
+  count: number
+  text: string
+}
+
+function probeClipboardJson(text: string): ClipboardProbeResult {
+  const trimmed = text?.trim() ?? ''
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) {
+    return { ok: false, count: 0, text: trimmed }
+  }
+  try {
+    const arr = JSON.parse(trimmed)
+    if (!Array.isArray(arr)) return { ok: false, count: 0, text: trimmed }
+    if (arr.length === 0) return { ok: false, count: 0, text: trimmed }
+    const looksLikeTransaction = arr.some(
+      (item) =>
+        item &&
+        typeof item === 'object' &&
+        !Array.isArray(item) &&
+        ('date' in item || 'amount' in item || 'type' in item),
+    )
+    return { ok: looksLikeTransaction, count: arr.length, text: trimmed }
+  } catch {
+    return { ok: false, count: 0, text: trimmed }
+  }
+}
+
+async function confirmUseClipboard(): Promise<void> {
+  clipboardDialog.value = false
+  if (!importService || !appStore.ledgerId) return
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    const result = parseJson(lastClipboardCheckContent)
+    applyParsedResult(result.headers, result.rows, result.errors, 'json', '剪贴板导入.json')
+    await loadMappingOptions()
+    pasteText.value = lastClipboardCheckContent
+    await goToPreview()
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    loading.value = false
+  }
+}
+
+function dismissClipboardDialog(): void {
+  clipboardDialog.value = false
+}
+
+/**
+ * 进入导入页时检查是否有待处理的剪贴板候选项：
+ * 1. 如果是用户从全局弹窗点「立即导入」跳过来的（clipboardImportStore.current 存在），
+ *    直接消费该候选项，自动跳到映射步骤。
+ * 2. 否则在原生环境下主动读一次剪贴板，检测到交易 JSON 则弹本地确认弹窗。
+ */
+async function checkPendingClipboard(): Promise<void> {
+  if (!importService || !appStore.ledgerId) return
+
+  // 情况1：全局弹窗跳转过来，store 里有候选项
+  if (clipboardImportStore.current) {
+    const candidateText = clipboardImportStore.current.text
+    log.info('checkPendingClipboard: 从 store 消费候选项', {
+      length: candidateText.length,
+      count: clipboardImportStore.current.count,
+    })
+    clipboardImportStore.clear()
+    try {
+      const result = parseJson(candidateText)
+      applyParsedResult(result.headers, result.rows, result.errors, 'json', '剪贴板导入.json')
+      await loadMappingOptions()
+      pasteText.value = candidateText
+      await goToPreview()
+      // 标记为已处理，避免下次 onResume 重复弹
+      await ClipboardReader.markConsumed().catch(() => {})
+      log.info('checkPendingClipboard: store 候选项消费成功，跳 preview')
+      return
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      log.error('checkPendingClipboard: store 候选项 parse 失败', { msg })
+      errorMessage.value = msg
+    }
+  }
+
+  // 情况2：原生环境下主动读剪贴板检测
+  if (!isNativeClipboardAvailable()) {
+    log.debug('checkPendingClipboard: 非原生平台，跳过主动读剪贴板')
+    return
+  }
+  try {
+    const text = await readFromClipboard()
+    if (!text) {
+      log.info('checkPendingClipboard: 主动读剪贴板为空')
+      return
+    }
+    const probe = probeClipboardJson(text)
+    log.info('checkPendingClipboard: 主动 probe 结果', { ok: probe.ok, count: probe.count, head: text.slice(0, 80) })
+    if (!probe.ok) return
+    if (probe.text === lastClipboardCheckContent) {
+      log.debug('checkPendingClipboard: 与上次检测内容一致，跳过')
+      return
+    }
+    lastClipboardCheckContent = probe.text
+    clipboardCandidateCount.value = probe.count
+    clipboardDialog.value = true
+    log.info('checkPendingClipboard: 弹本地确认框', { count: probe.count })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    log.error('checkPendingClipboard: 主动读剪贴板失败', { msg })
+  }
+}
+
+onMounted(() => {
+  if (isReady.value) {
+    checkPendingClipboard()
+  }
+})
+
+// KeepAlive 缓存恢复时重置写入状态。
+// 导入是写入操作，不保留上次的步骤/数据，避免用户再次进入时停留在"完成"页。
+// 首次挂载时 onMounted 已处理初始化，跳过；后续从缓存恢复时重置并重新检查剪贴板。
+// 同时重新加载账户/分类列表，因为用户可能在资产管理/分类管理里改过名称了。
+let isFirstActivation = true
+onActivated(() => {
+  if (isFirstActivation) {
+    isFirstActivation = false
+    return
+  }
+  resetWizard()
+  if (isReady.value) {
+    void loadMappingOptions()
+    checkPendingClipboard()
+  }
+})
 
 async function loadMappingOptions(): Promise<void> {
   if (!importService || !appStore.ledgerId) return
@@ -356,6 +610,50 @@ async function goToPreview(): Promise<void> {
   }
 }
 
+async function applyUnmatchedAndRePreview(): Promise<void> {
+  if (!importService || !appStore.ledgerId || !plan.value) return
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    // 处理「创建新账户」：先创建账户，再建映射
+    const newMappings: AccountNameMapping[] = [...accountMappings.value]
+    for (const item of plan.value.unmatchedAccounts) {
+      const selectedId = unmatchedSelections.value[item.rawName]
+      if (selectedId === '__create_new__') {
+        const newName = unmatchedNewAccountNames.value[item.rawName]?.trim()
+        if (newName) {
+          const createdId = await importService.createAccountForImport(appStore.ledgerId, newName)
+          newMappings.push({ rawName: item.rawName, accountId: createdId })
+          // 刷新账户列表，让后续预览能看到新账户
+          await loadMappingOptions()
+        }
+      } else if (selectedId) {
+        newMappings.push({ rawName: item.rawName, accountId: selectedId })
+      }
+    }
+    accountMappings.value = newMappings
+    unmatchedSelections.value = {}
+    unmatchedNewAccountNames.value = {}
+    // 重新预览
+    const built = await importService.previewRows({
+      ledgerId: appStore.ledgerId,
+      fileName: fileName.value,
+      source: sourceType.value,
+      headers: headers.value,
+      rows: rows.value,
+      parseErrors: parseErrors.value,
+      fieldMapping: buildFieldMappings(),
+      accountMappings: buildAccountMappings(),
+      categoryMappings: buildCategoryMappings(),
+    })
+    plan.value = built
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    loading.value = false
+  }
+}
+
 async function confirmImport(): Promise<void> {
   if (!importService || !appStore.ledgerId || !plan.value || saving.value) return
   saving.value = true
@@ -384,6 +682,8 @@ function resetWizard(): void {
   fieldMapping.value = emptyMapping()
   accountMappings.value = []
   categoryMappings.value = []
+  unmatchedSelections.value = {}
+  unmatchedNewAccountNames.value = {}
   plan.value = undefined
   result.value = undefined
   errorMessage.value = ''
@@ -457,151 +757,115 @@ function goToBatches(): void {
       <div v-if="!isReady" class="page-state">数据未就绪，请先选择账本。</div>
 
       <template v-else>
-        <!-- 步骤 1：选择文件 -->
+        <!-- 步骤 1：选择文件 / 粘贴文本 -->
         <template v-if="step === 'select'">
           <BaseCard class="hint-card">
             <div class="hint-card__title">
               <FileText :size="20" :stroke-width="1.75" />
-              <span>选择账单文件</span>
+              <span>导入账单</span>
             </div>
             <p class="hint-card__desc">
-              支持 Excel（.xlsx/.xls）、CSV、JSON 三种格式，首行为表头。必填列：日期、金额。
+              支持选文件或直接粘贴豆包输出的 JSON。必填列：日期、金额。
             </p>
           </BaseCard>
 
-          <label class="file-button" :class="{ 'file-button--loading': loading }">
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls,.json,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/json"
-              hidden
-              :disabled="loading"
-              @change="onFileChange"
-            />
-            <Upload :size="18" :stroke-width="1.75" />
-            <span>{{ loading ? '正在读取…' : '选择账单文件' }}</span>
-          </label>
-
-          <div v-if="errorMessage" class="page-state page-state--error">
-            {{ errorMessage }}
-          </div>
-        </template>
-
-        <!-- 步骤 2：字段与名称映射 -->
-        <template v-else-if="step === 'mapping'">
-          <BaseCard class="block-card">
-            <h2 class="block-card__title">字段映射</h2>
-            <p class="block-card__hint">为每个系统字段选择对应的列。</p>
-            <div class="mapping-list">
-              <div
-                v-for="option in fieldOptions"
-                :key="option.field"
-                class="mapping-row mapping-row--field"
-              >
-                <span class="mapping-row__label">
-                  {{ option.label }}
-                  <em v-if="option.required" class="mapping-row__required">*</em>
-                </span>
-                <select v-model.number="fieldMapping[option.field]">
-                  <option :value="-1">不导入</option>
-                  <option v-for="(header, index) in headers" :key="index" :value="index">
-                    {{ header }}
-                  </option>
-                </select>
-              </div>
-            </div>
-          </BaseCard>
-
-          <BaseCard class="block-card">
-            <h2 class="block-card__title">账户映射</h2>
-            <p class="block-card__hint">将 CSV 中的账户名映射到已有账户（可选）。</p>
-            <div
-              v-for="(mapping, index) in accountMappings"
-              :key="index"
-              class="mapping-row mapping-row--pair"
-            >
-              <input v-model="mapping.rawName" placeholder="CSV 中的账户名" maxlength="40" />
-              <select v-model="mapping.accountId">
-                <option value="" disabled>选择账户</option>
-                <option v-for="account in accounts" :key="account.id" :value="account.id">
-                  {{ account.name }}
-                </option>
-              </select>
-              <button
-                type="button"
-                class="icon-button"
-                aria-label="删除账户映射"
-                @click="removeAccountMapping(index)"
-              >
-                <Trash2 :size="18" :stroke-width="1.75" />
-              </button>
-            </div>
-            <button type="button" class="add-row-button" @click="addAccountMapping">
-              <Plus :size="16" :stroke-width="1.75" />添加账户映射
-            </button>
-          </BaseCard>
-
-          <BaseCard class="block-card">
-            <h2 class="block-card__title">分类映射</h2>
-            <p class="block-card__hint">将 CSV 中的分类名映射到已有分类（可选）。</p>
-            <div
-              v-for="(mapping, index) in categoryMappings"
-              :key="index"
-              class="mapping-row mapping-row--pair"
-            >
-              <input v-model="mapping.rawName" placeholder="CSV 中的分类名" maxlength="40" />
-              <select v-model="mapping.categoryId">
-                <option value="" disabled>选择分类</option>
-                <optgroup v-if="expenseCategories.length" label="支出">
-                  <option
-                    v-for="category in expenseCategories"
-                    :key="category.id"
-                    :value="category.id"
-                  >
-                    {{ category.name }}
-                  </option>
-                </optgroup>
-                <optgroup v-if="incomeCategories.length" label="收入">
-                  <option
-                    v-for="category in incomeCategories"
-                    :key="category.id"
-                    :value="category.id"
-                  >
-                    {{ category.name }}
-                  </option>
-                </optgroup>
-              </select>
-              <button
-                type="button"
-                class="icon-button"
-                aria-label="删除分类映射"
-                @click="removeCategoryMapping(index)"
-              >
-                <Trash2 :size="18" :stroke-width="1.75" />
-              </button>
-            </div>
-            <button type="button" class="add-row-button" @click="addCategoryMapping">
-              <Plus :size="16" :stroke-width="1.75" />添加分类映射
-            </button>
-          </BaseCard>
-
-          <div v-if="errorMessage" class="page-state page-state--error">
-            {{ errorMessage }}
-          </div>
-
-          <div class="actions">
-            <button type="button" class="secondary-button" @click="resetWizard">返回</button>
+          <div class="mode-tabs" role="tablist">
             <button
               type="button"
-              class="primary-button"
-              :disabled="!canPreview || loading"
-              @click="goToPreview"
+              class="mode-tabs__item"
+              :class="{ 'mode-tabs__item--active': inputMode === 'file' }"
+              role="tab"
+              :aria-selected="inputMode === 'file'"
+              @click="inputMode = 'file'"
             >
-              {{ loading ? '正在预览…' : '下一步：预览' }}
+              <Upload :size="16" :stroke-width="1.75" />
+              <span>选择文件</span>
+            </button>
+            <button
+              type="button"
+              class="mode-tabs__item"
+              :class="{ 'mode-tabs__item--active': inputMode === 'paste' }"
+              role="tab"
+              :aria-selected="inputMode === 'paste'"
+              @click="inputMode = 'paste'"
+            >
+              <FileJson :size="16" :stroke-width="1.75" />
+              <span>粘贴 JSON</span>
             </button>
           </div>
+
+          <template v-if="inputMode === 'file'">
+            <label class="file-button" :class="{ 'file-button--loading': loading }">
+              <input
+                type="file"
+                accept=".csv,.xlsx,.xls,.json,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/json"
+                hidden
+                :disabled="loading"
+                @change="onFileChange"
+              />
+              <Upload :size="18" :stroke-width="1.75" />
+              <span>{{ loading ? '正在读取…' : '选择账单文件' }}</span>
+            </label>
+
+            <button
+              type="button"
+              class="secondary-paste-button"
+              :disabled="loading"
+              @click="onClipboardButton"
+            >
+              <ClipboardPaste :size="18" :stroke-width="1.75" />
+              <span>{{ loading ? '正在读取…' : '从剪贴板读取' }}</span>
+            </button>
+          </template>
+
+          <template v-else>
+            <textarea
+              v-model="pasteText"
+              class="paste-textarea"
+              placeholder='粘贴豆包输出的 JSON，例如：&#10;[{"date":"2026-08-09","type":"expense","amount":"35.34","sourceAccount":"支付宝","category":"医疗"}]'
+              rows="10"
+            />
+            <div class="paste-actions">
+              <button
+                type="button"
+                class="secondary-paste-button"
+                :disabled="loading"
+                @click="onClipboardButton"
+              >
+                <ClipboardPaste :size="18" :stroke-width="1.75" />
+                <span>{{ loading ? '正在读取…' : '从剪贴板粘贴' }}</span>
+              </button>
+              <button
+                type="button"
+                class="primary-button"
+                :disabled="!pasteText.trim() || loading"
+                @click="onPasteSubmit"
+              >
+                <FileJson :size="18" :stroke-width="1.75" />
+                <span>{{ loading ? '解析中…' : '解析 JSON' }}</span>
+              </button>
+            </div>
+          </template>
+
+          <div v-if="errorMessage" class="page-state page-state--error">
+            {{ errorMessage }}
+          </div>
+
+          <BaseCard class="history-entry-card">
+            <button type="button" class="history-entry-card__btn" @click="goToBatches">
+              <span class="history-entry-card__icon">
+                <ListChecks :size="18" :stroke-width="1.75" />
+              </span>
+              <span class="history-entry-card__label">
+                <strong>查看历史批次</strong>
+                <small>查看过去导入的记录，撤销或排查问题</small>
+              </span>
+              <ChevronRight :size="16" :stroke-width="1.75" class="history-entry-card__chev" />
+            </button>
+          </BaseCard>
         </template>
 
-        <!-- 步骤 3：预览 -->
+        <!-- 步骤 2：预览 -->
         <template v-else-if="step === 'preview'">
           <BaseCard v-if="plan" class="stats-card" variant="summary">
             <div class="stats-grid">
@@ -622,6 +886,53 @@ function goToBatches(): void {
                 <small>重复</small>
               </div>
             </div>
+          </BaseCard>
+
+          <BaseCard v-if="plan?.duplicateWarning" class="block-card" variant="summary">
+            <div class="duplicate-warning">
+              <AlertCircle :size="18" :stroke-width="1.75" />
+              <span>{{ plan.duplicateWarning }}</span>
+            </div>
+          </BaseCard>
+
+          <!-- 未匹配的账户修正 -->
+          <BaseCard v-if="plan && plan.unmatchedAccounts.length > 0" class="block-card">
+            <h2 class="block-card__title">需要确认的账户</h2>
+            <p class="block-card__hint">以下账户在系统中没有找到，请选择它们对应的已有账户，或创建新账户。</p>
+            <div v-for="item in plan.unmatchedAccounts" :key="item.rawName" class="unmatched-row">
+              <div class="unmatched-row__label">
+                <span class="unmatched-row__name">{{ unmatchedDisplayLabel(item) }}</span>
+                <span class="unmatched-row__role">{{ item.role === 'source' ? '转出账户' : '转入账户' }}</span>
+              </div>
+              <div class="unmatched-row__right">
+                <select v-model="unmatchedSelections[item.rawName]" class="unmatched-row__select">
+                  <option value="" disabled>请选择对应账户</option>
+                  <optgroup v-if="item.candidates.length > 0" label="推荐匹配">
+                    <option v-for="candidate in item.candidates" :key="candidate.accountId" :value="candidate.accountId">
+                      {{ candidate.accountName }}
+                    </option>
+                  </optgroup>
+                  <optgroup label="所有账户">
+                    <option v-for="account in accounts" :key="account.id" :value="account.id">
+                      {{ account.name }}
+                    </option>
+                  </optgroup>
+                  <optgroup label="其他">
+                    <option value="__create_new__">+ 创建新账户</option>
+                  </optgroup>
+                </select>
+                <input
+                  v-if="unmatchedSelections[item.rawName] === '__create_new__'"
+                  v-model="unmatchedNewAccountNames[item.rawName]"
+                  type="text"
+                  class="unmatched-row__new-name"
+                  placeholder="输入新账户名称"
+                />
+              </div>
+            </div>
+            <button type="button" class="add-row-button" :disabled="!hasUnmatchedSelections" @click="applyUnmatchedAndRePreview">
+              <RefreshCw :size="16" :stroke-width="1.75" />重新检查
+            </button>
           </BaseCard>
 
           <BaseCard
@@ -691,9 +1002,9 @@ function goToBatches(): void {
               type="button"
               class="secondary-button"
               :disabled="saving"
-              @click="step = 'mapping'"
+              @click="resetWizard"
             >
-              返回调整
+              返回重新选择
             </button>
             <button
               v-if="plan && plan.validRows.length > 0"
@@ -707,7 +1018,7 @@ function goToBatches(): void {
           </div>
         </template>
 
-        <!-- 步骤 4：完成 -->
+        <!-- 步骤 3：完成 -->
         <template v-else-if="step === 'done'">
           <BaseCard class="done-card" variant="summary">
             <CheckCircle2 :size="40" :stroke-width="1.5" class="done-card__icon" />
@@ -754,6 +1065,40 @@ function goToBatches(): void {
           </div>
         </template>
       </template>
+    </div>
+
+    <!-- 剪贴板自动检测弹窗 -->
+    <div v-if="clipboardDialog" class="dialog-overlay" role="dialog" aria-modal="true">
+      <BaseCard class="dialog-card">
+        <button
+          type="button"
+          class="dialog-card__close"
+          aria-label="关闭"
+          @click="dismissClipboardDialog"
+        >
+          <X :size="18" :stroke-width="1.75" />
+        </button>
+        <div class="dialog-card__icon">
+          <ClipboardPaste :size="36" :stroke-width="1.5" />
+        </div>
+        <strong class="dialog-card__title">检测到待导入账单</strong>
+        <p class="dialog-card__desc">
+          剪贴板中有 <em>{{ clipboardCandidateCount }}</em> 条交易记录，是否立即导入？
+        </p>
+        <div class="dialog-card__actions">
+          <button type="button" class="secondary-button" @click="dismissClipboardDialog">
+            暂不导入
+          </button>
+          <button
+            type="button"
+            class="primary-button"
+            :disabled="loading"
+            @click="confirmUseClipboard"
+          >
+            {{ loading ? '解析中…' : '立即导入' }}
+          </button>
+        </div>
+      </BaseCard>
     </div>
   </main>
 </template>
@@ -1138,5 +1483,261 @@ function goToBatches(): void {
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-pill);
   cursor: pointer;
+}
+
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  padding: var(--space-1);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-pill);
+}
+.mode-tabs__item {
+  display: flex;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  color: var(--color-text-secondary);
+  font-size: var(--type-label-size);
+  font-weight: 500;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.mode-tabs__item--active {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  background: var(--color-primary-50);
+}
+
+.secondary-paste-button {
+  display: flex;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  color: var(--color-text-primary);
+  font-size: var(--type-body-size);
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.secondary-paste-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.history-entry-card {
+  padding: 0;
+  overflow: hidden;
+}
+.history-entry-card__btn {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.history-entry-card__icon {
+  display: grid;
+  flex: none;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  color: var(--color-primary-600);
+  background: var(--color-primary-50);
+  border-radius: var(--radius-pill);
+}
+.history-entry-card__label {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+.history-entry-card__label strong {
+  color: var(--color-text-primary);
+  font-size: var(--type-body-size);
+  font-weight: 600;
+}
+.history-entry-card__label small {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+.history-entry-card__chev {
+  flex: none;
+  color: var(--color-text-quaternary);
+}
+
+.paste-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: var(--space-3);
+  color: var(--color-text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-lg);
+  outline: 0;
+  resize: vertical;
+}
+.paste-textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.paste-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: var(--page-gutter);
+  background: rgba(20, 22, 24, 0.45);
+  backdrop-filter: blur(2px);
+}
+.dialog-card {
+  position: relative;
+  width: 100%;
+  max-width: 360px;
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  display: grid;
+  gap: var(--space-3);
+  place-items: center;
+  text-align: center;
+}
+.dialog-card__close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  color: var(--color-text-tertiary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+.dialog-card__icon {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  color: var(--color-primary-600);
+  background: var(--color-primary-50);
+  border-radius: 50%;
+}
+.dialog-card__title {
+  font-size: var(--type-section-title-size);
+  font-weight: 600;
+}
+.dialog-card__desc {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}
+.dialog-card__desc em {
+  color: var(--color-primary-600);
+  font-style: normal;
+  font-weight: 700;
+}
+.dialog-card__actions {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.duplicate-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--color-warning, #f0a030);
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-line);
+}
+.duplicate-warning svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.unmatched-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--color-divider);
+}
+.unmatched-row:first-child {
+  border-top: 0;
+}
+.unmatched-row__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: 8px;
+}
+.unmatched-row__name {
+  color: var(--color-text-primary);
+  font-weight: 600;
+  font-size: var(--type-body-size);
+}
+.unmatched-row__role {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  padding: 2px 6px;
+  background: var(--color-background);
+  border-radius: var(--radius-pill);
+}
+.unmatched-row__right {
+  display: grid;
+  gap: var(--space-2);
+}
+.unmatched-row__select {
+  width: 100%;
+  height: 40px;
+  padding: 0 var(--space-3);
+  color: var(--color-text-primary);
+  font-size: var(--type-body-size);
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  outline: 0;
+}
+.unmatched-row__new-name {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-3);
+  color: var(--color-text-primary);
+  font-size: var(--type-body-size);
+  background: var(--color-background);
+  border: 1px solid var(--color-primary-300);
+  border-radius: var(--radius-control);
+  outline: 0;
+}
+.unmatched-row__new-name::placeholder {
+  color: var(--color-text-tertiary);
 }
 </style>

@@ -9,6 +9,7 @@ import { APP_SETTINGS_V7_MIGRATION } from './007_app_settings_v7'
 import { BUDGET_TEMPLATES_REMINDERS_V8_MIGRATION } from './008_budget_templates_reminders_v8'
 import { USABILITY_REBUILD_V9_MIGRATION } from './009_usability_rebuild_v9'
 import { TRANSACTION_DISCOUNTS_V10_MIGRATION } from './010_transaction_discounts_v10'
+import { IMPORT_BATCH_ERRORS_V11_MIGRATION } from './011_import_batch_errors_v11'
 
 export const APP_MIGRATIONS: readonly Migration[] = [
   INITIAL_SCHEMA_MIGRATION,
@@ -21,5 +22,6 @@ export const APP_MIGRATIONS: readonly Migration[] = [
   BUDGET_TEMPLATES_REMINDERS_V8_MIGRATION,
   USABILITY_REBUILD_V9_MIGRATION,
   TRANSACTION_DISCOUNTS_V10_MIGRATION,
+  IMPORT_BATCH_ERRORS_V11_MIGRATION,
 ]
-export const LATEST_SCHEMA_VERSION = TRANSACTION_DISCOUNTS_V10_MIGRATION.version
+export const LATEST_SCHEMA_VERSION = IMPORT_BATCH_ERRORS_V11_MIGRATION.version

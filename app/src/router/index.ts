@@ -15,6 +15,7 @@ import PinSetupView from '@/views/PinSetupView.vue'
 import BillsView from '@/views/BillsView.vue'
 import CategoryManagementView from '@/views/CategoryManagementView.vue'
 import LedgerView from '@/views/LedgerView.vue'
+import LogView from '@/views/LogView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import AccountStatisticsView from '@/views/AccountStatisticsView.vue'
 import AccountIconManagementView from '@/views/AccountIconManagementView.vue'
@@ -74,6 +75,11 @@ const router = createRouter({
       path: '/settings/account-icons',
       name: 'account-icons',
       component: AccountIconManagementView,
+    },
+    {
+      path: '/settings/logs',
+      name: 'app-logs',
+      component: LogView,
     },
     { path: '/categories', name: 'categories', component: CategoryManagementView },
     {

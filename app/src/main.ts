@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
 import App from './App.vue'
+import { installGlobalPinia } from '@/features/debug/app-logger'
 import { initializeFinanceDatabase, requireFinanceDatabase } from './db/bootstrap'
 import { FinanceService, financeServiceKey } from './features/finance/finance-service'
 import { BackupService, backupServiceKey } from './features/backup/backup-service'
@@ -32,6 +33,7 @@ import './design-system/global.css'
 async function bootstrap(): Promise<void> {
   const app = createApp(App)
   const pinia = createPinia()
+  installGlobalPinia(pinia)
   app
     .use(pinia)
     .use(router)
