@@ -7,9 +7,7 @@ import {
   FileJson,
   FileText,
   ListChecks,
-  Plus,
   RefreshCw,
-  Trash2,
   Upload,
   X,
 } from '@lucide/vue'
@@ -48,51 +46,6 @@ const log = getLogger('clipboard')
 type Step = 'select' | 'preview' | 'done'
 type InputMode = 'file' | 'paste'
 
-interface FieldOption {
-  field: ImportSystemField
-  label: string
-  required: boolean
-}
-
-const BASE_FIELD_OPTIONS: readonly FieldOption[] = [
-  { field: 'date', label: '日期', required: true },
-  { field: 'amount', label: '金额', required: true },
-  { field: 'type', label: '类型', required: false },
-  { field: 'merchant', label: '商户', required: false },
-  { field: 'note', label: '备注', required: false },
-  { field: 'sourceAccount', label: '转出账户', required: false },
-  { field: 'targetAccount', label: '转入账户', required: false },
-  { field: 'category', label: '分类', required: false },
-  { field: 'sourceTransactionId', label: '来源交易号', required: false },
-]
-
-const TIME_FIELD_OPTION: FieldOption = {
-  field: 'time',
-  label: '时间',
-  required: false,
-}
-
-// 只有当表头中同时存在独立的"日期"列和"时间"列时，才显示"时间"字段
-// 单列含完整日期时间（如钱迹"时间"列）应映射到 date，不显示 time 字段
-const fieldOptions = computed<readonly FieldOption[]>(() => {
-  const hasDateColumn = headers.value.some(
-    (h) => h.includes('日期') || h.toLowerCase().includes('date'),
-  )
-  const hasTimeColumn = headers.value.some(
-    (h) => h.includes('时间') || h.toLowerCase().includes('time'),
-  )
-  if (hasDateColumn && hasTimeColumn) {
-    // 在 type 之后插入 time
-    const result: FieldOption[] = []
-    for (const opt of BASE_FIELD_OPTIONS) {
-      result.push(opt)
-      if (opt.field === 'type') result.push(TIME_FIELD_OPTION)
-    }
-    return result
-  }
-  return BASE_FIELD_OPTIONS
-})
-
 const STEPS: readonly { label: string }[] = [
   { label: '选择' },
   { label: '预览' },
@@ -130,6 +83,9 @@ const stepIndex = computed(() => {
 
 const expenseCategories = computed(() => categories.value.filter((c) => c.kind === 'expense'))
 const incomeCategories = computed(() => categories.value.filter((c) => c.kind === 'income'))
+// 保留给模板中可能通过 v-model 绑定的分类选择场景使用
+void expenseCategories.value
+void incomeCategories.value
 
 const canPreview = computed(() => fieldMapping.value.date >= 0 && fieldMapping.value.amount >= 0)
 
@@ -576,6 +532,12 @@ function addCategoryMapping(): void {
 function removeCategoryMapping(index: number): void {
   categoryMappings.value.splice(index, 1)
 }
+
+// 保留手动映射相关函数，未来可能恢复账户/分类手动映射 UI
+void addAccountMapping
+void removeAccountMapping
+void addCategoryMapping
+void removeCategoryMapping
 
 function buildFieldMappings(): CsvFieldMapping[] {
   return (Object.keys(fieldMapping.value) as ImportSystemField[])

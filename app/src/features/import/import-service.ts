@@ -1159,8 +1159,12 @@ function collectPendingAccounts(
       continue
     }
     // 子串匹配：检查 key 与已有账户名是否存在双向子串关系
+    // 例外：还款场景生成的 "XXX信用卡" 不应与原始借记卡 "XXX" 视为同一账户
     const substringMatches: Array<{ id: string; name: string }> = []
     for (const [existingName, existingAccountId] of existingByName) {
+      if (key === existingName) continue
+      const isCreditCardSuffix = key.endsWith('信用卡') && key.slice(0, -3) === existingName
+      if (isCreditCardSuffix) continue
       if (key.includes(existingName) || existingName.includes(key)) {
         substringMatches.push({ id: existingAccountId, name: existingName })
       }
@@ -1177,33 +1181,46 @@ function collectPendingAccounts(
       })
       continue
     }
-    // 完全未匹配，推入 unmatchedAccounts 让用户在预览中选择
-    // 不再自动创建 pending 账户，避免用户不知道系统偷偷创建了什么
+    // 完全未匹配，根据上下文和 account catalog 推断类型并生成 pending 创建项
     if (!pendingIds.has(key)) {
-      // 去重：同一个 rawName 可能出现在多行中
-      const alreadyListed = unmatchedAccounts.some((u) => u.rawName === key)
-      if (!alreadyListed) {
-        unmatchedAccounts.push({
-          rawName: key,
-          role,
-          candidates: [], // 无候选，用户需从所有账户中手动选择
-        })
+      const catalog = findAccountCatalogItem(key)
+      const tempId = `pending:account:${key}`
+      pendingIds.set(key, tempId)
+      let accountType = catalog.type
+      // 借出款的转入方应为应收/借出账户
+      if (role === 'target' && row.transferPurpose === 'loan_out') {
+        accountType = 'receivable'
       }
+      // 还款场景自动生成的 "XXX信用卡" 目标账户应为信用账户
+      if (key.endsWith('信用卡') && row.kind === 'transfer') {
+        accountType = 'credit_card'
+      }
+      pending.push({
+        rawName: key,
+        accountType,
+        inferredName: key,
+        institution: catalog.institution,
+      })
+      accountMap.set(key, tempId)
+    } else {
+      accountMap.set(key, pendingIds.get(key)!)
     }
   }
 
-  // 支出/收入行缺少账户名时，生成占位条目让用户在预览中选择
+  // 支出/收入行缺少账户名时，生成占位 pending 账户以便预览/导入继续
   if ((row.kind === 'expense' || row.kind === 'income') && (!row.sourceAccountName || !row.sourceAccountName.trim())) {
     const missingKey = `__missing_source_${row.index}__`
     if (!accountMap.has(missingKey) && !pendingIds.has(missingKey)) {
-      const alreadyListed = unmatchedAccounts.some((u) => u.rawName === missingKey)
-      if (!alreadyListed) {
-        unmatchedAccounts.push({
-          rawName: missingKey,
-          role: 'source',
-          candidates: [],
-        })
-      }
+      const tempId = `pending:account:${missingKey}`
+      pendingIds.set(missingKey, tempId)
+      pending.push({
+        rawName: missingKey,
+        accountType: 'platform',
+        inferredName: '未指定账户',
+      })
+      accountMap.set(missingKey, tempId)
+    } else {
+      accountMap.set(missingKey, pendingIds.get(missingKey)!)
     }
   }
 }

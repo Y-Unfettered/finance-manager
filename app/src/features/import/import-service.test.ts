@@ -234,10 +234,10 @@ describe('ImportService.executeImport', () => {
     const first = await service.executeImport({ ledgerId: ledger.id, plan })
     expect(first.successCount).toBe(1)
 
-    const second = await service.executeImport({ ledgerId: ledger.id, plan })
-    expect(second.successCount).toBe(0)
-    expect(second.duplicateCount).toBe(1)
-    expect(second.batchId).toBe('')
+    // 同一文件指纹不允许重复导入
+    await expect(service.executeImport({ ledgerId: ledger.id, plan })).rejects.toThrow(
+      '该数据已在此前导入过',
+    )
   })
 
   it('records error rows without aborting the batch', async () => {
