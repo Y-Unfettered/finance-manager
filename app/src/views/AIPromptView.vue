@@ -114,7 +114,7 @@ watch(
         </button>
       </BaseCard>
 
-      <BaseCard class="prompt-card" v-if="!loading">
+      <BaseCard v-if="!loading" class="prompt-card">
         <pre class="prompt-text">{{ promptText }}</pre>
       </BaseCard>
 

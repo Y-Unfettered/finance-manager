@@ -107,6 +107,7 @@ export interface ImportPlan {
   readonly unmatchedAccounts: ReadonlyArray<{
     rawName: string
     role: 'source' | 'target'
+    kind?: 'income' | 'expense' | 'transfer'
     candidates: ReadonlyArray<{ accountId: string; accountName: string }>
   }>
 }

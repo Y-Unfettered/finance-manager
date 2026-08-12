@@ -17,6 +17,15 @@ defineEmits<{ settings: [] }>()
 
 const chartContainer = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
+let tooltipTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleTooltipHide(): void {
+  if (tooltipTimer) clearTimeout(tooltipTimer)
+  tooltipTimer = setTimeout(() => {
+    chart?.dispatchAction({ type: 'hideTooltip' })
+    tooltipTimer = null
+  }, 2000)
+}
 
 const showIncome = computed(() => props.displayType === 'income_expense')
 
@@ -123,13 +132,25 @@ function handleResize(): void {
   chart?.resize()
 }
 
+function handleChartInteraction(): void {
+  scheduleTooltipHide()
+}
+
 onMounted(() => {
   nextTick(renderChart)
   window.addEventListener('resize', handleResize)
+  chartContainer.value?.addEventListener('click', handleChartInteraction)
+  chartContainer.value?.addEventListener('touchstart', handleChartInteraction)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
+  chartContainer.value?.removeEventListener('click', handleChartInteraction)
+  chartContainer.value?.removeEventListener('touchstart', handleChartInteraction)
+  if (tooltipTimer) {
+    clearTimeout(tooltipTimer)
+    tooltipTimer = null
+  }
   chart?.dispose()
   chart = null
 })

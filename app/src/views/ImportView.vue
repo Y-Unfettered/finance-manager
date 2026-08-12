@@ -96,12 +96,6 @@ void incomeCategories.value
 
 const canPreview = computed(() => fieldMapping.value.date >= 0 && fieldMapping.value.amount >= 0)
 
-const canImport = computed(() => {
-  if (!plan.value) return false
-  if (plan.value.duplicateWarning) return false
-  return plan.value.validRows.length > 0
-})
-
 const visibleErrors = computed(() => (plan.value?.errors ?? []).slice(0, 20))
 const hiddenErrorCount = computed(() => Math.max((plan.value?.errors.length ?? 0) - 20, 0))
 const previewRows = computed(() => (plan.value?.validRows ?? []).slice(0, 5))
@@ -126,12 +120,19 @@ const hasUnmatchedSelections = computed(() => {
   })
 })
 
-function unmatchedDisplayLabel(item: { rawName: string; role: string }): string {
+function unmatchedDisplayLabel(item: { rawName: string; role: string; kind?: 'income' | 'expense' | 'transfer' }): string {
   const m = item.rawName.match(/^__missing_source_(\d+)__$/)
   if (m) {
-    return `第${m[1]}行 · 缺少${item.role === 'source' ? '转出' : '转入'}账户`
+    const label = item.kind === 'income' ? '入账' : (item.kind === 'expense' ? '付款' : (item.role === 'source' ? '转出' : '转入'))
+    return `第${m[1]}行 · 缺少${label}账户`
   }
   return `「${item.rawName}」`
+}
+
+function unmatchedRoleLabel(item: { role: string; kind?: 'income' | 'expense' | 'transfer' }): string {
+  if (item.kind === 'income') return item.role === 'source' ? '入账账户' : '收款账户'
+  if (item.kind === 'expense') return item.role === 'source' ? '付款账户' : '收款账户'
+  return item.role === 'source' ? '转出账户' : '转入账户'
 }
 
 // 账户选择弹窗：打开时设置当前操作的 unmatched item
@@ -143,16 +144,6 @@ function openAccountPicker(rawName: string): void {
 function closeAccountPicker(): void {
   showAccountPicker.value = false
   activeUnmatchedRawName.value = ''
-}
-
-// 计算当前选中账户的显示文本
-function accountPickerDisplayLabel(): string {
-  if (!activeUnmatchedRawName.value) return ''
-  const sel = unmatchedSelections.value[activeUnmatchedRawName.value]
-  if (!sel) return '请选择对应账户'
-  if (sel === '__create_new__') return '+ 创建新账户'
-  const acct = accounts.value.find(a => a.id === sel)
-  return acct ? acct.name : sel
 }
 
 function onAccountPickerConfirm(val: { selectedOptions: { text: string; value: string }[] }): void {
@@ -204,66 +195,94 @@ function emptyMapping(): Record<ImportSystemField, number> {
 
 function autoDetectMapping(headersList: string[]): Record<ImportSystemField, number> {
   const mapping = emptyMapping()
-  // 先检测是否存在独立的"日期"列
+  const exact = new Map<string, ImportSystemField>()
+  exact.set('date', 'date')
+  exact.set('time', 'time')
+  exact.set('amount', 'amount')
+  exact.set('type', 'type')
+  exact.set('merchant', 'merchant')
+  exact.set('note', 'note')
+  exact.set('sourceAccount', 'sourceAccount')
+  exact.set('targetAccount', 'targetAccount')
+  exact.set('source_account', 'sourceAccount')
+  exact.set('target_account', 'targetAccount')
+  exact.set('category', 'category')
+  exact.set('sourceTransactionId', 'sourceTransactionId')
+  exact.set('source_transaction_id', 'sourceTransactionId')
+  exact.set('transactionId', 'sourceTransactionId')
+  exact.set('transaction_id', 'sourceTransactionId')
+  exact.set('id', 'sourceTransactionId')
+
   const hasDateColumn = headersList.some(
     (h) => h.includes('日期') || h.toLowerCase().includes('date'),
   )
+
   headersList.forEach((header, index) => {
-    const lower = header.toLowerCase()
-    // 日期：优先"日期"，无"日期"列时将"时间"也映射到 date（parseDate 支持完整日期时间）
+    const trimmed = header.trim()
+    const lower = trimmed.toLowerCase()
+
+    // 1. 精确匹配英文字段名（驼峰 / snake_case），优先级最高
+    if (mapping.date < 0 && exact.get(trimmed) === 'date') { mapping.date = index; return }
+    if (mapping.time < 0 && exact.get(trimmed) === 'time') { mapping.time = index; return }
+    if (mapping.amount < 0 && exact.get(trimmed) === 'amount') { mapping.amount = index; return }
+    if (mapping.type < 0 && exact.get(trimmed) === 'type') { mapping.type = index; return }
+    if (mapping.merchant < 0 && exact.get(trimmed) === 'merchant') { mapping.merchant = index; return }
+    if (mapping.note < 0 && exact.get(trimmed) === 'note') { mapping.note = index; return }
+    if (mapping.sourceAccount < 0 && exact.get(trimmed) === 'sourceAccount') { mapping.sourceAccount = index; return }
+    if (mapping.targetAccount < 0 && exact.get(trimmed) === 'targetAccount') { mapping.targetAccount = index; return }
+    if (mapping.category < 0 && exact.get(trimmed) === 'category') { mapping.category = index; return }
+    if (mapping.sourceTransactionId < 0 && exact.get(trimmed) === 'sourceTransactionId') { mapping.sourceTransactionId = index; return }
+
+    // 2. 中文表头匹配
     if (mapping.date < 0) {
-      if (header.includes('日期') || lower.includes('date')) {
+      if (trimmed.includes('日期') || lower.includes('date')) {
         mapping.date = index
         return
       }
-      if (!hasDateColumn && (header.includes('时间') || lower.includes('time'))) {
+      if (!hasDateColumn && (trimmed.includes('时间') || lower.includes('time'))) {
         mapping.date = index
         return
       }
     }
-    // 时间：仅当存在独立"日期"列时才映射
-    if (mapping.time < 0 && hasDateColumn && (header.includes('时间') || lower.includes('time'))) {
+    if (mapping.time < 0 && hasDateColumn && (trimmed.includes('时间') || lower.includes('time'))) {
       mapping.time = index
       return
     }
-    if (mapping.amount < 0 && (header.includes('金额') || lower.includes('amount'))) {
+    if (mapping.amount < 0 && (trimmed.includes('金额') || lower.includes('amount'))) {
       mapping.amount = index
       return
     }
-    if (mapping.type < 0 && (header.includes('类型') || lower.includes('type'))) {
+    if (mapping.type < 0 && (trimmed.includes('类型') || lower.includes('type'))) {
       mapping.type = index
       return
     }
-    if (mapping.merchant < 0 && (header.includes('商户') || lower.includes('merchant'))) {
+    if (mapping.merchant < 0 && (trimmed.includes('商户') || lower.includes('merchant'))) {
       mapping.merchant = index
       return
     }
-    if (mapping.note < 0 && (header.includes('备注') || lower.includes('note'))) {
+    if (mapping.note < 0 && (trimmed.includes('备注') || lower.includes('note'))) {
       mapping.note = index
       return
     }
-    // 账户：账户1/转出/付款 → source，账户2/转入/收款 → target
-    if (mapping.sourceAccount < 0 && isSourceAccountHeader(header, lower)) {
+    if (mapping.sourceAccount < 0 && isSourceAccountHeader(trimmed, lower)) {
       mapping.sourceAccount = index
       return
     }
-    if (mapping.targetAccount < 0 && isTargetAccountHeader(header, lower)) {
+    if (mapping.targetAccount < 0 && isTargetAccountHeader(trimmed, lower)) {
       mapping.targetAccount = index
       return
     }
-    // 通用账户 → source（兜底）
-    if (mapping.sourceAccount < 0 && (header.includes('账户') || lower.includes('account'))) {
+    if (mapping.sourceAccount < 0 && (trimmed.includes('账户') || lower.includes('account'))) {
       mapping.sourceAccount = index
       return
     }
-    if (mapping.category < 0 && (header.includes('分类') || lower.includes('category'))) {
+    if (mapping.category < 0 && (trimmed.includes('分类') || lower.includes('category'))) {
       mapping.category = index
       return
     }
-    // 交易号/ID → sourceTransactionId（防重复导入）
     if (
       mapping.sourceTransactionId < 0 &&
-      (lower === 'id' || header.includes('交易号') || lower.includes('transaction id'))
+      (trimmed.includes('交易号') || lower.includes('transaction id') || lower === 'transactionid')
     ) {
       mapping.sourceTransactionId = index
       return
@@ -694,6 +713,16 @@ async function applyUnmatchedAndRePreview(): Promise<void> {
 
 async function confirmImport(): Promise<void> {
   if (!importService || !appStore.ledgerId || !plan.value || saving.value) return
+  const unresolved = plan.value.unmatchedAccounts.filter(
+    (item) => !unmatchedSelections.value[item.rawName],
+  )
+  if (unresolved.length > 0) {
+    errorMessage.value =
+      '还有未确认的账户（' +
+      unresolved.map((u) => unmatchedDisplayLabel(u)).join('、') +
+      '），请先在上方"需要确认的账户"中选择对应账户或创建新账户。'
+    return
+  }
   saving.value = true
   errorMessage.value = ''
   try {
@@ -703,7 +732,6 @@ async function confirmImport(): Promise<void> {
     })
     result.value = res
     step.value = 'done'
-    // 导入成功后，如果是剪贴板/粘贴导入，记录指纹防止重复弹窗
     if (pasteText.value) {
       setConsumedFingerprint(pasteText.value)
     }
@@ -1020,7 +1048,7 @@ function goToBatches(): void {
             <div v-for="item in plan.unmatchedAccounts" :key="item.rawName" class="unmatched-row">
               <div class="unmatched-row__label">
                 <span class="unmatched-row__name">{{ unmatchedDisplayLabel(item) }}</span>
-                <span class="unmatched-row__role">{{ item.role === 'source' ? '转出账户' : '转入账户' }}</span>
+                <span class="unmatched-row__role">{{ unmatchedRoleLabel(item) }}</span>
               </div>
               <div class="unmatched-row__right">
                 <VanField

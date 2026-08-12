@@ -215,6 +215,7 @@ export class ImportService {
           pendingAccounts,
           pendingAccountIds,
           unmatchedAccounts,
+          parsedRow.kind,
         )
         collectPendingCategories(
           parsedRow,
@@ -647,7 +648,13 @@ export class ImportService {
 
   private async resolveAccountPostingRef(accountId: string): Promise<AccountPostingRef> {
     const ref = await this.accounts.findPostingRef(accountId)
-    if (!ref) throw new Error(`账户不存在：${accountId}`)
+    if (!ref) {
+      if (accountId.startsWith('pending:account:')) {
+        const rawName = accountId.slice('pending:account:'.length)
+        throw new Error(`目标账户"${rawName}"不在账户列表中，请先在导入预览中选择对应的账户，或在设置中创建该账户。`)
+      }
+      throw new Error(`账户不存在：${accountId}`)
+    }
     return ref
   }
 
@@ -940,7 +947,7 @@ function resolveRow(
         return new ErrorRow(`第 ${row.index} 行：缺少转出账户`)
       }
     }
-    if (row.categoryName) {
+    if (row.categoryName && row.categoryName.trim()) {
       const resolution = categoryMap.get(row.categoryName.trim())
       if (!resolution) {
         return new ErrorRow(`第 ${row.index} 行：未匹配到分类「${row.categoryName}」`)
@@ -949,6 +956,9 @@ function resolveRow(
       if (row.typeInferred && (resolution.kind === 'expense' || resolution.kind === 'income')) {
         resolvedKind = resolution.kind
       }
+    } else if (row.categoryName !== undefined) {
+      // 分类字段存在但为空字符串（如钱迹 JSON 的 "category":"")，在预览阶段就报错
+      return new ErrorRow(`第 ${row.index} 行：${row.kind === 'expense' ? '支出' : '收入'}缺少分类，请在预览阶段为该分类选择或创建分类`)
     }
   } else if (row.kind === 'transfer') {
     if (row.sourceAccountName) {
@@ -963,17 +973,15 @@ function resolveRow(
         return new ErrorRow(`第 ${row.index} 行：未匹配到转入账户「${row.targetAccountName}」`)
       }
     }
-    // 转账只有一个账户时，降级为支出/收入
+    // 转账必须有转出和转入两个账户，缺一不可
     if (!sourceAccountId || !targetAccountId) {
       if (!sourceAccountId && !targetAccountId) {
-        return new ErrorRow(`第 ${row.index} 行：缺少账户信息`)
+        return new ErrorRow(`第 ${row.index} 行：转账缺少账户信息`)
       }
-      // 只有一个账户，降级为支出
-      if (!sourceAccountId && targetAccountId) {
-        sourceAccountId = targetAccountId
+      if (!sourceAccountId) {
+        return new ErrorRow(`第 ${row.index} 行：转账缺少转出账户「${row.sourceAccountName || '未知'}」`)
       }
-      targetAccountId = undefined
-      resolvedKind = 'expense'
+      return new ErrorRow(`第 ${row.index} 行：转账缺少转入账户「${row.targetAccountName || '未知'}」`)
     }
     if (sourceAccountId && targetAccountId && sourceAccountId === targetAccountId) {
       return new ErrorRow(`第 ${row.index} 行：转账的转出与转入账户不能相同`)
@@ -1189,8 +1197,10 @@ function collectPendingAccounts(
   unmatchedAccounts: Array<{
     rawName: string
     role: 'source' | 'target'
+    kind?: 'income' | 'expense' | 'transfer'
     candidates: Array<{ accountId: string; accountName: string }>
   }>,
+  rowKind: 'income' | 'expense' | 'transfer',
 ): void {
   const accounts = [
     { rawName: row.sourceAccountName, role: 'source' as const },
@@ -1222,13 +1232,39 @@ function collectPendingAccounts(
       ? []
       : substringMatches
     if (matches.length === 1) {
-      accountMap.set(key, matches[0]!.id)
+      const onlyMatchId = matches[0]!.id
+      // 转账场景：target 子串匹配到和 source 相同的账户时，视为不可靠匹配
+      // 例："余额宝" 是 "支付宝余额" 的子串，但两者是不同账户
+      const sourceId = row.sourceAccountName ? accountMap.get(row.sourceAccountName.trim()) : undefined
+      const isTransferSameAccount =
+        rowKind === 'transfer' &&
+        role === 'target' &&
+        sourceId &&
+        onlyMatchId === sourceId
+      if (!isTransferSameAccount) {
+        accountMap.set(key, onlyMatchId)
+        continue
+      }
+      // 转账 target 匹配到 source 账户 → 不可靠，加入 unmatchedAccounts
+      // 同时加入 pending 临时 ID，让 resolveRow 能解析到该行
+      unmatchedAccounts.push({
+        rawName: key,
+        role,
+        kind: rowKind,
+        candidates: [{ accountId: onlyMatchId, accountName: matches[0]!.name }],
+      })
+      const sameTempId = `pending:account:${key}`
+      if (!pendingIds.has(key)) {
+        pendingIds.set(key, sameTempId)
+        accountMap.set(key, sameTempId)
+      }
       continue
     }
     if (matches.length > 1) {
       unmatchedAccounts.push({
         rawName: key,
         role,
+        kind: rowKind,
         candidates: matches.map((m) => ({ accountId: m.id, accountName: m.name })),
       })
       continue
@@ -1260,6 +1296,7 @@ function collectPendingAccounts(
       unmatchedAccounts.push({
         rawName: key,
         role,
+        kind: rowKind,
         candidates: [], // 无候选，用户需从所有账户中手动选择
       })
     }
@@ -1276,6 +1313,7 @@ function collectPendingAccounts(
         unmatchedAccounts.push({
           rawName: missingKey,
           role: 'source',
+          kind: row.kind,
           candidates: [],
         })
       }
