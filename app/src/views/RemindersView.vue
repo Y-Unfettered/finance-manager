@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
+import AppSwitch from '@/components/AppSwitch.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
@@ -407,9 +408,11 @@ onMounted(load)
           <span>提前几天提醒</span>
           <input v-model="form.advanceDays" type="number" min="0" max="60" required />
         </label>
-        <label class="form-row form-row--inline">
-          <input v-model="form.enabled" type="checkbox" />
-          <span>启用此提醒</span>
+        <label class="form-row form-row--switch">
+          <AppSwitch
+            v-model="form.enabled"
+            label="启用此提醒"
+          />
         </label>
         <div v-if="errorMessage" class="form-error">{{ errorMessage }}</div>
         <div class="form-actions">
@@ -623,12 +626,29 @@ onMounted(load)
 }
 .form-row input,
 .form-row select {
+  width: 100%;
   padding: var(--space-2) var(--space-3);
   font-size: var(--type-body-size);
   color: var(--color-text-primary);
   background: var(--color-surface);
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-sm);
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color 0.15s;
+}
+
+.form-row select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+
+.form-row input:focus,
+.form-row select:focus {
+  border-color: var(--color-primary-500);
 }
 .form-row--inline {
   grid-auto-flow: column;
@@ -639,6 +659,14 @@ onMounted(load)
 .form-row--inline input {
   width: 20px;
   height: 20px;
+}
+.form-row--switch {
+  padding-top: var(--space-1);
+}
+.form-row--switch :deep(.app-switch-row) {
+  padding: var(--space-2) 0;
+  min-height: auto;
+  border-top: none;
 }
 .form-error {
   color: var(--color-expense);
