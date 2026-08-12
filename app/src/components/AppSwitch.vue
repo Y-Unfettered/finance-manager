@@ -1,5 +1,5 @@
 <template>
-  <div class="app-switch-row" @click.stop="toggle">
+  <div class="app-switch-row" :class="`app-switch-row--${variant}`" @click.stop="toggle">
     <span class="app-switch-row__label">
       <strong>{{ label }}</strong>
       <small v-if="description">{{ description }}</small>
@@ -22,10 +22,12 @@ const props = withDefaults(defineProps<{
   label?: string
   description?: string
   disabled?: boolean
+  variant?: 'row' | 'inline'
 }>(), {
   label: '',
   description: '',
-  disabled: false
+  disabled: false,
+  variant: 'row'
 })
 
 const emit = defineEmits<{
@@ -107,5 +109,12 @@ function toggle() {
 
 .app-switch--on .app-switch__slider {
   transform: translateX(20px);
+}
+
+.app-switch-row--inline {
+  padding: 0;
+  min-height: 40px;
+  border-top: 0;
+  gap: var(--space-2);
 }
 </style>

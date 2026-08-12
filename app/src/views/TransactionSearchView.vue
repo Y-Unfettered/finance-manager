@@ -3,9 +3,14 @@ import { ChevronDown, Filter, Search, X } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
+import AppSwitch from '@/components/AppSwitch.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import DatePicker from '@/components/DatePicker.vue'
+import ListPickerSheet from '@/components/ListPickerSheet.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import OptionSelector, { type OptionItem } from '@/components/OptionSelector.vue'
+import SearchInput from '@/components/SearchInput.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
 import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
 import type { AccountBalanceRecord } from '@/domain/entities'
@@ -36,7 +41,7 @@ interface FilterFormState {
   includeVoid: boolean
 }
 
-const TYPE_LABELS: { value: TransactionType; label: string }[] = [
+const TYPE_OPTIONS: OptionItem[] = [
   { value: 'expense', label: '支出' },
   { value: 'income', label: '收入' },
   { value: 'transfer', label: '转账' },
@@ -48,6 +53,10 @@ const TYPE_LABELS: { value: TransactionType; label: string }[] = [
   { value: 'repayment', label: '信用卡还款' },
   { value: 'refund', label: '退款' },
 ]
+
+function typeLabel(type: TransactionType): string {
+  return TYPE_OPTIONS.find((t) => t.value === type)?.label ?? type
+}
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -67,6 +76,11 @@ const showDetail = ref(false)
 
 const showFilter = ref(true)
 const form = ref<FilterFormState>(defaultForm())
+
+const showStartDatePicker = ref(false)
+const showEndDatePicker = ref(false)
+const showAccountPicker = ref(false)
+const showCategoryPicker = ref(false)
 
 function defaultForm(): FilterFormState {
   return {
@@ -185,10 +199,6 @@ function onCategoryKindChange(): void {
   form.value.categoryId = ''
 }
 
-function typeLabel(type: TransactionType): string {
-  return TYPE_LABELS.find((t) => t.value === type)?.label ?? type
-}
-
 function formatDateTime(iso: string): string {
   const date = new Date(iso)
   const pad = (n: number): string => String(n).padStart(2, '0')
@@ -241,72 +251,89 @@ useRefreshOnActivated(async () => {
         <form v-if="showFilter" class="filter-form" @submit.prevent="runSearch">
           <label class="form-row">
             <span>关键词</span>
-            <input
+            <SearchInput
               v-model="form.keyword"
-              type="search"
-              maxlength="40"
+              :maxlength="40"
               placeholder="商户、备注、对方"
             />
           </label>
           <div class="form-row form-row--double">
-            <label>
+            <label class="form-field">
               <span>开始日期</span>
-              <input v-model="form.startDate" type="date" />
+              <button type="button" class="form-field__trigger" @click="showStartDatePicker = true">
+                <span>{{ form.startDate || '选择日期' }}</span>
+                <ChevronDown :size="14" :stroke-width="2" aria-hidden="true" />
+              </button>
             </label>
-            <label>
+            <label class="form-field">
               <span>结束日期</span>
-              <input v-model="form.endDate" type="date" />
+              <button type="button" class="form-field__trigger" @click="showEndDatePicker = true">
+                <span>{{ form.endDate || '选择日期' }}</span>
+                <ChevronDown :size="14" :stroke-width="2" aria-hidden="true" />
+              </button>
             </label>
           </div>
-          <label class="form-row">
+          <label class="form-field">
             <span>账户</span>
-            <select v-model="form.accountId">
-              <option value="">全部账户</option>
-              <option v-for="a in accounts" :key="a.id" :value="a.id">{{ a.name }}</option>
-            </select>
+            <button type="button" class="form-field__trigger" @click="showAccountPicker = true">
+              <span>{{ form.accountId ? (accounts.find((a) => a.id === form.accountId)?.name ?? form.accountId) : '全部账户' }}</span>
+              <ChevronDown :size="14" :stroke-width="2" aria-hidden="true" />
+            </button>
           </label>
-          <label class="form-row">
+          <label class="form-field">
             <span>分类类型</span>
-            <select v-model="form.categoryKind" @change="onCategoryKindChange">
-              <option value="">不按分类筛选</option>
-              <option value="expense">支出分类</option>
-              <option value="income">收入分类</option>
-            </select>
+            <OptionSelector
+              v-model="form.categoryKind"
+              :options="[
+                { value: 'expense', label: '支出分类' },
+                { value: 'income', label: '收入分类' },
+              ]"
+              placeholder="不按分类筛选"
+              @update:model-value="onCategoryKindChange"
+            />
           </label>
-          <label v-if="form.categoryKind" class="form-row">
+          <label v-if="form.categoryKind" class="form-field">
             <span>分类</span>
-            <select v-model="form.categoryId">
-              <option value="">
-                全部{{ form.categoryKind === 'expense' ? '支出' : '收入' }}分类
-              </option>
-              <option v-for="c in currentCategoryOptions" :key="c.id" :value="c.id">
-                {{ c.name }}
-              </option>
-            </select>
+            <button type="button" class="form-field__trigger" @click="showCategoryPicker = true">
+              <span>{{ form.categoryId ? (currentCategoryOptions.find((c) => c.id === form.categoryId)?.name ?? form.categoryId) : `全部${form.categoryKind === 'expense' ? '支出' : '收入'}分类` }}</span>
+              <ChevronDown :size="14" :stroke-width="2" aria-hidden="true" />
+            </button>
           </label>
-          <label class="form-row">
+          <label class="form-field">
             <span>交易类型</span>
-            <select v-model="form.type">
-              <option value="">全部类型</option>
-              <option v-for="t in TYPE_LABELS" :key="t.value" :value="t.value">
-                {{ t.label }}
-              </option>
-            </select>
+            <OptionSelector
+              v-model="form.type"
+              :options="TYPE_OPTIONS"
+              placeholder="全部类型"
+            />
           </label>
           <div class="form-row form-row--double">
-            <label>
+            <label class="form-field">
               <span>最小金额</span>
-              <input v-model="form.minAmount" type="text" inputmode="decimal" placeholder="0.00" />
+              <input
+                v-model="form.minAmount"
+                type="text"
+                inputmode="decimal"
+                placeholder="0.00"
+                class="form-field__input"
+              />
             </label>
-            <label>
+            <label class="form-field">
               <span>最大金额</span>
-              <input v-model="form.maxAmount" type="text" inputmode="decimal" placeholder="0.00" />
+              <input
+                v-model="form.maxAmount"
+                type="text"
+                inputmode="decimal"
+                placeholder="0.00"
+                class="form-field__input"
+              />
             </label>
           </div>
-          <label class="form-row form-row--inline">
-            <input v-model="form.includeVoid" type="checkbox" />
-            <span>包含已撤销交易</span>
-          </label>
+          <AppSwitch
+            v-model="form.includeVoid"
+            label="包含已撤销交易"
+            variant="inline"
+          />
           <div v-if="errorMessage" class="form-error">{{ errorMessage }}</div>
           <div class="filter-actions">
             <button type="button" class="ghost" @click="resetFilters">
@@ -337,7 +364,7 @@ useRefreshOnActivated(async () => {
           <span>调整筛选条件后再试。</span>
         </div>
         <section v-for="group in groupedResults" :key="group.date" class="result-group">
-          <h3>{{ group.date }}</h3>
+          <h3 class="result-group__title">{{ group.date }}</h3>
           <BaseCard
             v-for="item in group.items"
             :key="item.id"
@@ -368,6 +395,36 @@ useRefreshOnActivated(async () => {
         <span>支持按关键词、日期、账户、分类、金额等多维度筛选流水。</span>
       </div>
     </div>
+
+    <DatePicker
+      :show="showStartDatePicker"
+      :initial-date="form.startDate"
+      @update:show="showStartDatePicker = $event"
+      @select="(date) => { form.startDate = date }"
+    />
+    <DatePicker
+      :show="showEndDatePicker"
+      :initial-date="form.endDate"
+      @update:show="showEndDatePicker = $event"
+      @select="(date) => { form.endDate = date }"
+    />
+    <ListPickerSheet
+      :show="showAccountPicker"
+      title="选择账户"
+      :options="accounts.map((a) => ({ value: a.id, label: a.name }))"
+      :model-value="form.accountId"
+      @update:show="showAccountPicker = $event"
+      @update:model-value="form.accountId = $event"
+    />
+    <ListPickerSheet
+      :show="showCategoryPicker"
+      :title="`选择${form.categoryKind === 'expense' ? '支出' : '收入'}分类`"
+      :options="currentCategoryOptions.map((c) => ({ value: c.id, label: c.name }))"
+      :model-value="form.categoryId"
+      @update:show="showCategoryPicker = $event"
+      @update:model-value="form.categoryId = $event"
+    />
+
     <TransactionDetailSheet
       :show="showDetail"
       :transaction-id="activeTransactionId"
@@ -455,44 +512,63 @@ useRefreshOnActivated(async () => {
   gap: var(--space-3);
   border-top: 1px solid var(--color-divider);
 }
-.form-row {
+
+.form-field {
   display: grid;
   min-width: 0;
   gap: 6px;
   font-size: var(--type-caption-size);
   color: var(--color-text-secondary);
 }
-.form-row input,
-.form-row select {
+
+.form-field__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
   width: 100%;
   min-width: 0;
-  padding: var(--space-2) var(--space-3);
+  min-height: 40px;
+  padding: var(--space-1) var(--space-3);
   font-size: var(--type-body-size);
   color: var(--color-text-primary);
-  background: var(--color-surface);
+  background: var(--color-background);
   border: 1px solid var(--color-divider);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-control);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: border-color var(--motion-fast) var(--ease-standard);
 }
+
+.form-field__trigger:active {
+  border-color: var(--color-primary-500);
+  background: var(--color-primary-50);
+}
+
+.form-field__input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--type-body-size);
+  color: var(--color-text-primary);
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+  outline: none;
+  transition: border-color var(--motion-fast) var(--ease-standard);
+}
+
+.form-field__input:focus {
+  border-color: var(--color-primary-500);
+}
+
+.form-field__input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
 .form-row--double {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
-}
-.form-row--double label {
-  display: grid;
-  min-width: 0;
-  gap: 6px;
-  font-size: var(--type-caption-size);
-  color: var(--color-text-secondary);
-}
-.form-row--inline {
-  grid-auto-flow: column;
-  justify-content: start;
-  align-items: center;
-  gap: var(--space-2);
-}
-.form-row--inline input {
-  width: 20px;
-  height: 20px;
 }
 .form-error {
   color: var(--color-expense);
@@ -536,7 +612,7 @@ useRefreshOnActivated(async () => {
   display: grid;
   gap: var(--space-2);
 }
-.result-group h3 {
+.result-group__title {
   margin: var(--space-2) var(--space-2) 0;
   color: var(--color-text-secondary);
   font-size: var(--type-caption-size);
