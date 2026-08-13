@@ -30,8 +30,10 @@ public class GenericNotificationAdapter implements NotificationParserAdapter {
     @Override
     public CapturedPaymentInfo parse(String title, String text, String packageName) {
         String combined = (title != null ? title : "") + " " + (text != null ? text : "");
+        // 通用关键词放宽：包含以下任意一个即认为可能是支付相关通知
         if (!combined.contains("支付") && !combined.contains("付款") && !combined.contains("成功")
-                && !combined.contains("消费")) return null;
+                && !combined.contains("消费") && !combined.contains("收款")
+                && !combined.contains("到账")) return null;
 
         CapturedPaymentInfo info = new CapturedPaymentInfo();
         info.setSourcePackage(this.packageName);

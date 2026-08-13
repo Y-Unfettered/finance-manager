@@ -80,10 +80,21 @@ public class PaymentCapturePlugin extends Plugin {
         }
         ret.put("notification", notification);
 
-        // OCR 状态：ML Kit 可用
+        // OCR 状态：真实检测 ML Kit TextRecognizer 是否可用
         JSObject ocr = new JSObject();
-        ocr.put("enabled", true);
-        ocr.put("status", "available");
+        try {
+            com.google.mlkit.vision.text.TextRecognizer recognizer =
+                    com.google.mlkit.vision.text.TextRecognition.getClient(
+                            new com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions.Builder().build());
+            ocr.put("enabled", true);
+            ocr.put("status", "available");
+            recognizer.close();
+        } catch (Exception e) {
+            Log.w(TAG, "getServiceHealth: OCR 不可用", e);
+            ocr.put("enabled", false);
+            ocr.put("status", "error");
+            ocr.put("errorMessage", e.getMessage());
+        }
         ret.put("ocr", ocr);
 
         // 捕获队列待确认条数

@@ -37,7 +37,23 @@ export async function runMigrations(
     }
 
     const recordSql = `INSERT INTO schema_migrations (version, name, applied_at) VALUES (${migration.version}, '${escapeSqlText(migration.name)}', '${escapeSqlText(now())}');`
-    await database.execute(`${migration.statements}\n${recordSql}`, true)
+
+    // Split migration SQL by PRAGMA statements. PRAGMAs must run outside
+    // transactions (SQLite defers them until COMMIT), while other SQL runs
+    // in a transaction for atomicity.
+    const parts = splitByPragma(migration.statements)
+    const dataCount = parts.filter((p) => p.type === 'data').length
+    let dataIndex = 0
+
+    for (const part of parts) {
+      if (part.type === 'pragma') {
+        await database.execute(part.statement, false)
+      } else {
+        dataIndex += 1
+        const withRecord = dataIndex === dataCount ? part.statement + '\n' + recordSql : part.statement
+        await database.execute(withRecord, true)
+      }
+    }
     newlyApplied.push(migration.version)
   }
 
@@ -85,4 +101,53 @@ function parseVersion(value: unknown): number {
 
 function escapeSqlText(value: string): string {
   return value.replaceAll("'", "''")
+}
+
+/**
+ * Split migration SQL into blocks, separating PRAGMA statements from other SQL.
+ * PRAGMA statements must run outside transactions (SQLite defers them until
+ * COMMIT), while other SQL runs in a transaction for atomicity.
+ *
+ * Example input:
+ *   "PRAGMA foreign_keys = OFF;\nCREATE TABLE x(...);\nPRAGMA foreign_keys = ON;"
+ *
+ * Output: [{type:'pragma', statement:'PRAGMA foreign_keys = OFF;'},
+ *          {type:'data', statement:'CREATE TABLE x(...);'},
+ *          {type:'pragma', statement:'PRAGMA foreign_keys = ON;'}]
+ */
+function splitByPragma(sql: string): Array<{ type: 'pragma'; statement: string } | { type: 'data'; statement: string }> {
+  const parts: Array<{ type: 'pragma'; statement: string } | { type: 'data'; statement: string }> = []
+  let buffer = ''
+  let type: 'pragma' | 'data' | null = null
+
+  function flush() {
+    const trimmed = buffer.trim()
+    if (trimmed.length > 0) {
+      parts.push({ type: type as 'pragma' | 'data', statement: trimmed })
+    }
+    buffer = ''
+  }
+
+  const lines = sql.split('\n')
+  for (const raw of lines) {
+    const line = raw.trim()
+    if (line.length === 0 || line.startsWith('--')) {
+      buffer += raw + '\n'
+      continue
+    }
+
+    const isPragma = /^\s*PRAGMA\b/i.test(line)
+
+    if (type === null) {
+      type = isPragma ? 'pragma' : 'data'
+    } else if (type !== (isPragma ? 'pragma' : 'data')) {
+      flush()
+      type = isPragma ? 'pragma' : 'data'
+    }
+
+    buffer += raw + '\n'
+  }
+  flush()
+
+  return parts
 }

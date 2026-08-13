@@ -31,7 +31,9 @@ public class WechatNotificationAdapter implements NotificationParserAdapter {
     @Override
     public CapturedPaymentInfo parse(String title, String text, String packageName) {
         String combined = (title != null ? title : "") + " " + (text != null ? text : "");
-        if (!combined.contains("支付") && !combined.contains("付款")) return null;
+        // 微信关键词放宽：包含以下任意一个即认为可能是支付相关通知
+        if (!combined.contains("支付") && !combined.contains("付款") && !combined.contains("成功")
+                && !combined.contains("收款")) return null;
 
         CapturedPaymentInfo info = new CapturedPaymentInfo();
         info.setSourcePackage(getPackageName());

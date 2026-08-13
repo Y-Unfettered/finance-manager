@@ -2,6 +2,7 @@ interface AIImportAccount {
   name: string
   type: string
   normalBalance: 'debit' | 'credit'
+  id: string
 }
 
 interface AIImportCategory {
@@ -20,7 +21,6 @@ export function generatePromptTemplate(
   )
   const assetAccounts = accounts.filter((a) => !creditAccounts.includes(a))
 
-  const fmtList = (items: readonly string[]) => items.join('、')
   const fmtCats = (cats: readonly AIImportCategory[]): string => {
     const top = cats.filter((c) => !c.parentId)
     return top
@@ -44,8 +44,10 @@ export function generatePromptTemplate(
 - merchant: 商户名，没有就 ""（选填）
 - note: 备注，没有就 ""（选填）
 - sourceAccount: 资金流出的账户（你自己的账户），必须从清单选（必填）。对 expense=扣钱的账户，对 income=钱进来的账户，对 transfer=转出账户，对 repayment=还款来源账户
+- accountId: 资金流出的账户ID，必须从账户清单括号中选取（必填）
 - merchant: 交易对方/商户名称（选填）。如消费商家、转账来源/目标方名、工资发方公司等，填名称即可
 - targetAccount: 仅转账/还款时填你的目标账户（转入的账户），必须从清单选；其他类型留 ""
+- targetAccountId: 仅转账/还款时填你的目标账户ID，必须从账户清单括号中选取；其他类型留 ""
 - category: 分类名，必须从清单选。转账/还款留空 ""，选不出用 "其它"（支出）或 ""（收入）
 - sourceTransactionId: 唯一标识，优先用截图订单号；没有就拼接"金额-日期-商户-账户"
 
@@ -58,9 +60,11 @@ repayment: 给信用账户还款，需填 sourceAccount（来源）和 targetAcc
 refund: 消费退款，退到原账户
 判断依据是付款方式不是消费内容。
 
-[账户清单（sourceAccount/targetAccount 只能选这些）]
-资产：${fmtList(assetAccounts.map((a) => a.name)) || '（无）'}
-信用：${fmtList(creditAccounts.map((a) => a.name)) || '（无）'}
+[账户清单（sourceAccount/targetAccount 只能选这些，括号内为账户ID）]
+资产：
+${assetAccounts.map((a) => `  - ${a.name}（${a.id}）`).join('\n') || '  （无）'}
+信用：
+${creditAccounts.map((a) => `  - ${a.name}（${a.id}）`).join('\n') || '  （无）'}
 截图付款账户不在清单则留空 sourceAccount，在 note 写明真实账户名。
 
 [分类清单]
@@ -91,13 +95,13 @@ category 类型必须和 type 匹配。支出类交易选支出分类，收入�
 [示例]
 以下示例覆盖常见场景（普通消费、平台奖励收入、内部转账、他人转账、工资到账），请参照格式：
 [
-  {"date":"2026-08-11","time":"12:30","type":"expense","amount":"25.00","merchant":"美团外卖","note":"午餐","sourceAccount":"支付宝余额","targetAccount":"","category":"三餐","sourceTransactionId":"20260811123025美团外卖"},
-  {"date":"2026-08-10","time":"10:52","type":"income","amount":"0.12","merchant":"京东支付","note":"笔笔返现-订单返现","sourceAccount":"支付宝余额","targetAccount":"","category":"红包","sourceTransactionId":"202608101052380.12京东支付"},
-  {"date":"2026-08-12","time":"03:20","type":"transfer","amount":"0.11","merchant":"","note":"余额宝-自动转入","sourceAccount":"支付宝余额","targetAccount":"余额宝","category":"","sourceTransactionId":"202608120320480.11"},
-  {"date":"2026-08-12","time":"01:56","type":"income","amount":"0.11","merchant":"淘宝（中国）软件有限公司","note":"淘宝签到提现","sourceAccount":"支付宝余额","targetAccount":"","category":"红包","sourceTransactionId":"202608120156350.11"},
-  {"date":"2026-08-11","time":"18:30","type":"income","amount":"100.00","merchant":"张三","note":"朋友转账-聚餐AA","sourceAccount":"微信零钱","targetAccount":"","category":"其它","sourceTransactionId":"202608111830100张三"},
-  {"date":"2026-08-10","time":"09:00","type":"income","amount":"15000.00","merchant":"XX科技有限公司","note":"8月工资","sourceAccount":"工商银行卡","targetAccount":"","category":"工资","sourceTransactionId":"20260810090015000XX科技"}
+  {"date":"2026-08-11","time":"12:30","type":"expense","amount":"25.00","merchant":"美团外卖","note":"午餐","sourceAccount":"支付宝余额","accountId":"acc_xxx1","targetAccount":"","targetAccountId":"","category":"三餐","sourceTransactionId":"20260811123025美团外卖"},
+  {"date":"2026-08-10","time":"10:52","type":"income","amount":"0.12","merchant":"京东支付","note":"笔笔返现-订单返现","sourceAccount":"支付宝余额","accountId":"acc_xxx2","targetAccount":"","targetAccountId":"","category":"红包","sourceTransactionId":"202608101052380.12京东支付"},
+  {"date":"2026-08-12","time":"03:20","type":"transfer","amount":"0.11","merchant":"","note":"余额宝-自动转入","sourceAccount":"支付宝余额","accountId":"acc_xxx1","targetAccount":"余额宝","targetAccountId":"acc_xxx2","category":"","sourceTransactionId":"202608120320480.11"},
+  {"date":"2026-08-12","time":"01:56","type":"income","amount":"0.11","merchant":"淘宝（中国）软件有限公司","note":"淘宝签到提现","sourceAccount":"支付宝余额","accountId":"acc_xxx2","targetAccount":"","targetAccountId":"","category":"红包","sourceTransactionId":"202608120156350.11"},
+  {"date":"2026-08-11","time":"18:30","type":"income","amount":"100.00","merchant":"张三","note":"朋友转账-聚餐AA","sourceAccount":"微信零钱","accountId":"acc_xxx3","targetAccount":"","targetAccountId":"","category":"其它","sourceTransactionId":"202608111830100张三"},
+  {"date":"2026-08-10","time":"09:00","type":"income","amount":"15000.00","merchant":"XX科技有限公司","note":"8月工资","sourceAccount":"工商银行卡","accountId":"acc_xxx4","targetAccount":"","targetAccountId":"","category":"工资","sourceTransactionId":"20260810090015000XX科技"}
 ]
 
-注意：不要编造数据，看不清留空；不要 markdown 代码块；金额永远是正数字符串；账户名和分类名必须与清单完全一致（包括括号）。不是消费截图就输出 []。`
+注意：不要编造数据，看不清留空；不要 markdown 代码块；金额永远是正数字符串；账户名和分类名必须与清单完全一致；accountId 和 targetAccountId 必须与账户清单括号中的 ID 完全一致。不是消费截图就输出 []。`
 }

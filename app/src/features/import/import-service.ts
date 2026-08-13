@@ -41,6 +41,7 @@ import type {
   ImportSourceType,
   ImportSystemField,
   ImportTransactionKind,
+  MissingField,
   ParsedImportRow,
   PendingAccountCreation,
   PendingCategoryCreation,
@@ -81,6 +82,8 @@ export interface ExecuteImportInput {
   readonly ledgerId: string
   readonly plan: ImportPlan
   readonly note?: string
+  readonly accountMappings?: readonly AccountNameMapping[]
+  readonly categoryMappings?: readonly CategoryNameMapping[]
 }
 
 const REQUIRED_FIELDS: readonly ImportSystemField[] = ['amount', 'date']
@@ -120,6 +123,7 @@ export class ImportService {
       validRows: plan.validRows.length,
       errors: plan.errors.length,
       unmatchedAccounts: plan.unmatchedAccounts.length,
+      missingFields: plan.missingFields.length,
     })
     return plan
   }
@@ -138,13 +142,13 @@ export class ImportService {
       return emptyPlan(input.fileName, source, rows, input.fieldMapping, errors, '文件为空或无表头')
     }
 
-    const missingFields = REQUIRED_FIELDS.filter(
+    const unmappedRequiredFields = REQUIRED_FIELDS.filter(
       (field) => !input.fieldMapping.some((mapping) => mapping.systemField === field),
     )
-    if (missingFields.length > 0) {
+    if (unmappedRequiredFields.length > 0) {
       errors.push({
         rowIndex: 0,
-        message: `字段映射缺少必填项：${missingFields.join(', ')}`,
+        message: `字段映射缺少必填项：${unmappedRequiredFields.join(', ')}`,
       })
       return emptyPlan(input.fileName, source, rows, input.fieldMapping, errors)
     }
@@ -154,8 +158,10 @@ export class ImportService {
     // 1. 加载已有账户，按名称建立索引（手动映射优先，其次按名称匹配已有账户）
     const existingAccounts = await this.accounts.listByLedger(input.ledgerId)
     const accountByName = new Map<string, string>()
+    const accountById = new Map<string, string>()
     for (const account of existingAccounts) {
       accountByName.set(account.name.trim(), account.id)
+      accountById.set(account.id.trim(), account.id)
     }
     const accountMap = new Map<string, string>()
     for (const mapping of input.accountMappings ?? []) {
@@ -190,7 +196,12 @@ export class ImportService {
     const unmatchedAccounts: Array<{
       rawName: string
       role: 'source' | 'target'
+      kind?: 'income' | 'expense' | 'transfer'
       candidates: Array<{ accountId: string; accountName: string }>
+    }> = []
+    const unmatchedCategories: Array<{
+      rawName: string
+      kind: 'income' | 'expense'
     }> = []
 
     const parsedRows: ParsedImportRow[] = []
@@ -212,6 +223,7 @@ export class ImportService {
           parsedRow,
           accountMap,
           accountByName,
+          accountById,
           pendingAccounts,
           pendingAccountIds,
           unmatchedAccounts,
@@ -230,8 +242,10 @@ export class ImportService {
     // 4. 解析每一行（此时 accountMap/categoryMap 已含 pending 临时 ID）
     const validRows: ResolvedImportRow[] = []
     const duplicates: DuplicateImportRow[] = []
+    // 自动创建的账户名称集合，用于 resolveRow 区分未匹配账户与待创建账户
+    const autoCreatedNames = new Set(pendingAccounts.map((p) => p.rawName))
     for (const parsedRow of parsedRows) {
-      const resolved = resolveRow(parsedRow, accountMap, categoryMap)
+      const resolved = resolveRow(parsedRow, accountMap, categoryMap, accountById, autoCreatedNames)
       if (resolved instanceof ErrorRow) {
         errors.push({ rowIndex: parsedRow.index, message: resolved.message })
         continue
@@ -239,7 +253,82 @@ export class ImportService {
       validRows.push(resolved)
     }
 
-    // 5. 检测指纹重复
+    // 收集缺失分类的行（占位符 __missing_category_N__），让用户在预览阶段选择
+    for (const row of validRows) {
+      if (row.categoryId && row.categoryId.startsWith('__missing_category_')) {
+        if (!unmatchedCategories.some((u) => u.rawName === row.categoryId)) {
+          unmatchedCategories.push({
+            rawName: row.categoryId,
+            kind: row.raw.kind as 'income' | 'expense',
+          })
+        }
+      }
+    }
+
+    // 5. 统一收集缺失字段
+    const missingFields: MissingField[] = []
+
+    const accountCandidates = existingAccounts.map((a) => ({
+      id: a.id,
+      name: a.name,
+    }))
+    const expenseCategoryCandidates = existingCategories
+      .filter((c) => c.kind === 'expense')
+      .map((c) => ({ id: c.id, name: c.name }))
+    const incomeCategoryCandidates = existingCategories
+      .filter((c) => c.kind === 'income')
+      .map((c) => ({ id: c.id, name: c.name }))
+
+    const isPlaceholderId = (id?: string): boolean =>
+      !id || id.startsWith('__missing_') || id.startsWith('pending:account:')
+
+    const isAutoCreatedAccount = (id?: string): boolean =>
+      id?.startsWith('pending:account:')
+        ? autoCreatedNames.has(id.slice('pending:account:'.length))
+        : false
+
+    for (const row of validRows) {
+      if (isPlaceholderId(row.sourceAccountId) && !isAutoCreatedAccount(row.sourceAccountId)) {
+        missingFields.push({
+          rowIndex: row.index,
+          fieldId: 'sourceAccount',
+          fieldType: 'picker',
+          displayLabel: `第${row.index - 1}行·缺少${row.raw.kind === 'expense' ? '支出' : row.raw.kind === 'income' ? '收入' : '转出'}账户`,
+          candidates: accountCandidates,
+        })
+      }
+      if (
+        row.raw.kind === 'transfer' &&
+        isPlaceholderId(row.targetAccountId) &&
+        !isAutoCreatedAccount(row.targetAccountId)
+      ) {
+        missingFields.push({
+          rowIndex: row.index,
+          fieldId: 'targetAccount',
+          fieldType: 'picker',
+          displayLabel: `第${row.index - 1}行·缺少转入账户`,
+          candidates: accountCandidates,
+        })
+      }
+      // 分类缺失：转账不需要分类，仅支出/收入需要
+      if (
+        (row.raw.kind === 'expense' || row.raw.kind === 'income') &&
+        isPlaceholderId(row.categoryId)
+      ) {
+        const kindLabel = row.raw.kind === 'expense' ? '支出' : '收入'
+        const cats = row.raw.kind === 'expense' ? expenseCategoryCandidates : incomeCategoryCandidates
+        missingFields.push({
+          rowIndex: row.index,
+          fieldId: 'category',
+          fieldType: 'picker',
+          displayLabel: `第${row.index - 1}行·缺少${kindLabel}分类`,
+          candidates: cats,
+        })
+      }
+    }
+    missingFields.sort((a, b) => a.rowIndex - b.rowIndex)
+
+    // 6. 检测指纹重复
     const sourceFingerprint = computeBatchFingerprint(input.fileName, rows)
     let duplicateWarning: string | undefined
     const existingBatch = await this.batches.findActiveByFingerprint(input.ledgerId, sourceFingerprint)
@@ -269,6 +358,8 @@ export class ImportService {
         ? { id: existingBatch.id, fileName: existingBatch.fileName, createdAt: existingBatch.createdAt }
         : undefined,
       unmatchedAccounts,
+      unmatchedCategories,
+      missingFields,
     }
   }
 
@@ -387,6 +478,22 @@ export class ImportService {
       const categoryIdMap = new Map<string, string>()
       await this.createPendingAccounts(ledgerId, plan.pendingAccountCreations, accountIdMap)
       await this.createPendingCategories(ledgerId, plan.pendingCategoryCreations, categoryIdMap)
+      // 用户通过 categoryMappings 选择的分类占位符映射（如 __missing_category_2__）
+      for (const mapping of input.categoryMappings ?? []) {
+        if (mapping.rawName.startsWith('__missing_category_')) {
+          categoryIdMap.set(mapping.rawName, mapping.categoryId)
+        }
+      }
+      for (const mapping of input.accountMappings ?? []) {
+        if (mapping.rawName.startsWith('__missing_source_')) {
+          accountIdMap.set(mapping.rawName, mapping.accountId)
+        }
+        if (mapping.rawName.startsWith('__missing_target_')) {
+          accountIdMap.set(mapping.rawName, mapping.accountId)
+        }
+        // 兼容旧确认方式：直接传原始账户名映射（如 rawName="招商银行"）
+        accountIdMap.set(`pending:account:${mapping.rawName}`, mapping.accountId)
+      }
 
       const batchId = this.ctx.ids.next('import_batch')
       const now = this.ctx.clock.nowIso()
@@ -862,6 +969,8 @@ function parseRow(
 
   let sourceAccountName = readValue('sourceAccount') || undefined
   let targetAccountName = readValue('targetAccount') || undefined
+  const sourceAccountId = (raw['accountId'] ?? '').trim() || undefined
+  const targetAccountId = (raw['targetAccountId'] ?? '').trim() || undefined
   // 处理"中信银行->杨浩"格式：当仅填了账户1且含箭头时，拆分为转出/转入
   if (sourceAccountName && !targetAccountName) {
     const parts = sourceAccountName.split(/->|→|=>|≫/)
@@ -901,6 +1010,18 @@ function parseRow(
     targetAccountName = `${targetAccountName}信用卡`
   }
 
+  // 余额宝-自动转入 规则：note 含 "余额宝-自动转入" → 强制识别为转账
+  const noteLower = (readValue('note') || '').toLowerCase()
+  if (noteLower.includes('余额宝-自动转入') || noteLower.includes('yubaoyue-自动转入')) {
+    kind = 'transfer'
+    if (!sourceAccountName || !sourceAccountName.trim()) {
+      sourceAccountName = '支付宝余额'
+    }
+    if (!targetAccountName || !targetAccountName.trim()) {
+      targetAccountName = '余额宝'
+    }
+  }
+
   return {
     index: rowIndex,
     raw,
@@ -913,6 +1034,8 @@ function parseRow(
     note: readValue('note') || undefined,
     sourceAccountName,
     targetAccountName,
+    sourceAccountId,
+    targetAccountId,
     categoryName: readValue('category') || undefined,
     sourceTransactionId: readValue('sourceTransactionId') || undefined,
   }
@@ -927,24 +1050,47 @@ function resolveRow(
   row: ParsedImportRow,
   accountMap: Map<string, string>,
   categoryMap: Map<string, CategoryResolution>,
+  accountById: Map<string, string> = new Map(),
+  autoCreatedAccountNames?: Set<string>,
 ): ResolvedImportRow | ErrorRow {
   let sourceAccountId: string | undefined
   let targetAccountId: string | undefined
   let categoryId: string | undefined
   let resolvedKind: ImportTransactionKind = row.kind
 
+  const sourceAccountIdFromId = row.sourceAccountId && accountById.has(row.sourceAccountId.trim())
+    ? row.sourceAccountId.trim()
+    : undefined
+  const targetAccountIdFromId = row.targetAccountId && accountById.has(row.targetAccountId.trim())
+    ? row.targetAccountId.trim()
+    : undefined
+
   if (row.kind === 'expense' || row.kind === 'income') {
-    if (row.sourceAccountName) {
+    if (sourceAccountIdFromId) {
+      sourceAccountId = sourceAccountIdFromId
+    } else if (row.sourceAccountName) {
       sourceAccountId = accountMap.get(row.sourceAccountName.trim())
       if (!sourceAccountId) {
         return new ErrorRow(`第 ${row.index} 行：未匹配到账户「${row.sourceAccountName}」`)
       }
     } else {
-      // 账户名缺失：尝试从 accountMap 中查找占位键（用户在预览中选择了账户后生成）
       const missingKey = `__missing_source_${row.index}__`
-      sourceAccountId = accountMap.get(missingKey)
-      if (!sourceAccountId) {
-        return new ErrorRow(`第 ${row.index} 行：缺少转出账户`)
+      sourceAccountId = accountMap.get(missingKey) ?? `pending:account:${missingKey}`
+    }
+    // 非自动创建的 pending:account:* 占位符（即未匹配账户）统一替换为 __missing_source_N__，
+    // 以便 executeImport 阶段通过 accountIdMap 解析用户选择的真实账户 ID。
+    // 自动创建账户（如杨浩→receivable、工资卡信用卡）保留原始 pending ID。
+    if (sourceAccountId && sourceAccountId.startsWith('pending:account:')) {
+      const pendingName = sourceAccountId.slice('pending:account:'.length)
+      if (!autoCreatedAccountNames?.has(pendingName)) {
+        sourceAccountId = `__missing_source_${row.index}__`
+      }
+    }
+    // 用户通过映射选择的占位符应解析为真实账户 ID，避免 missingFields 重复收集
+    if (sourceAccountId?.startsWith('__missing_')) {
+      const resolved = accountMap.get(sourceAccountId)
+      if (resolved && !resolved.startsWith('pending:account:') && !resolved.startsWith('__missing_')) {
+        sourceAccountId = resolved
       }
     }
     if (row.categoryName && row.categoryName.trim()) {
@@ -957,34 +1103,86 @@ function resolveRow(
         resolvedKind = resolution.kind
       }
     } else if (row.categoryName !== undefined) {
-      // 分类字段存在但为空字符串（如钱迹 JSON 的 "category":"")，在预览阶段就报错
-      return new ErrorRow(`第 ${row.index} 行：${row.kind === 'expense' ? '支出' : '收入'}缺少分类，请在预览阶段为该分类选择或创建分类`)
+      // 分类字段存在但为空字符串（如钱迹 JSON 的 "category":"")：占位，让用户在预览阶段选择。
+      // 用户通过映射选择的占位符（__missing_category_N__）应在此处解析为真实分类 ID，
+      // 避免 missingFields 重复收集已选字段。
+      const missingKey = `__missing_category_${row.index}__`
+      if (!categoryMap.has(missingKey)) {
+        categoryMap.set(missingKey, { categoryId: missingKey, kind: row.kind })
+      }
+      categoryId = categoryMap.get(missingKey)?.categoryId ?? missingKey
+    } else {
+      // 分类字段完全缺失（JSON 中没有 category 列）：同上处理。
+      const missingKey = `__missing_category_${row.index}__`
+      if (!categoryMap.has(missingKey)) {
+        categoryMap.set(missingKey, { categoryId: missingKey, kind: row.kind })
+      }
+      categoryId = categoryMap.get(missingKey)?.categoryId ?? missingKey
     }
   } else if (row.kind === 'transfer') {
-    if (row.sourceAccountName) {
+    if (sourceAccountIdFromId) {
+      sourceAccountId = sourceAccountIdFromId
+    } else if (row.sourceAccountName) {
       sourceAccountId = accountMap.get(row.sourceAccountName.trim())
       if (!sourceAccountId) {
         return new ErrorRow(`第 ${row.index} 行：未匹配到转出账户「${row.sourceAccountName}」`)
       }
+    } else {
+      // 转出账户缺失：占位符，让用户在预览阶段选择
+      const missingKey = `__missing_source_${row.index}__`
+      sourceAccountId = accountMap.get(missingKey) ?? `pending:account:${missingKey}`
     }
-    if (row.targetAccountName) {
+    // 非自动创建的 pending:account:* 占位符统一替换为 __missing_source_N__
+    if (sourceAccountId && sourceAccountId.startsWith('pending:account:')) {
+      const pendingName = sourceAccountId.slice('pending:account:'.length)
+      if (!autoCreatedAccountNames?.has(pendingName)) {
+        sourceAccountId = `__missing_source_${row.index}__`
+      }
+    }
+    // 用户通过映射选择的占位符应解析为真实账户 ID，避免 missingFields 重复收集
+    if (sourceAccountId?.startsWith('__missing_')) {
+      const resolved = accountMap.get(sourceAccountId)
+      if (resolved && !resolved.startsWith('pending:account:') && !resolved.startsWith('__missing_')) {
+        sourceAccountId = resolved
+      }
+    }
+
+    if (targetAccountIdFromId) {
+      targetAccountId = targetAccountIdFromId
+    } else if (row.targetAccountName) {
       targetAccountId = accountMap.get(row.targetAccountName.trim())
       if (!targetAccountId) {
         return new ErrorRow(`第 ${row.index} 行：未匹配到转入账户「${row.targetAccountName}」`)
       }
+    } else {
+      // 转入账户缺失：占位符，让用户在预览阶段选择
+      const missingKey = `__missing_target_${row.index}__`
+      targetAccountId = accountMap.get(missingKey) ?? `pending:account:${missingKey}`
     }
-    // 转账必须有转出和转入两个账户，缺一不可
-    if (!sourceAccountId || !targetAccountId) {
-      if (!sourceAccountId && !targetAccountId) {
-        return new ErrorRow(`第 ${row.index} 行：转账缺少账户信息`)
+    // 非自动创建的 pending:account:* 占位符统一替换为 __missing_target_N__
+    if (targetAccountId && targetAccountId.startsWith('pending:account:')) {
+      const pendingName = targetAccountId.slice('pending:account:'.length)
+      if (!autoCreatedAccountNames?.has(pendingName)) {
+        targetAccountId = `__missing_target_${row.index}__`
       }
-      if (!sourceAccountId) {
-        return new ErrorRow(`第 ${row.index} 行：转账缺少转出账户「${row.sourceAccountName || '未知'}」`)
-      }
-      return new ErrorRow(`第 ${row.index} 行：转账缺少转入账户「${row.targetAccountName || '未知'}」`)
     }
+    // 用户通过映射选择的占位符应解析为真实账户 ID
+    if (targetAccountId?.startsWith('__missing_')) {
+      const resolved = accountMap.get(targetAccountId)
+      if (resolved && !resolved.startsWith('pending:account:') && !resolved.startsWith('__missing_')) {
+        targetAccountId = resolved
+      }
+    }
+    // 转出与转入账户不能为同一个
     if (sourceAccountId && targetAccountId && sourceAccountId === targetAccountId) {
       return new ErrorRow(`第 ${row.index} 行：转账的转出与转入账户不能相同`)
+    }
+    // 转账通常不需要分类，但如果 JSON 中带入了分类名，仍尝试解析。
+    if (row.categoryName && row.categoryName.trim()) {
+      const resolution = categoryMap.get(row.categoryName.trim())
+      if (resolution) {
+        categoryId = resolution.categoryId
+      }
     }
   }
 
@@ -1180,6 +1378,8 @@ function emptyPlan(
     pendingAccountCreations: [],
     pendingCategoryCreations: [],
     unmatchedAccounts: [],
+    unmatchedCategories: [],
+    missingFields: [],
   }
 }
 
@@ -1192,6 +1392,7 @@ function collectPendingAccounts(
   row: ParsedImportRow,
   accountMap: Map<string, string>,
   existingByName: Map<string, string>,
+  accountById: Map<string, string> = new Map(),
   pending: PendingAccountCreation[],
   pendingIds: Map<string, string>,
   unmatchedAccounts: Array<{
@@ -1210,7 +1411,11 @@ function collectPendingAccounts(
   )
   for (const { rawName, role } of accounts) {
     const key = rawName.trim()
-    if (accountMap.has(key)) continue
+    if (accountMap.has(key) && !accountMap.get(key)!.startsWith('pending:account:')) continue
+    if (accountById.has(key)) {
+      accountMap.set(key, key)
+      continue
+    }
     // 先尝试按名称匹配已有账户
     const existingId = existingByName.get(key)
     if (existingId) {

@@ -31,7 +31,7 @@ public class MainActivity extends BridgeActivity {
         Log.d(TAG, "onCreate: ClipboardReaderPlugin 已注册");
 
         // 注册自动记账插件：无障碍 / 通知 / OCR 三通道捕获
-        this.registerPlugin(app.financemanager.capture.plugin.PaymentCapturePlugin.class);
+        this.registerPlugin(PaymentCapturePlugin.class);
         Log.d(TAG, "onCreate: PaymentCapturePlugin 已注册");
         // 拦截 IME（系统输入法）insets，防止 WebView 内部缩小布局视口。
         // 即使 AndroidManifest 设置了 adjustNothing，WebView 仍会在收到 IME

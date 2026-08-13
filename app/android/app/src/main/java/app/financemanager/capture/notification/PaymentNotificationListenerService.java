@@ -44,9 +44,25 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
         try {
             String title = sbn.getNotification().extras
                     .getString(android.app.Notification.EXTRA_TITLE, "");
+            // 优先读简单文本，再读 BigTextStyle（Android 10+ 通知正文经常在此），
+            // 最后兜底取 android.text。三者合并，避免正文被截断或读不到。
             CharSequence textChar = sbn.getNotification().extras
                     .getCharSequence(android.app.Notification.EXTRA_TEXT);
             String text = textChar != null ? textChar.toString() : "";
+
+            CharSequence bigTextChar = sbn.getNotification().extras
+                    .getCharSequence(android.app.Notification.EXTRA_BIG_TEXT);
+            if (bigTextChar != null && !bigTextChar.toString().isEmpty()) {
+                text = bigTextChar.toString();
+            }
+
+            CharSequence textKeyChar = sbn.getNotification().extras
+                    .getCharSequence("android.text");
+            if (textKeyChar != null && !textKeyChar.toString().isEmpty()) {
+                text = textKeyChar.toString();
+            }
+
+            Log.d(TAG, "通知 package=" + packageName + " title=" + title + " text=" + text.substring(0, Math.min(text.length(), 150)));
 
             processNotification(packageName, title, text);
         } catch (Exception e) {
@@ -59,7 +75,10 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
         if (adapter == null) return;
 
         CapturedPaymentInfo info = adapter.parse(title, text, packageName);
-        if (info == null) return;
+        if (info == null) {
+            Log.d(TAG, "未解析到支付信息: " + packageName);
+            return;
+        }
 
         if (CaptureDedup.isDuplicate(info.getSourcePackage(), info.getAmountMinor())) {
             Log.d(TAG, "去重跳过通知: " + info.getSourcePackage());

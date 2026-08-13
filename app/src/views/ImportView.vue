@@ -31,6 +31,7 @@ import type {
   ImportResult,
   ImportSourceType,
   ImportSystemField,
+  MissingField,
   ResolvedImportRow,
 } from '@/features/import/import-types'
 import { detectSourceType, parseJson, parseXlsx } from '@/features/import/source-parser'
@@ -98,84 +99,124 @@ const canPreview = computed(() => fieldMapping.value.date >= 0 && fieldMapping.v
 
 const visibleErrors = computed(() => (plan.value?.errors ?? []).slice(0, 20))
 const hiddenErrorCount = computed(() => Math.max((plan.value?.errors.length ?? 0) - 20, 0))
-const previewRows = computed(() => (plan.value?.validRows ?? []).slice(0, 5))
+const previewRows = computed(() => (plan.value?.validRows ?? []))
 
-// 未匹配账户的用户选择映射
-const unmatchedSelections = ref<Record<string, string>>({})
-// 用户选择「创建新账户」时的新账户名称
-const unmatchedNewAccountNames = ref<Record<string, string>>({})
+// 统一缺失字段选择状态：key = `${rowIndex}_${fieldId}`
+const fieldSelections = ref<Record<string, string>>({})
 
-// 账户选择弹窗状态
-const showAccountPicker = ref(false)
-const activeUnmatchedRawName = ref('')
+// 统一 Picker 弹窗状态
+const showFieldPicker = ref(false)
+const activeFieldKey = ref('')
+const activeFieldType = ref<'picker' | 'input'>('picker')
+const activeFieldCandidates = ref<{ text: string; value: string }[]>([])
+const activeFieldId = ref('')
 
-const hasUnmatchedSelections = computed(() => {
-  if (!plan.value) return false
-  return plan.value.unmatchedAccounts.some(item => {
-    const sel = unmatchedSelections.value[item.rawName]
-    if (sel === '__create_new__') {
-      return Boolean(unmatchedNewAccountNames.value[item.rawName]?.trim())
-    }
-    return Boolean(sel)
-  })
-})
-
-function unmatchedDisplayLabel(item: { rawName: string; role: string; kind?: 'income' | 'expense' | 'transfer' }): string {
-  const m = item.rawName.match(/^__missing_source_(\d+)__$/)
-  if (m) {
-    const label = item.kind === 'income' ? '入账' : (item.kind === 'expense' ? '付款' : (item.role === 'source' ? '转出' : '转入'))
-    return `第${m[1]}行 · 缺少${label}账户`
+function selectionLabel(field: MissingField): string {
+  const key = `${field.rowIndex}_${field.fieldId}`
+  const sel = fieldSelections.value[key]
+  if (!sel) return '请选择'
+  if (field.fieldId === 'sourceAccount' || field.fieldId === 'targetAccount') {
+    return accounts.value.find((a) => a.id === sel)?.name ?? sel
   }
-  return `「${item.rawName}」`
+  return categories.value.find((c) => c.id === sel)?.name ?? sel
 }
 
-function unmatchedRoleLabel(item: { role: string; kind?: 'income' | 'expense' | 'transfer' }): string {
-  if (item.kind === 'income') return item.role === 'source' ? '入账账户' : '收款账户'
-  if (item.kind === 'expense') return item.role === 'source' ? '付款账户' : '收款账户'
-  return item.role === 'source' ? '转出账户' : '转入账户'
+function openFieldPicker(field: MissingField): void {
+  const key = `${field.rowIndex}_${field.fieldId}`
+  activeFieldKey.value = key
+  activeFieldType.value = field.fieldType
+  activeFieldId.value = field.fieldId
+  activeFieldCandidates.value = []
+
+  const row = plan.value?.validRows.find((r) => r.index === field.rowIndex)
+
+  // 构建候选列表
+  if (field.candidates) {
+    if (field.fieldId === 'sourceAccount' || field.fieldId === 'targetAccount') {
+      activeFieldCandidates.value = field.candidates.map((c) => ({
+        text: `${c.name} (${c.id.replace('account_', '').slice(0, 6)}...)`,
+        value: c.id,
+      }))
+    } else {
+      const kind = row?.raw.kind
+      const filtered = field.candidates.filter((c) => {
+        const cat = categories.value.find((cat) => cat.id === c.id)
+        if (!cat) return true
+        return kind === 'expense' ? cat.kind === 'expense' : cat.kind === 'income'
+      })
+      activeFieldCandidates.value = filtered.map((c) => ({ text: c.name, value: c.id }))
+    }
+  }
+
+  showFieldPicker.value = true
 }
 
-// 账户选择弹窗：打开时设置当前操作的 unmatched item
-function openAccountPicker(rawName: string): void {
-  activeUnmatchedRawName.value = rawName
-  showAccountPicker.value = true
+function closeFieldPicker(): void {
+  showFieldPicker.value = false
+  activeFieldKey.value = ''
 }
 
-function closeAccountPicker(): void {
-  showAccountPicker.value = false
-  activeUnmatchedRawName.value = ''
-}
-
-function onAccountPickerConfirm(val: { selectedOptions: { text: string; value: string }[] }): void {
-  if (!activeUnmatchedRawName.value) return
+function onFieldPickerConfirm(val: { selectedOptions: { text: string; value: string }[] }): void {
+  if (!activeFieldKey.value) return
   const valStr = val.selectedOptions[0]?.value as string
   if (valStr) {
-    unmatchedSelections.value[activeUnmatchedRawName.value] = valStr
+    fieldSelections.value[activeFieldKey.value] = valStr
   }
-  closeAccountPicker()
+  closeFieldPicker()
 }
 
-function buildAccountPickerColumns(): { text: string; value: string }[] {
-  const cols: { text: string; value: string }[] = []
-  const rawName = activeUnmatchedRawName.value
-  if (!rawName || !plan.value) return cols
-
-  const item = plan.value.unmatchedAccounts.find(u => u.rawName === rawName)
-  if (!item) return cols
-
-  // 推荐匹配
-  if (item.candidates.length > 0) {
-    cols.push({ text: '—— 推荐匹配 ——', value: '' })
-    cols.push(...item.candidates.map(c => ({ text: c.accountName, value: c.accountId })))
+function fieldFieldLabel(fieldId: string): string {
+  const labels: Record<string, string> = {
+    date: '日期',
+    sourceAccount: '账户',
+    targetAccount: '转入账户',
+    category: '分类',
+    type: '类型',
+    amount: '金额',
   }
+  return labels[fieldId] ?? fieldId
+}
 
-  // 所有账户
-  cols.push({ text: '—— 所有账户 ——', value: '' })
-  cols.push(...accounts.value.map(a => ({ text: a.name, value: a.id })))
+function fieldPlaceholder(field: MissingField): string {
+  const labels: Record<string, string> = {
+    date: '请选择日期',
+    sourceAccount: '请选择转出账户',
+    targetAccount: '请选择转入账户',
+    category: '请选择分类',
+    type: '请选择类型',
+    amount: '请输入金额',
+  }
+  return labels[field.fieldId] ?? '请选择'
+}
 
-  // 创建新账户
-  cols.push({ text: '+ 创建新账户', value: '__create_new__' })
-  return cols
+function resolvedCategoryName(row: ResolvedImportRow): string | undefined {
+  if (row.raw.categoryName) return row.raw.categoryName
+  if (!row.categoryId) return undefined
+  if (row.categoryId.startsWith('__')) return undefined
+  return categories.value.find((c) => c.id === row.categoryId)?.name ?? row.categoryId
+}
+
+function resolvedSourceAccountName(row: ResolvedImportRow): string | undefined {
+  if (row.raw.sourceAccountName) return row.raw.sourceAccountName
+  if (!row.sourceAccountId) return undefined
+  if (row.sourceAccountId.startsWith('__')) return undefined
+  return accounts.value.find((a) => a.id === row.sourceAccountId)?.name ?? row.sourceAccountId
+}
+
+function resolvedTargetAccountName(row: ResolvedImportRow): string | undefined {
+  if (row.raw.targetAccountName) return row.raw.targetAccountName
+  if (!row.targetAccountId) return undefined
+  if (row.targetAccountId.startsWith('__')) return undefined
+  return accounts.value.find((a) => a.id === row.targetAccountId)?.name ?? row.targetAccountId
+}
+
+function allFieldsSelected(): boolean {
+  if (!plan.value) return true
+  return plan.value.missingFields.every((field) => {
+    const key = `${field.rowIndex}_${field.fieldId}`
+    const sel = fieldSelections.value[key]
+    return Boolean(sel)
+  })
 }
 
 function emptyMapping(): Record<ImportSystemField, number> {
@@ -669,28 +710,33 @@ async function goToPreview(): Promise<void> {
 
 async function applyUnmatchedAndRePreview(): Promise<void> {
   if (!importService || !appStore.ledgerId || !plan.value) return
+  if (!allFieldsSelected()) return
   loading.value = true
   errorMessage.value = ''
   try {
     // 处理「创建新账户」：先创建账户，再建映射
-    const newMappings: AccountNameMapping[] = [...accountMappings.value]
-    for (const item of plan.value.unmatchedAccounts) {
-      const selectedId = unmatchedSelections.value[item.rawName]
-      if (selectedId === '__create_new__') {
-        const newName = unmatchedNewAccountNames.value[item.rawName]?.trim()
-        if (newName) {
-          const createdId = await importService.createAccountForImport(appStore.ledgerId, newName)
-          newMappings.push({ rawName: item.rawName, accountId: createdId })
-          // 刷新账户列表，让后续预览能看到新账户
-          await loadMappingOptions()
-        }
-      } else if (selectedId) {
-        newMappings.push({ rawName: item.rawName, accountId: selectedId })
+    const newAccountMappings: AccountNameMapping[] = [...accountMappings.value]
+    const newCategoryMappings: CategoryNameMapping[] = [...categoryMappings.value]
+
+    for (const field of plan.value.missingFields) {
+      const key = `${field.rowIndex}_${field.fieldId}`
+      const selectedId = fieldSelections.value[key]
+      if (!selectedId) continue
+
+      if (field.fieldId === 'sourceAccount' || field.fieldId === 'targetAccount') {
+        const missingKey = field.fieldId === 'sourceAccount'
+          ? `__missing_source_${field.rowIndex}__`
+          : `__missing_target_${field.rowIndex}__`
+        newAccountMappings.push({ rawName: missingKey, accountId: selectedId })
+      } else if (field.fieldId === 'category') {
+        const missingKey = `__missing_category_${field.rowIndex}__`
+        newCategoryMappings.push({ rawName: missingKey, categoryId: selectedId })
       }
     }
-    accountMappings.value = newMappings
-    unmatchedSelections.value = {}
-    unmatchedNewAccountNames.value = {}
+
+    accountMappings.value = newAccountMappings
+    categoryMappings.value = newCategoryMappings
+
     // 重新预览
     const built = await importService.previewRows({
       ledgerId: appStore.ledgerId,
@@ -713,22 +759,41 @@ async function applyUnmatchedAndRePreview(): Promise<void> {
 
 async function confirmImport(): Promise<void> {
   if (!importService || !appStore.ledgerId || !plan.value || saving.value) return
-  const unresolved = plan.value.unmatchedAccounts.filter(
-    (item) => !unmatchedSelections.value[item.rawName],
-  )
-  if (unresolved.length > 0) {
-    errorMessage.value =
-      '还有未确认的账户（' +
-      unresolved.map((u) => unmatchedDisplayLabel(u)).join('、') +
-      '），请先在上方"需要确认的账户"中选择对应账户或创建新账户。'
+  if (!allFieldsSelected()) {
+    errorMessage.value = '还有未确认的字段，请先在上方"需要确认的字段"中完成选择。'
     return
   }
+
   saving.value = true
   errorMessage.value = ''
   try {
+    // 合并 fieldSelections 到 mappings，确保 executeImport 能拿到用户选择的缺失字段
+    const mergedAccountMappings: AccountNameMapping[] = [...accountMappings.value]
+    const mergedCategoryMappings: CategoryNameMapping[] = [...categoryMappings.value]
+
+    for (const field of plan.value.missingFields) {
+      const key = `${field.rowIndex}_${field.fieldId}`
+      const selectedId = fieldSelections.value[key]
+      if (!selectedId) continue
+
+      if (field.fieldId === 'sourceAccount' || field.fieldId === 'targetAccount') {
+        const missingKey = field.fieldId === 'sourceAccount'
+          ? `__missing_source_${field.rowIndex}__`
+          : `__missing_target_${field.rowIndex}__`
+        mergedAccountMappings.push({ rawName: missingKey, accountId: selectedId })
+      } else if (field.fieldId === 'category') {
+        mergedCategoryMappings.push({
+          rawName: `__missing_category_${field.rowIndex}__`,
+          categoryId: selectedId,
+        })
+      }
+    }
+
     const res = await importService.executeImport({
       ledgerId: appStore.ledgerId,
       plan: plan.value,
+      accountMappings: mergedAccountMappings,
+      categoryMappings: mergedCategoryMappings,
     })
     result.value = res
     step.value = 'done'
@@ -806,8 +871,7 @@ function resetWizard(): void {
   fieldMapping.value = emptyMapping()
   accountMappings.value = []
   categoryMappings.value = []
-  unmatchedSelections.value = {}
-  unmatchedNewAccountNames.value = {}
+  fieldSelections.value = {}
   plan.value = undefined
   result.value = undefined
   errorMessage.value = ''
@@ -1041,43 +1105,47 @@ function goToBatches(): void {
             </div>
           </BaseCard>
 
-          <!-- 未匹配的账户修正 -->
-          <BaseCard v-if="plan && plan.unmatchedAccounts.length > 0" class="block-card">
-            <h2 class="block-card__title">需要确认的账户</h2>
-            <p class="block-card__hint">以下账户在系统中没有找到，请选择它们对应的已有账户，或创建新账户。</p>
-            <div v-for="item in plan.unmatchedAccounts" :key="item.rawName" class="unmatched-row">
-              <div class="unmatched-row__label">
-                <span class="unmatched-row__name">{{ unmatchedDisplayLabel(item) }}</span>
-                <span class="unmatched-row__role">{{ unmatchedRoleLabel(item) }}</span>
+          <!-- 统一缺失字段确认 -->
+          <BaseCard v-if="plan && plan.missingFields.length > 0" class="block-card unmatched-card">
+            <h2 class="block-card__title">需要确认的字段</h2>
+            <p class="block-card__hint">以下行有缺失字段，请手动选择以完成导入。</p>
+            <div
+              v-for="field in plan.missingFields"
+              :key="`${field.rowIndex}_${field.fieldId}`"
+              class="unmatched-item"
+            >
+              <div class="unmatched-item__alert">
+                <AlertCircle :size="16" :stroke-width="1.75" class="unmatched-item__alert-icon" />
+                <span class="unmatched-item__alert-text">{{ field.displayLabel }}</span>
               </div>
-              <div class="unmatched-row__right">
+              <div class="unmatched-item__control">
+                <span class="unmatched-item__tag">{{ fieldFieldLabel(field.fieldId) }}</span>
                 <VanField
+                  v-if="field.fieldType === 'picker'"
                   is-link
                   readonly
                   clickable
-                  :model-value="unmatchedSelections[item.rawName] === '__create_new__' ? '+ 创建新账户' : (unmatchedSelections[item.rawName] ? (accounts.find(a => a.id === unmatchedSelections[item.rawName])?.name ?? unmatchedSelections[item.rawName]) : '请选择对应账户')"
-                  placeholder="请选择对应账户"
-                  name="account-select"
-                  @click="openAccountPicker(item.rawName)"
-                />
-                <VanField
-                  v-if="unmatchedSelections[item.rawName] === '__create_new__'"
-                  v-model="unmatchedNewAccountNames[item.rawName]"
-                  placeholder="输入新账户名称"
-                  name="new-account-name"
+                  :model-value="selectionLabel(field)"
+                  :placeholder="fieldPlaceholder(field)"
+                  :name="`${field.rowIndex}_${field.fieldId}`"
+                  :class="{
+                    'unmatched-item__picker': true,
+                    'unmatched-item__picker--warning': !fieldSelections[`${field.rowIndex}_${field.fieldId}`],
+                  }"
+                  @click="openFieldPicker(field)"
                 />
               </div>
             </div>
-            <button type="button" class="add-row-button" :disabled="!hasUnmatchedSelections" @click="applyUnmatchedAndRePreview">
+            <button type="button" class="add-row-button" :disabled="!allFieldsSelected()" @click="applyUnmatchedAndRePreview">
               <RefreshCw :size="16" :stroke-width="1.75" />重新检查
             </button>
           </BaseCard>
 
-          <VanPopup v-model:show="showAccountPicker" position="bottom">
+          <VanPopup v-model:show="showFieldPicker" position="bottom">
             <VanPicker
-              :columns="buildAccountPickerColumns()"
-              @confirm="onAccountPickerConfirm"
-              @cancel="closeAccountPicker"
+              :columns="activeFieldCandidates"
+              @confirm="onFieldPickerConfirm"
+              @cancel="closeFieldPicker"
             />
           </VanPopup>
 
@@ -1126,17 +1194,54 @@ function goToBatches(): void {
           </BaseCard>
 
           <BaseCard v-if="previewRows.length" class="block-card">
-            <h2 class="block-card__title">有效行预览（前 5 行）</h2>
-            <ul class="preview-list">
-              <li v-for="row in previewRows" :key="row.index">
-                <span class="preview-list__date">{{ formatDate(row.raw.occurredAt) }}</span>
-                <span class="preview-list__kind">{{ kindLabel(row) }}</span>
-                <span class="preview-list__amount"
-                  >¥{{ (row.raw.amountMinor / 100).toFixed(2) }}</span
-                >
-                <span class="preview-list__merchant">{{ row.raw.merchant ?? '—' }}</span>
-              </li>
-            </ul>
+            <h2 class="block-card__title">有效行预览（共 {{ previewRows.length }} 行）</h2>
+            <div class="preview-rows-list">
+              <div
+                v-for="row in previewRows"
+                :key="row.index"
+                class="preview-row-card"
+              >
+                <div class="preview-row-card__header">
+                  <span class="preview-row-card__index">第 {{ row.index - 1 }} 行</span>
+                  <span class="preview-row-card__kind">{{ kindLabel(row) }}</span>
+                  <span class="preview-row-card__amount">¥{{ (row.raw.amountMinor / 100).toFixed(2) }}</span>
+                </div>
+                <div class="preview-row-card__fields">
+                  <div v-if="row.raw.occurredAt" class="preview-field">
+                    <span class="preview-field__label">时间</span>
+                    <span class="preview-field__value">{{ formatDate(row.raw.occurredAt) }}</span>
+                  </div>
+                  <div v-if="row.raw.merchant" class="preview-field">
+                    <span class="preview-field__label">商户</span>
+                    <span class="preview-field__value">{{ row.raw.merchant }}</span>
+                  </div>
+                  <div v-if="resolvedSourceAccountName(row)" class="preview-field">
+                    <span class="preview-field__label">转出账户</span>
+                    <span class="preview-field__value">{{ resolvedSourceAccountName(row) }}</span>
+                  </div>
+                  <div v-if="resolvedTargetAccountName(row)" class="preview-field">
+                    <span class="preview-field__label">转入账户</span>
+                    <span class="preview-field__value">{{ resolvedTargetAccountName(row) }}</span>
+                  </div>
+                  <div v-if="resolvedCategoryName(row)" class="preview-field">
+                    <span class="preview-field__label">分类</span>
+                    <span class="preview-field__value">{{ resolvedCategoryName(row) }}</span>
+                  </div>
+                  <div v-else-if="row.raw.kind !== 'transfer'" class="preview-field">
+                    <span class="preview-field__label">分类</span>
+                    <span class="preview-field__value preview-field__value--empty">未填写</span>
+                  </div>
+                  <div v-if="row.raw.note" class="preview-field">
+                    <span class="preview-field__label">备注</span>
+                    <span class="preview-field__value">{{ row.raw.note }}</span>
+                  </div>
+                  <div v-if="row.raw.sourceTransactionId" class="preview-field">
+                    <span class="preview-field__label">交易号</span>
+                    <span class="preview-field__value preview-field__value--mono">{{ row.raw.sourceTransactionId }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </BaseCard>
 
           <div v-if="errorMessage" class="page-state page-state--error">
@@ -1872,38 +1977,136 @@ function goToBatches(): void {
   justify-self: start;
 }
 
-.unmatched-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: start;
-  gap: var(--space-2);
-  padding: var(--space-2) 0;
+/* 需要确认的字段卡片 */
+.unmatched-card {
+  padding: var(--space-5) var(--space-4);
+}
+.unmatched-item {
+  padding: 16px 0;
   border-top: 1px solid var(--color-divider);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.unmatched-row:first-child {
+.unmatched-item:first-of-type {
   border-top: 0;
+  padding-top: 8px;
 }
-.unmatched-row__label {
+.unmatched-item__alert {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding-top: 8px;
 }
-.unmatched-row__name {
-  color: var(--color-text-primary);
-  font-weight: 600;
+.unmatched-item__alert-icon {
+  color: #f0a030;
+  flex: none;
+}
+.unmatched-item__alert-text {
+  color: #c77e20;
   font-size: var(--type-body-size);
+  font-weight: 500;
 }
-.unmatched-row__role {
-  color: var(--color-text-tertiary);
+.unmatched-item__control {
+  display: grid;
+  grid-template-columns: 5rem 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.unmatched-item__tag {
+  justify-self: center;
+  display: flex;
+  align-items: center;
+  padding: 2px 10px;
+  min-height: 36px;
+  color: var(--color-text-secondary);
   font-size: var(--type-caption-size);
-  padding: 2px 6px;
-  background: var(--color-background);
+  font-weight: 500;
+  background: var(--color-surface);
   border-radius: var(--radius-pill);
 }
-.unmatched-row__right {
+.unmatched-item__hint {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  line-height: 1.5;
+  padding-left: 4px;
+}
+.unmatched-item__picker {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+/* 未选择时显示警告边框 */
+.unmatched-item__picker--warning:deep(.van-cell) {
+  border-bottom-color: #f0a030 !important;
+}
+.unmatched-item__picker--warning:deep(.van-field__placeholder) {
+  color: #f0a030 !important;
+}
+
+/* 有效行预览卡片 */
+.preview-rows-list {
   display: grid;
+  gap: var(--space-3);
+}
+.preview-row-card {
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.preview-row-card__header {
+  display: grid;
+  grid-template-columns: minmax(0, auto) 1fr auto;
+  align-items: center;
   gap: var(--space-2);
+  padding: 12px var(--space-3);
+  background: var(--color-background);
+  border-bottom: 1px solid var(--color-divider);
+}
+.preview-row-card__index {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  font-weight: 600;
+  padding: 2px 8px;
+  background: var(--color-surface);
+  border-radius: var(--radius-pill);
+}
+.preview-row-card__kind {
+  justify-self: end;
+  color: var(--color-text-secondary);
+  font-size: var(--type-caption-size);
+}
+.preview-row-card__amount {
+  color: var(--color-primary-600);
+  font-size: var(--type-body-size);
+  font-weight: 600;
+}
+.preview-row-card__fields {
+  display: grid;
+  gap: 8px;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+}
+.preview-field {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: var(--type-caption-size);
+}
+.preview-field__label {
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+.preview-field__value {
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.preview-field__value--empty {
+  color: var(--color-text-quaternary, #999);
+}
+.preview-field__value--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--color-text-secondary);
 }
 </style>
 

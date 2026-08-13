@@ -31,6 +31,7 @@ async function load(): Promise<void> {
     ])
     const text = generatePromptTemplate(
       accounts.map((a) => ({
+        id: a.id,
         name: a.name,
         type: a.type,
         normalBalance: a.normalBalance,

@@ -32,7 +32,9 @@ public class AlipayNotificationAdapter implements NotificationParserAdapter {
     @Override
     public CapturedPaymentInfo parse(String title, String text, String packageName) {
         String combined = (title != null ? title : "") + " " + (text != null ? text : "");
-        if (!combined.contains("付款") && !combined.contains("收款") && !combined.contains("转账") && !combined.contains("消费")) {
+        // 支付宝关键词放宽：包含以下任意一个即认为可能是支付相关通知
+        if (!combined.contains("付款") && !combined.contains("收款") && !combined.contains("转账")
+                && !combined.contains("消费") && !combined.contains("支付") && !combined.contains("成功")) {
             return null;
         }
 

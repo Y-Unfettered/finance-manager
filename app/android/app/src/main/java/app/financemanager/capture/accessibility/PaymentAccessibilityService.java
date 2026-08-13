@@ -10,7 +10,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
-import app.financemanager.capture.plugin.PaymentCapturePlugin;
+import app.financemanager.local.PaymentCapturePlugin;
 
 import java.util.UUID;
 
@@ -40,14 +40,35 @@ public class PaymentAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         Log.d(TAG, "onServiceConnected: 无障碍服务已启动");
 
+        // 注意：FLAG_REPORT_VIEW_IDS 在小米澎湃 OS / HarmonyOS 等定制 ROM 上会导致
+        // setServiceInfo() 抛 SecurityException，进而使服务启用即崩溃、被系统移除。
+        // 采用"完整 flags → 降级 flags"策略：先尝试包含重要节点 flag，失败则降级。
+        int preferredFlags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
+        int fallbackFlags = 0;
+
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 | AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
-        info.flags = AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-                | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
         info.notificationTimeout = 100;
-        setServiceInfo(info);
+
+        boolean configured = false;
+        for (int flags : new int[]{preferredFlags, fallbackFlags}) {
+            try {
+                info.flags = flags;
+                setServiceInfo(info);
+                configured = true;
+                Log.d(TAG, "setServiceInfo 成功: flags=" + flags);
+                break;
+            } catch (SecurityException e) {
+                Log.w(TAG, "setServiceInfo 被拒绝 flags=" + flags + "，尝试降级", e);
+            } catch (Exception e) {
+                Log.w(TAG, "setServiceInfo 异常 flags=" + flags + "，尝试降级", e);
+            }
+        }
+        if (!configured) {
+            Log.e(TAG, "setServiceInfo 全部失败，无障碍服务将无法正常捕获窗口事件");
+        }
     }
 
     @Override

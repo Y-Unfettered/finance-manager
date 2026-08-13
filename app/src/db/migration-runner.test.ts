@@ -15,7 +15,7 @@ describe('database migrations', () => {
     const executor = new NodeSqliteExecutor()
 
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
     ])
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([])
 
@@ -66,6 +66,7 @@ describe('database migrations', () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
+      { version: 12 },
     ])
   })
 
@@ -113,7 +114,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '原有账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '原有账本' },
     ])
@@ -136,7 +137,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '升级账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '升级账本' },
     ])
@@ -221,7 +222,7 @@ describe('database migrations', () => {
     )
 
     // 升级到 v5/v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9, 10, 11])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9, 10, 11, 12])
 
     // 旧数据保留
     const rows = await executor.query<{ id: string; source: string; record_count: number }>(
@@ -292,7 +293,7 @@ describe('database migrations', () => {
     `)
 
     // 升级到 v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9, 10, 11])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9, 10, 11, 12])
 
     // 旧数据保留
     const tx = await executor.query<{ id: string; type: string }>(
@@ -377,6 +378,122 @@ describe('database migrations', () => {
       'recurring_transactions',
       'reminders',
       'transaction_templates',
+    ])
+  })
+
+  it('v12 backfills missing account IDs and updates foreign keys', async () => {
+    const executor = new NodeSqliteExecutor()
+    // 只跑到 v11，模拟旧版本数据库
+    const { IMPORT_BATCH_ERRORS_V11_MIGRATION } = await import('./migrations/011_import_batch_errors_v11')
+    await runMigrations(executor, [
+      INITIAL_SCHEMA_MIGRATION,
+      RECEIVABLES_MIGRATION,
+      PAYABLES_MIGRATION,
+      IMPORT_BATCHES_MIGRATION,
+      (await import('./migrations/005_import_batches_source_v5'))
+        .IMPORT_BATCHES_SOURCE_V5_MIGRATION,
+      (await import('./migrations/006_transactions_type_constraint_v6'))
+        .TRANSACTIONS_TYPE_CONSTRAINT_V6_MIGRATION,
+      (await import('./migrations/007_app_settings_v7'))
+        .APP_SETTINGS_V7_MIGRATION,
+      (await import('./migrations/008_budget_templates_reminders_v8'))
+        .BUDGET_TEMPLATES_REMINDERS_V8_MIGRATION,
+      (await import('./migrations/009_usability_rebuild_v9'))
+        .USABILITY_REBUILD_V9_MIGRATION,
+      (await import('./migrations/010_transaction_discounts_v10'))
+        .TRANSACTION_DISCOUNTS_V10_MIGRATION,
+      IMPORT_BATCH_ERRORS_V11_MIGRATION,
+    ])
+    executor.database.exec(`
+      INSERT INTO ledgers VALUES ('ledger', '账本', 'CNY', 1, '${now()}', '${now()}');
+      -- 新账户：已有 account_ 前缀
+      INSERT INTO accounts VALUES ('account_bank', 'ledger', '银行卡', 'bank', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}');
+      -- 旧账户：缺少 account_ 前缀
+      INSERT INTO accounts VALUES ('old_credit', 'ledger', '信用卡', 'credit_card', 'credit', 'CNY', NULL, NULL, '${now()}', '${now()}');
+      -- 旧账户：另一个没有前缀的
+      INSERT INTO accounts VALUES ('cash_account', 'ledger', '现金', 'cash', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}');
+
+      -- entries 引用旧账户
+      INSERT INTO transactions (id, ledger_id, type, status, amount_minor, currency, occurred_at, created_at, updated_at)
+        VALUES ('tx1', 'ledger', 'expense', 'posted', 1000, 'CNY', '${now()}', '${now()}', '${now()}');
+      INSERT INTO entries VALUES ('e1', 'ledger', 'tx1', 'old_credit', NULL, 'debit', 1000, '${now()}');
+      INSERT INTO entries VALUES ('e2', 'ledger', 'tx1', 'cash_account', NULL, 'credit', 1000, '${now()}');
+      INSERT INTO entries VALUES ('e3', 'ledger', 'tx1', 'account_bank', NULL, 'credit', 1000, '${now()}');
+    `)
+
+    // 跑 v12：旧账户补齐 ID，新账户不变
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12])
+
+    // 新账户保持原 ID
+    const bankRow = await executor.query<{ id: string }>(
+      "SELECT id FROM accounts WHERE name = '银行卡'",
+    )
+    expect(bankRow).toEqual([{ id: 'account_bank' }])
+
+    // 旧账户获得了 account_ 前缀的新 ID
+    const creditRow = await executor.query<{ id: string }>(
+      "SELECT id FROM accounts WHERE name = '信用卡'",
+    )
+    expect(creditRow[0]!.id).toMatch(/^account_/)
+    expect(creditRow[0]!.id).not.toEqual('old_credit')
+
+    const cashRow = await executor.query<{ id: string }>(
+      "SELECT id FROM accounts WHERE name = '现金'",
+    )
+    expect(cashRow[0]!.id).toMatch(/^account_/)
+    expect(cashRow[0]!.id).not.toEqual('cash_account')
+
+    // entries 中的旧 account_id 被更新为新 ID
+    const entryCreds = await executor.query<{ account_id: string | null }>(
+      'SELECT account_id FROM entries WHERE account_id IS NOT NULL',
+    )
+    const credId = creditRow[0]!.id
+    const cashId = cashRow[0]!.id
+    expect(entryCreds.map((r) => r.account_id)).toEqual(expect.arrayContaining([
+      'account_bank',
+      credId,
+      cashId,
+    ]))
+  })
+
+  it('v12 is idempotent: re-running does not change existing account_ IDs', async () => {
+    const executor = new NodeSqliteExecutor()
+    // 只跑到 v11
+    const { IMPORT_BATCH_ERRORS_V11_MIGRATION } = await import('./migrations/011_import_batch_errors_v11')
+    await runMigrations(executor, [
+      INITIAL_SCHEMA_MIGRATION,
+      RECEIVABLES_MIGRATION,
+      PAYABLES_MIGRATION,
+      IMPORT_BATCHES_MIGRATION,
+      (await import('./migrations/005_import_batches_source_v5'))
+        .IMPORT_BATCHES_SOURCE_V5_MIGRATION,
+      (await import('./migrations/006_transactions_type_constraint_v6'))
+        .TRANSACTIONS_TYPE_CONSTRAINT_V6_MIGRATION,
+      (await import('./migrations/007_app_settings_v7'))
+        .APP_SETTINGS_V7_MIGRATION,
+      (await import('./migrations/008_budget_templates_reminders_v8'))
+        .BUDGET_TEMPLATES_REMINDERS_V8_MIGRATION,
+      (await import('./migrations/009_usability_rebuild_v9'))
+        .USABILITY_REBUILD_V9_MIGRATION,
+      (await import('./migrations/010_transaction_discounts_v10'))
+        .TRANSACTION_DISCOUNTS_V10_MIGRATION,
+      IMPORT_BATCH_ERRORS_V11_MIGRATION,
+    ])
+    executor.database.exec(`
+      INSERT INTO ledgers VALUES ('ledger', '账本', 'CNY', 1, '${now()}', '${now()}');
+      INSERT INTO accounts VALUES ('account_abc', 'ledger', '测试账户', 'bank', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}');
+    `)
+
+    // 跑 v12：已有 account_ 前缀的账户应该保持不变
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12])
+    expect(await executor.query<{ id: string }>('SELECT id FROM accounts')).toEqual([
+      { id: 'account_abc' },
+    ])
+
+    // 再跑一次 v12（幂等）
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([])
+    expect(await executor.query<{ id: string }>('SELECT id FROM accounts')).toEqual([
+      { id: 'account_abc' },
     ])
   })
 })

@@ -87,10 +87,21 @@ let lastHandledCandidateText = ''
  */
 function startClipboardPolling(): void {
   stopClipboardPolling()
-  clipboardPollInterval = setInterval(async () => {
-    void appStateClipboardProbe()
-  }, CLIPBOARD_POLL_INTERVAL_MS)
-  log.debug('前台剪贴板轮询已启动', { interval: CLIPBOARD_POLL_INTERVAL_MS })
+  try {
+    clipboardPollInterval = setInterval(async () => {
+      try {
+        log.debug('前台轮询: 触发 appStateClipboardProbe')
+        await appStateClipboardProbe()
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        log.error('前台轮询: appStateClipboardProbe 异常', { msg })
+      }
+    }, CLIPBOARD_POLL_INTERVAL_MS)
+    log.info('前台剪贴板轮询已启动', { interval: CLIPBOARD_POLL_INTERVAL_MS, timerId: clipboardPollInterval })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    log.error('前台剪贴板轮询启动失败', { msg })
+  }
 }
 
 function stopClipboardPolling(): void {
@@ -166,123 +177,128 @@ async function appStateClipboardProbe(): Promise<void> {
 onMounted(async () => {
   if (appLockService && appStore.databaseStatus === 'ready') {
     await lockStore.load(appLockService)
-    // App 启动时：如已启用应用锁则锁定，需输入 PIN 解锁
     lockStore.lock()
   }
 
   if (Capacitor.isNativePlatform()) {
-    appStateListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
-      if (!isActive) {
-        // 切到后台：显示隐私遮挡 + 锁定 + 停止轮询
-        privacyVeil.value = true
-        lockStore.lock()
-        stopClipboardPolling()
-      } else {
-        // 回到前台：隐藏遮挡 + 启动轮询
-        privacyVeil.value = false
-        void appStateClipboardProbe()
-        startClipboardPolling()
-      }
-    })
+    log.info('App.vue: onMounted 进入原生分支')
 
-    log.info('App.vue: 注册 clipboardImportCandidate 监听器')
+    try {
+      log.info('App.vue: 开始注册 appStateChange 监听器')
+      appStateListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) {
+          privacyVeil.value = true
+          lockStore.lock()
+          stopClipboardPolling()
+        } else {
+          privacyVeil.value = false
+          void appStateClipboardProbe()
+          startClipboardPolling()
+        }
+      })
+      log.info('App.vue: appStateChange 监听器注册完成')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      log.error('App.vue: appStateChange 监听器注册失败', { msg })
+    }
 
-    // 监听原生 ClipboardReaderPlugin 推来的「检测到待导入账单」事件
-    // 由 ClipboardReaderPlugin.handleOnResume() 在 app 切回前台时触发
-    clipboardCandidateListener = await ClipboardReader.addListener(
-      'clipboardImportCandidate',
-      ({ value }) => {
-        if (!value) {
-          log.warn('收到 clipboardImportCandidate 事件，但 value 为空')
-          return
-        }
-        log.info('收到 clipboardImportCandidate 事件（来自 Java notifyListeners）', {
-          length: value.length,
-          head: value.slice(0, 100),
-        })
-        // 与兜底 appStateClipboardProbe 去重：刚在 2 秒内处理过同样内容就跳过
-        const now = Date.now()
-        if (value === lastHandledCandidateText) {
-          log.info('notifyListeners: 已由 appStateClipboardProbe 处理过 -> 跳过')
-          return
-        }
-        if (value === lastProbedContent && now - lastProbedAt < 2000) {
-          log.info('notifyListeners: 2 秒内 appStateClipboardProbe 已 probe -> 跳过')
-          return
-        }
-        // 数据库未就绪时不弹窗（避免初始化阶段被打扰）
-        if (appStore.databaseStatus !== 'ready') {
-          log.warn('数据库未就绪 (status=' + appStore.databaseStatus + ') -> 跳过')
-          return
-        }
-        // 应用锁锁定时不弹窗（解锁后 onResume 会再触发一次）
-        if (lockStore.loaded && lockStore.enabled && lockStore.locked) {
-          log.warn('应用锁锁定状态 -> 跳过')
-          return
-        }
-        const probe = probeClipboardJson(value)
-        log.info('前端 probeClipboardJson 结果', {
-          ok: probe.ok,
-          count: probe.count,
-        })
-        if (!probe.ok) {
-          log.warn('probe 失败 -> 跳过')
-          return
-        }
-        // 检查是否已消费过的指纹
-        if (isConsumedFingerprint(value)) {
-          log.debug('notifyListeners: 已消费过的指纹 -> 跳过')
-          return
-        }
-        lastHandledCandidateText = value
-        clipboardImportStore.setCandidate(value, probe.count)
-        log.info('候选项已推入 store，弹全局确认框', { count: probe.count })
-      },
-    )
+    try {
+      log.info('App.vue: 开始注册 clipboardImportCandidate 监听器')
+      clipboardCandidateListener = await ClipboardReader.addListener(
+        'clipboardImportCandidate',
+        ({ value }) => {
+          if (!value) {
+            log.warn('收到 clipboardImportCandidate 事件，但 value 为空')
+            return
+          }
+          log.info('收到 clipboardImportCandidate 事件（来自 Java notifyListeners）', {
+            length: value.length,
+            head: value.slice(0, 100),
+          })
+          const now = Date.now()
+          if (value === lastHandledCandidateText) {
+            log.info('notifyListeners: 已由 appStateClipboardProbe 处理过 -> 跳过')
+            return
+          }
+          if (value === lastProbedContent && now - lastProbedAt < 2000) {
+            log.info('notifyListeners: 2 秒内 appStateClipboardProbe 已 probe -> 跳过')
+            return
+          }
+          if (appStore.databaseStatus !== 'ready') {
+            log.warn('数据库未就绪 (status=' + appStore.databaseStatus + ') -> 跳过')
+            return
+          }
+          if (lockStore.loaded && lockStore.enabled && lockStore.locked) {
+            log.warn('应用锁锁定状态 -> 跳过')
+            return
+          }
+          const probe = probeClipboardJson(value)
+          log.info('前端 probeClipboardJson 结果', { ok: probe.ok, count: probe.count })
+          if (!probe.ok) {
+            log.warn('probe 失败 -> 跳过')
+            return
+          }
+          if (isConsumedFingerprint(value)) {
+            log.debug('notifyListeners: 已消费过的指纹 -> 跳过')
+            return
+          }
+          lastHandledCandidateText = value
+          clipboardImportStore.setCandidate(value, probe.count)
+          log.info('候选项已推入 store，弹全局确认框', { count: probe.count })
+        },
+      )
+      log.info('App.vue: clipboardImportCandidate 监听器注册完成')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      log.error('App.vue: clipboardImportCandidate 监听器注册失败', { msg })
+    }
 
-    // 监听原生 PaymentCapturePlugin 推来的「捕获到支付」事件
-    // 当无障碍服务 / 通知监听识别到支付时，自动弹窗确认入账
-    captureCandidateListener = await PaymentCapture.addListener(
-      'paymentCaptureCandidate',
-      (data) => {
-        log.info('收到 paymentCaptureCandidate 事件', {
-          amountMinor: data.amountMinor,
-          merchant: data.merchant,
-          method: data.captureMethod,
-        })
-        // 已在当前页面则不重复弹窗，仅刷新列表
-        if (route.name === 'capture-inbox') {
-          log.debug('当前在待确认账单页 -> 仅刷新列表')
-          return
-        }
-        // 数据库未就绪时跳过
-        if (appStore.databaseStatus !== 'ready') {
-          log.warn('数据库未就绪 -> 跳过')
-          return
-        }
-        // 应用锁锁定时跳过
-        if (lockStore.loaded && lockStore.enabled && lockStore.locked) {
-          log.warn('应用锁锁定 -> 跳过')
-          return
-        }
-        // 自动跳转到待确认账单页面
-        log.info('自动跳转到待确认账单页')
-        router.push({ name: 'capture-inbox' })
-      },
-    )
+    try {
+      log.info('App.vue: 开始注册 paymentCaptureCandidate 监听器')
+      captureCandidateListener = await PaymentCapture.addListener(
+        'paymentCaptureCandidate',
+        (data) => {
+          log.info('收到 paymentCaptureCandidate 事件', {
+            amountMinor: data.amountMinor,
+            merchant: data.merchant,
+            method: data.captureMethod,
+          })
+          if (route.name === 'capture-inbox') {
+            log.debug('当前在待确认账单页 -> 仅刷新列表')
+            return
+          }
+          if (appStore.databaseStatus !== 'ready') {
+            log.warn('数据库未就绪 -> 跳过')
+            return
+          }
+          if (lockStore.loaded && lockStore.enabled && lockStore.locked) {
+            log.warn('应用锁锁定 -> 跳过')
+            return
+          }
+          log.info('自动跳转到待确认账单页')
+          router.push({ name: 'capture-inbox' })
+        },
+      )
+      log.info('App.vue: paymentCaptureCandidate 监听器注册完成')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      log.error('App.vue: paymentCaptureCandidate 监听器注册失败', { msg })
+    }
 
-    // 冷启动兜底：handleOnResume 在 Vue 挂载前就执行了，notifyListeners 事件已丢失。
-    // AppStateChange 在冷启动时也不会触发（没有 inactive→active 转变）。
-    // 所以在监听器注册完成后，等数据库就绪时主动查一次剪贴板。
+    log.info('App.vue: 冷启动兜底检查', { databaseStatus: appStore.databaseStatus, nativePlatform: Capacitor.isNativePlatform() })
     if (appStore.databaseStatus === 'ready') {
+      log.info('App.vue: 数据库已就绪，立即启动轮询')
       void appStateClipboardProbe()
       startClipboardPolling()
     } else {
+      log.info('App.vue: 数据库未就绪，等待 ready 后启动轮询')
       const stopWatch = watch(
         () => appStore.databaseStatus,
         (status) => {
+          log.info('App.vue: databaseStatus 变化', { status })
           if (status === 'ready') {
             stopWatch()
+            log.info('App.vue: 数据库就绪，启动轮询')
             void appStateClipboardProbe()
             startClipboardPolling()
           }

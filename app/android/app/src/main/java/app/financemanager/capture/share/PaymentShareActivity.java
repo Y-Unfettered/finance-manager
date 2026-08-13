@@ -91,7 +91,16 @@ public class PaymentShareActivity extends Activity {
                 recognizer = TextRecognition.getClient(
                         new ChineseTextRecognizerOptions.Builder().build());
 
-                InputImage image = InputImage.fromFilePath(PaymentShareActivity.this, imageUri);
+                // 分享截图通常是 content:// URI，fromFilePath 读不出；先转 Bitmap 再创建 InputImage
+                InputImage image;
+                try {
+                    android.graphics.Bitmap bitmap = android.provider.MediaStore.Images.Media
+                            .getBitmap(PaymentShareActivity.this.getContentResolver(), imageUri);
+                    image = InputImage.fromBitmap(bitmap, 0);
+                    if (bitmap != null) bitmap.recycle();
+                } catch (Exception e) {
+                    throw new RuntimeException("无法读取分享图片: " + imageUri, e);
+                }
                 Task<Text> task = recognizer.process(image);
                 Text result = Tasks.await(task, 15, TimeUnit.SECONDS);
 
@@ -143,22 +152,39 @@ public class PaymentShareActivity extends Activity {
         CapturedPaymentInfo info = new CapturedPaymentInfo();
         info.setConfidence("medium");
 
+        // ---- 金额提取（多格式、宽松匹配）----
+        // 策略：优先 ¥/￥/元 + 数字，其次纯数字。允许千分位逗号。
         String amountStr = null;
         java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("[\u00a5\u00a5]\\s*(\\d+[\\.\\d]*)").matcher(text);
+                .compile("[¥￥]\\s*([\\d,]+(?:\\.\\d+)?)").matcher(text);
         if (m.find()) {
-            amountStr = m.group(1);
+            amountStr = m.group(1).replace(",", "");
         } else {
+            // 匹配 "数字 元"
             m = java.util.regex.Pattern
-                    .compile("(\\d+[\\.\\d]*)\\s*元").matcher(text);
+                    .compile("([\\d,]+(?:\\.\\d+)?)\\s*元").matcher(text);
             if (m.find()) {
-                amountStr = m.group(1);
+                amountStr = m.group(1).replace(",", "");
+            } else {
+                // 兜底：整段文本中查找最长的数字串（排除订单号/手机号等过长数字）
+                m = java.util.regex.Pattern
+                        .compile("\\b(\\d{1,6}(?:\\.\\d{1,2})?)\\b").matcher(text);
+                String bestMatch = null;
+                int bestLength = 0;
+                while (m.find()) {
+                    String candidate = m.group(1);
+                    if (candidate.length() > bestLength) {
+                        bestLength = candidate.length();
+                        bestMatch = candidate;
+                    }
+                }
+                amountStr = bestMatch;
             }
         }
         if (amountStr != null) {
             info.setAmount(amountStr);
             info.setAmountMinor(CapturedPaymentInfo.parseAmountMinor(amountStr));
-            Log.d(TAG, "amount: " + amountStr);
+            Log.d(TAG, "amount: " + amountStr + " minor=" + info.getAmountMinor());
         } else {
             Log.d(TAG, "no amount found");
         }

@@ -12,7 +12,6 @@ import {
 } from '@lucide/vue'
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { getLogger } from '@/features/debug/app-logger'
 
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
@@ -24,7 +23,6 @@ import {
 } from '@/features/capture-inbox/capture-inbox-service'
 import type { ServiceHealth } from '@/features/payment-capture/payment-capture-reader'
 
-const logger = getLogger('captureSettings')
 const router = useRouter()
 
 const health = ref<ServiceHealth | null>(null)

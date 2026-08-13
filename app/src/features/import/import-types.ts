@@ -48,6 +48,8 @@ export interface ParsedImportRow {
   readonly note?: string
   readonly sourceAccountName?: string
   readonly targetAccountName?: string
+  readonly sourceAccountId?: string
+  readonly targetAccountId?: string
   readonly categoryName?: string
   readonly sourceTransactionId?: string
 }
@@ -110,6 +112,32 @@ export interface ImportPlan {
     kind?: 'income' | 'expense' | 'transfer'
     candidates: ReadonlyArray<{ accountId: string; accountName: string }>
   }>
+  /** 缺少分类的行（占位符 `__missing_category_N__`），类似 unmatchedAccounts */
+  readonly unmatchedCategories: ReadonlyArray<{
+    rawName: string
+    kind: 'income' | 'expense'
+  }>
+  /** 统一缺失字段列表。任何字段（账户/分类/日期/金额/类型/转入账户）缺失时统一收集到此数组 */
+  readonly missingFields: readonly MissingField[]
+}
+
+export type MissingFieldId =
+  | 'date'
+  | 'sourceAccount'
+  | 'targetAccount'
+  | 'category'
+  | 'type'
+  | 'amount'
+
+export type MissingFieldType = 'picker' | 'input'
+
+export interface MissingField {
+  readonly rowIndex: number
+  readonly fieldId: MissingFieldId
+  readonly fieldType: MissingFieldType
+  readonly displayLabel: string
+  readonly candidates?: ReadonlyArray<{ id: string; name: string }>
+  readonly selectedValue?: string
 }
 
 export interface ImportResult {
