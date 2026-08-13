@@ -4,4 +4,6 @@
     <string name="title_activity_main">财务经理</string>
     <string name="package_name">app.financemanager.local</string>
     <string name="custom_url_scheme">app.financemanager.local</string>
+    <string name="accessibility_service_description">自动记账无障碍服务：当您在支付宝/微信/京东等支付 APP 完成支付后，自动识别支付金额和商户信息，弹出确认卡片供您一键入账。仅读取支付成功页和账单列表的公开文本，不执行任何自动操作，不读取密码/短信/聊天内容。</string>
+    <string name="share_activity_label">财务经理-记账</string>
 </resources>

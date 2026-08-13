@@ -10,6 +10,8 @@ import {
   Lock,
   MessageSquare,
   PiggyBank,
+  Receipt,
+  Scan,
 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -84,6 +86,8 @@ const entries = [
   { label: '应用锁', description: 'PIN 码保护账本', icon: Lock, route: 'app-lock' },
   { label: '导入账单', description: '导入历史交易', icon: FileUp, route: 'import' },
   { label: 'AI 记账提示词', description: '复制提示词到豆包/AI，截图生成 JSON', icon: MessageSquare, route: 'ai-prompt' },
+  { label: '待确认账单', description: '自动捕获的支付待确认', icon: Receipt, route: 'capture-inbox' },
+  { label: '自动记账设置', description: '无障碍 / 通知监听 / 分享 OCR', icon: Scan, route: 'capture-settings' },
   { label: '备份与恢复', description: '完整本地备份', icon: DatabaseBackup, route: 'backup' },
   { label: '导出账单', description: 'CSV 或 JSON', icon: Download, route: 'export' },
 ] as const

@@ -22,6 +22,7 @@ const TARGET = resolve(
 
 const LOCAL_PLUGINS = [
   { pkg: 'local', classpath: 'app.financemanager.local.ClipboardReaderPlugin' },
+  { pkg: 'local', classpath: 'app.financemanager.capture.plugin.PaymentCapturePlugin' },
 ]
 
 if (!existsSync(TARGET)) {

@@ -7,6 +7,7 @@ import AccountDetailView from '@/views/AccountDetailView.vue'
 import PayablesView from '@/views/PayablesView.vue'
 import ReceivablesView from '@/views/ReceivablesView.vue'
 import BillsView from '@/views/BillsView.vue'
+import CaptureInboxView from '@/views/CaptureInboxView.vue'
 import {
   applyNavigationDirection,
   commitNavigationEntry,
@@ -105,6 +106,16 @@ const router = createRouter({
       path: '/reports/monthly',
       name: 'monthly-report',
       component: () => import('@/views/MonthlyReportView.vue'),
+    },
+    {
+      path: '/capture-inbox',
+      name: 'capture-inbox',
+      component: CaptureInboxView,
+    },
+    {
+      path: '/capture-settings',
+      name: 'capture-settings',
+      component: () => import('@/views/CaptureSettingsView.vue'),
     },
     {
       path: '/import',

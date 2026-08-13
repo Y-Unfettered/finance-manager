@@ -3,7 +3,7 @@ import { App as CapacitorApp } from '@capacitor/app'
 import { Capacitor } from '@capacitor/core'
 import { Plus } from '@lucide/vue'
 import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import ClipboardImportDialog from '@/components/ClipboardImportDialog.vue'
 import PinUnlockView from '@/views/PinUnlockView.vue'
@@ -15,6 +15,7 @@ import { ClipboardReader } from '@/features/clipboard/clipboard-reader'
 import { isConsumedFingerprint } from '@/features/clipboard/clipboard-fingerprint-cache'
 import { useAppStore } from '@/stores/app'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
+import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
 import {
   navigationCacheEpoch,
   navigationDirection,
@@ -23,6 +24,7 @@ import {
 
 const appStore = useAppStore()
 const route = useRoute()
+const router = useRouter()
 const lockStore = useAppLockStore()
 const appLockService = inject(appLockServiceKey)
 const clipboardImportStore = useClipboardImportStore()
@@ -43,6 +45,7 @@ const showUnlock = computed(
 
 let appStateListener: { remove: () => void } | undefined
 let clipboardCandidateListener: { remove: () => void } | undefined
+let captureCandidateListener: { remove: () => void } | undefined
 
 // 前台剪贴板轮询定时器：app 在前台时定期探测剪贴板，确保用户在前台复制数据后能立即弹窗
 let clipboardPollInterval: ReturnType<typeof setInterval> | null = null
@@ -237,6 +240,37 @@ onMounted(async () => {
       },
     )
 
+    // 监听原生 PaymentCapturePlugin 推来的「捕获到支付」事件
+    // 当无障碍服务 / 通知监听识别到支付时，自动弹窗确认入账
+    captureCandidateListener = await PaymentCapture.addListener(
+      'paymentCaptureCandidate',
+      (data) => {
+        log.info('收到 paymentCaptureCandidate 事件', {
+          amountMinor: data.amountMinor,
+          merchant: data.merchant,
+          method: data.captureMethod,
+        })
+        // 已在当前页面则不重复弹窗，仅刷新列表
+        if (route.name === 'capture-inbox') {
+          log.debug('当前在待确认账单页 -> 仅刷新列表')
+          return
+        }
+        // 数据库未就绪时跳过
+        if (appStore.databaseStatus !== 'ready') {
+          log.warn('数据库未就绪 -> 跳过')
+          return
+        }
+        // 应用锁锁定时跳过
+        if (lockStore.loaded && lockStore.enabled && lockStore.locked) {
+          log.warn('应用锁锁定 -> 跳过')
+          return
+        }
+        // 自动跳转到待确认账单页面
+        log.info('自动跳转到待确认账单页')
+        router.push({ name: 'capture-inbox' })
+      },
+    )
+
     // 冷启动兜底：handleOnResume 在 Vue 挂载前就执行了，notifyListeners 事件已丢失。
     // AppStateChange 在冷启动时也不会触发（没有 inactive→active 转变）。
     // 所以在监听器注册完成后，等数据库就绪时主动查一次剪贴板。
@@ -263,6 +297,7 @@ onMounted(async () => {
 onUnmounted(() => {
   appStateListener?.remove()
   clipboardCandidateListener?.remove()
+  captureCandidateListener?.remove()
   stopClipboardPolling()
 })
 
