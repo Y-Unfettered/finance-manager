@@ -48,9 +48,9 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-runtime:$androidxFragmentVersion"
     implementation "androidx.concurrent:concurrent-futures:1.2.0"
 
-    // ML Kit - 本地 OCR（分享截图文字识别）
-    implementation 'com.google.android.gms:play-services-mlkit-text-recognition:19.0.0'
-    implementation 'com.google.mlkit:text-recognition-chinese:16.0.0'
+    // OCR - 离线文字识别（Tesseract/TessTwo，不依赖 Google Play Services）
+    // 小米澎湃 OS 中国版无 Google Play Services，ML Kit 不可用，改用 TessTwo
+    implementation 'com.rmtheis:tess-two:9.1.0'
 
     // Gson - JSON 序列化
     implementation 'com.google.code.gson:gson:2.11.0'
