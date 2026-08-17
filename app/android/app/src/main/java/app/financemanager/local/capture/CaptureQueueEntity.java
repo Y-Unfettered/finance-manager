@@ -55,6 +55,13 @@ public class CaptureQueueEntity {
     @NonNull
     public String status;
 
+    // 当场弹窗记账用的规则建议字段
+    @Nullable
+    public String suggestedCategory;
+
+    @Nullable
+    public String defaultAccountId;
+
     public long createdAt;
 
     public long getId() { return id; }
@@ -101,4 +108,10 @@ public class CaptureQueueEntity {
 
     public long getCreatedAt() { return createdAt; }
     public void setCreatedAt(long v) { this.createdAt = v; }
+
+    @Nullable public String getSuggestedCategory() { return suggestedCategory; }
+    public void setSuggestedCategory(@Nullable String v) { this.suggestedCategory = v; }
+
+    @Nullable public String getDefaultAccountId() { return defaultAccountId; }
+    public void setDefaultAccountId(@Nullable String v) { this.defaultAccountId = v; }
 }

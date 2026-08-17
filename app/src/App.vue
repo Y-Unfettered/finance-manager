@@ -6,6 +6,7 @@ import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import ClipboardImportDialog from '@/components/ClipboardImportDialog.vue'
+import CaptureQuickEntrySheet from '@/components/CaptureQuickEntrySheet.vue'
 import PinUnlockView from '@/views/PinUnlockView.vue'
 import RoutePageFrame from '@/components/RoutePageFrame.vue'
 import { appLockServiceKey } from '@/features/app-lock/app-lock-service'
@@ -14,6 +15,7 @@ import { getLogger } from '@/features/debug/app-logger'
 import { ClipboardReader } from '@/features/clipboard/clipboard-reader'
 import { isConsumedFingerprint } from '@/features/clipboard/clipboard-fingerprint-cache'
 import { useAppStore } from '@/stores/app'
+import { useCaptureEntryStore } from '@/stores/capture-entry'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
 import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
 import {
@@ -28,6 +30,7 @@ const router = useRouter()
 const lockStore = useAppLockStore()
 const appLockService = inject(appLockServiceKey)
 const clipboardImportStore = useClipboardImportStore()
+const captureEntryStore = useCaptureEntryStore()
 const log = getLogger('clipboard')
 
 const privacyVeil = ref(false)
@@ -275,8 +278,9 @@ onMounted(async () => {
             log.warn('应用锁锁定 -> 跳过')
             return
           }
-          log.info('自动跳转到待确认账单页')
-          router.push({ name: 'capture-inbox' })
+          // 当场弹窗记账：直接弹出底部卡片，不再跳转
+          captureEntryStore.showEntry(data)
+          log.info('显示当场弹窗记账', { amountMinor: data.amountMinor, merchant: data.merchant })
         },
       )
       log.info('App.vue: paymentCaptureCandidate 监听器注册完成')
@@ -360,6 +364,9 @@ watch(
 
   <!-- 全局剪贴板导入确认弹窗：app 切回前台时若剪贴板有待导入 JSON 则显示 -->
   <ClipboardImportDialog />
+
+  <!-- 当场弹窗记账：原生侧检测到支付完成后，底部弹出快速入账卡片 -->
+  <CaptureQuickEntrySheet />
 </template>
 
 <style>

@@ -62,6 +62,7 @@ public class PaymentCapturePlugin extends Plugin {
     /** 事件名：捕获队列变化时推送到前端 */
     public static final String EVENT_CANDIDATE = "paymentCaptureCandidate";
     public static final String EVENT_SERVICE_HEALTH = "paymentCaptureServiceHealth";
+    public static final String EVENT_QUICK_ENTRY = "paymentCaptureQuickEntry";
 
     /** 测试事件版本号 */
     public static final String PARSER_VERSION = "0.1.0";
@@ -674,6 +675,64 @@ public class PaymentCapturePlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /**
+     * 获取规则配置 JSON。
+     */
+    @PluginMethod
+    public void getCaptureRules(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            String configJson = app.financemanager.capture.accessibility.rules.CaptureRuleStorage
+                    .loadConfig(getContext());
+            ret.put("success", true);
+            ret.put("configJson", configJson != null ? configJson : "");
+            ret.put("hasConfig", configJson != null && !configJson.isEmpty());
+        } catch (Exception e) {
+            ret.put("success", false);
+            ret.put("message", "异常: " + e.getMessage());
+            ret.put("configJson", "");
+            ret.put("hasConfig", false);
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 保存规则配置 JSON。
+     */
+    @PluginMethod
+    public void saveCaptureRules(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            String configJson = call.getString("configJson", "");
+            app.financemanager.capture.accessibility.rules.CaptureRuleStorage
+                    .saveConfig(getContext(), configJson);
+            ret.put("success", true);
+            ret.put("message", "规则配置已保存");
+        } catch (Exception e) {
+            ret.put("success", false);
+            ret.put("message", "保存失败: " + e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 重置规则配置为默认。
+     */
+    @PluginMethod
+    public void resetCaptureRules(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            app.financemanager.capture.accessibility.rules.CaptureRuleStorage
+                    .clearConfig(getContext());
+            ret.put("success", true);
+            ret.put("message", "规则配置已重置");
+        } catch (Exception e) {
+            ret.put("success", false);
+            ret.put("message", "重置失败: " + e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
     @PluginMethod
     public void runSelfTest(PluginCall call) {
         JSObject ret = new JSObject();
@@ -791,7 +850,33 @@ public class PaymentCapturePlugin extends Plugin {
         obj.put("parserVersion", e.getParserVersion() != null ? e.getParserVersion() : PARSER_VERSION);
         obj.put("status", e.getStatus() != null ? e.getStatus() : "pending");
         obj.put("createdAt", e.getCreatedAt());
+        obj.put("suggestedCategory", e.getSuggestedCategory() != null ? e.getSuggestedCategory() : "");
+        obj.put("defaultAccountId", e.getDefaultAccountId() != null ? e.getDefaultAccountId() : "");
         return obj;
+    }
+
+    /**
+     * 当场弹窗记账事件推送。
+     *
+     * 原生侧检测到支付成功，在写入捕获队列后调用此方法，
+     * 通知前端直接弹出 CaptureQuickEntrySheet。
+     */
+    public static void notifyQuickEntry(CaptureQueueEntity entity) {
+        PaymentCapturePlugin instance = INSTANCE;
+        if (instance == null || instance.bridge == null) {
+            Log.d(TAG, "notifyQuickEntry: 插件未就绪，跳过推送");
+            return;
+        }
+        instance.notifyQuickEntryCandidate(entity);
+    }
+
+    public void notifyQuickEntryCandidate(CaptureQueueEntity entity) {
+        if (bridge == null) {
+            Log.d(TAG, "notifyQuickEntryCandidate: bridge 不可用");
+            return;
+        }
+        JSObject payload = entityToJS(entity);
+        notifyListeners(EVENT_QUICK_ENTRY, payload);
     }
 
     // ========================================================================

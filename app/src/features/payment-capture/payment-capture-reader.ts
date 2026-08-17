@@ -21,6 +21,10 @@ export interface CapturedPayment {
   parserVersion: string
   status: 'pending' | 'acknowledged' | 'dismissed' | 'expired'
   createdAt: number
+  /** 规则建议的分类（格式 "expense:food" / "income:其他"） */
+  suggestedCategory?: string
+  /** 规则建议的默认账户 ID */
+  defaultAccountId?: string
 }
 
 /** 服务健康状态。 */
@@ -184,10 +188,21 @@ export interface PaymentCapturePlugin {
   }>
 
   addListener(
-    event: 'paymentCaptureCandidate',
+    event: 'paymentCaptureCandidate' | 'paymentCaptureQuickEntry',
     listener: (data: CapturedPayment) => void,
   ): Promise<PluginListenerHandle>
   removeAllListeners(): Promise<void>
+
+  // 规则配置
+  getCaptureRules(): Promise<RuleConfigResult>
+  saveCaptureRules(options: { config: string }): Promise<RuleConfigResult>
+  resetCaptureRules(): Promise<RuleConfigResult>
+}
+
+export interface RuleConfigResult {
+  success: boolean
+  message?: string
+  config?: unknown
 }
 
 interface PluginListenerHandle {
@@ -308,12 +323,22 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   }
 
   async addListener(
-    event: 'paymentCaptureCandidate',
+    event: 'paymentCaptureCandidate' | 'paymentCaptureQuickEntry',
     listener: (data: CapturedPayment) => void,
   ): Promise<PluginListenerHandle> {
     void event
     void listener
     return { remove: async () => {} }
+  }
+
+  async getCaptureRules(): Promise<RuleConfigResult> {
+    return { success: false, message: '仅原生平台可用' }
+  }
+  async saveCaptureRules(): Promise<RuleConfigResult> {
+    return { success: false, message: '仅原生平台可用' }
+  }
+  async resetCaptureRules(): Promise<RuleConfigResult> {
+    return { success: false, message: '仅原生平台可用' }
   }
 
   async removeAllListeners(): Promise<void> {}

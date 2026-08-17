@@ -16,6 +16,8 @@ public class CapturedPaymentInfo {
     private String orderNo;           // 订单号
     private String confidence;        // 字段完整度描述
     private boolean hasAmount;        // 是否解析到金额（必填字段）
+    private String suggestedCategory; // 规则建议的分类 ID（格式 "kind:id"）
+    private String defaultAccountId;  // 规则建议的默认账户 ID
 
     public CapturedPaymentInfo() {
         this.confidence = "high";
@@ -97,6 +99,14 @@ public class CapturedPaymentInfo {
 
     public boolean isHasAmount() { return hasAmount; }
 
+    // --- 规则建议字段 ---
+
+    public String getSuggestedCategory() { return suggestedCategory; }
+    public void setSuggestedCategory(String suggestedCategory) { this.suggestedCategory = suggestedCategory; }
+
+    public String getDefaultAccountId() { return defaultAccountId; }
+    public void setDefaultAccountId(String defaultAccountId) { this.defaultAccountId = defaultAccountId; }
+
     @Override
     public String toString() {
         return "CapturedPaymentInfo{"
@@ -105,6 +115,8 @@ public class CapturedPaymentInfo {
                 + ", amount='" + amount + '\''
                 + ", amountMinor=" + amountMinor
                 + ", accountHint='" + accountHint + '\''
+                + ", suggestedCategory='" + suggestedCategory + '\''
+                + ", defaultAccountId='" + defaultAccountId + '\''
                 + '}';
     }
 }

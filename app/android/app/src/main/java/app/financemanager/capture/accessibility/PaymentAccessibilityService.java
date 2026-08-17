@@ -12,6 +12,8 @@ import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
 import app.financemanager.local.PaymentCapturePlugin;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -146,16 +148,40 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
     /**
      * 解析窗口内容，写入捕获队列。
+     *
+     * 解析策略（优先级从高到低）：
+     * 1. RuleBasedParser：基于用户配置的 JSON 规则（支持自定义规则）
+     * 2. PaymentParserRegistry：预置的硬编码适配器
+     * 3. 都不成功则跳过
      */
     private void processWindow(String packageName, AccessibilityNodeInfo root) {
-        PaymentParserAdapter adapter = PaymentParserRegistry.forPackage(packageName);
-        if (adapter == null) {
-            AccessibilityDiagnostics.noAdapter(packageName);
-            Log.d(TAG, "无适配器: " + packageName);
-            return;
+        CapturedPaymentInfo info = null;
+
+        // 策略 1：尝试基于规则的解析器
+        try {
+            app.financemanager.capture.accessibility.rules.RuleBasedParser ruleParser =
+                    new app.financemanager.capture.accessibility.rules.RuleBasedParser();
+            info = ruleParser.parse(this, root, packageName);
+            if (info != null) {
+                Log.d(TAG, "RuleBasedParser 解析成功: " + packageName);
+            }
+        } catch (Exception e) {
+            Log.d(TAG, "RuleBasedParser 跳过: " + e.getMessage());
         }
 
-        CapturedPaymentInfo info = adapter.parse(this, root);
+        // 策略 2：回退到硬编码适配器
+        if (info == null) {
+            PaymentParserAdapter adapter = PaymentParserRegistry.forPackage(packageName);
+            if (adapter != null) {
+                info = adapter.parse(this, root);
+                if (info != null) {
+                    Log.d(TAG, "硬编码适配器解析成功: " + packageName);
+                }
+            } else {
+                AccessibilityDiagnostics.noAdapter(packageName);
+            }
+        }
+
         if (info == null) {
             Log.d(TAG, "未解析出支付信息: " + packageName);
             return;
@@ -197,12 +223,16 @@ public class PaymentAccessibilityService extends AccessibilityService {
             entity.setConfidence(parseConfidence(info.getConfidence()));
             entity.setParserVersion(PARSER_VERSION);
             entity.setStatus("pending");
+            entity.setSuggestedCategory(info.getSuggestedCategory());
+            entity.setDefaultAccountId(info.getDefaultAccountId());
             entity.setCreatedAt(System.currentTimeMillis());
 
             dao.insert(entity);
 
             AccessibilityDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
             PaymentCapturePlugin.notifyCandidate(entity);
+            // 当场弹窗记账：同步推送事件给前端，触发 CaptureQuickEntrySheet
+            PaymentCapturePlugin.notifyQuickEntry(entity);
 
             lastSourcePackage = info.getSourcePackage();
             lastSourceName = info.getSourceName();
