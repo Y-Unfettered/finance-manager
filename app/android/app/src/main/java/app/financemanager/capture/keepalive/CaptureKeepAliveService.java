@@ -14,7 +14,7 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
-import app.financemanager.MainActivity;
+import app.financemanager.local.MainActivity;
 
 /**
  * 前台保活服务。
