@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.provider.Settings;
 import android.util.Log;
 
+import app.financemanager.capture.keepalive.CaptureKeepAliveService;
+
 /**
  * 无障碍服务自动启用工具。
  *
@@ -65,9 +67,10 @@ public class AccessibilityEnabler {
 
             Log.d(TAG, "当前已启用无障碍服务: " + current);
 
-            // 如果已经启用，直接返回成功
+            // 如果已经启用，启动保活服务并返回成功
             if (current.contains(componentName)) {
                 Log.d(TAG, "无障碍服务已启用");
+                CaptureKeepAliveService.start(context);
                 shell.release();
                 return true;
             }
@@ -80,6 +83,10 @@ public class AccessibilityEnabler {
 
             boolean success = result1 != null && result2 != null;
             Log.d(TAG, "启用无障碍服务: " + (success ? "成功" : "失败"));
+
+            if (success) {
+                CaptureKeepAliveService.start(context);
+            }
 
             shell.release();
             return success;

@@ -7,6 +7,7 @@ import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
+import app.financemanager.capture.keepalive.CaptureKeepAliveService;
 import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
@@ -42,6 +43,9 @@ public class PaymentAccessibilityService extends AccessibilityService {
         super.onServiceConnected();
         AccessibilityDiagnostics.serviceConnected(this.getApplicationContext());
         Log.d(TAG, "onServiceConnected: 无障碍服务已启动");
+
+        // 启动前台保活服务，防止主进程被系统杀死导致无障碍服务断开
+        CaptureKeepAliveService.start(this.getApplicationContext());
 
         // 注意：FLAG_REPORT_VIEW_IDS 在小米澎湃 OS / HarmonyOS 等定制 ROM 上会导致
         // setServiceInfo() 抛 SecurityException，进而使服务启用即崩溃、被系统移除。

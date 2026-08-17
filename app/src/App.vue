@@ -18,6 +18,7 @@ import { useAppStore } from '@/stores/app'
 import { useCaptureEntryStore } from '@/stores/capture-entry'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
 import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
+import { autoRecoverAccessibility, ensureShizukuRunning } from '@/features/capture-inbox/capture-inbox-service'
 import {
   navigationCacheEpoch,
   navigationDirection,
@@ -294,6 +295,9 @@ onMounted(async () => {
       log.info('App.vue: 数据库已就绪，立即启动轮询')
       void appStateClipboardProbe()
       startClipboardPolling()
+      // 确保 Shizuku 长驻 + 恢复无障碍服务
+      void ensureShizukuRunning()
+      void autoRecoverAccessibility()
     } else {
       log.info('App.vue: 数据库未就绪，等待 ready 后启动轮询')
       const stopWatch = watch(
@@ -304,6 +308,10 @@ onMounted(async () => {
             stopWatch()
             log.info('App.vue: 数据库就绪，启动轮询')
             void appStateClipboardProbe()
+            startClipboardPolling()
+            // 确保 Shizuku 长驻 + 恢复无障碍服务
+            void ensureShizukuRunning()
+            void autoRecoverAccessibility()
             startClipboardPolling()
           }
         },
