@@ -16,6 +16,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
+import app.financemanager.capture.shizuku.AccessibilityAutoRecover;
 import app.financemanager.capture.shizuku.AccessibilityEnabler;
 import app.financemanager.capture.shizuku.ShizukuShell;
 import app.financemanager.capture.accessibility.AccessibilityDiagnostics;
