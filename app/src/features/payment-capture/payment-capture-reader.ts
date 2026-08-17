@@ -109,6 +109,21 @@ export interface NotificationDiagnosticsResult {
   ring: string[]
 }
 
+/** 自动恢复状态。 */
+export interface AutoRecoverStatus {
+  enabled: boolean
+  shizukuAvailable: boolean
+  shizukuRunning: boolean
+  lastStatus: string
+}
+
+/** 自动恢复结果。 */
+export interface AutoRecoverResult {
+  success: boolean
+  message: string
+  autoRecoverEnabled?: boolean
+}
+
 /**
  * 原生支付捕获插件接口。
  * 对应 Android 端 PaymentCapturePlugin.java。
@@ -132,6 +147,13 @@ export interface PaymentCapturePlugin {
   runSelfTest(): Promise<SelfTestResult>
   enableAccessibilityViaShizuku(): Promise<{ success: boolean; message: string }>
   requestShizukuPermission(): Promise<{ success: boolean; message: string }>
+
+  // 自动恢复
+  autoRecoverAccessibility(): Promise<AutoRecoverResult>
+  setAutoRecoverEnabled(options: { enabled: boolean }): Promise<{ success: boolean; enabled: boolean }>
+  getAutoRecoverStatus(): Promise<AutoRecoverStatus>
+  ensureShizukuRunning(): Promise<{ success: boolean; available: boolean; message?: string }>
+
   addCapturedEvent(options: {
     sourcePackage?: string
     sourceName?: string
@@ -241,6 +263,22 @@ class WebPaymentCapture implements PaymentCapturePlugin {
 
   async requestShizukuPermission(): Promise<{ success: boolean; message: string }> {
     return { success: false, message: '仅原生平台可用' }
+  }
+
+  async autoRecoverAccessibility(): Promise<AutoRecoverResult> {
+    return { success: false, message: '仅原生平台可用' }
+  }
+
+  async setAutoRecoverEnabled(): Promise<{ success: boolean; enabled: boolean }> {
+    return { success: false, enabled: false }
+  }
+
+  async getAutoRecoverStatus(): Promise<AutoRecoverStatus> {
+    return { enabled: false, shizukuAvailable: false, shizukuRunning: false, lastStatus: '' }
+  }
+
+  async ensureShizukuRunning(): Promise<{ success: boolean; available: boolean; message?: string }> {
+    return { success: false, available: false, message: '仅原生平台可用' }
   }
 
   async runSelfTest(): Promise<SelfTestResult> {

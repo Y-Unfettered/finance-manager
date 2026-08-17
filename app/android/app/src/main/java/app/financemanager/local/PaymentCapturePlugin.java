@@ -596,8 +596,85 @@ public class PaymentCapturePlugin extends Plugin {
         call.resolve(ret);
     }
 
+    /**
+     * 启动自动恢复：检查无障碍是否存活，不存活则通过 Shizuku 恢复。
+     * APP 启动时由前端调用，也可在设置页手动触发。
+     */
     @PluginMethod
-    public void runSelfTest(PluginCall call) {
+    public void autoRecoverAccessibility(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            AccessibilityAutoRecover recover = AccessibilityAutoRecover.getInstance(getContext());
+            AccessibilityAutoRecover.RecoverResult result = recover.checkAndRestore();
+            ret.put("success", result.success);
+            ret.put("message", result.message);
+            ret.put("autoRecoverEnabled", recover.isEnabled());
+        } catch (Exception e) {
+            Log.w(TAG, "autoRecoverAccessibility: 异常", e);
+            ret.put("success", false);
+            ret.put("message", "异常: " + e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 设置自动恢复开关。
+     */
+    @PluginMethod
+    public void setAutoRecoverEnabled(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            boolean enabled = call.getBoolean("enabled", true);
+            AccessibilityAutoRecover.getInstance(getContext()).setEnabled(enabled);
+            ret.put("success", true);
+            ret.put("enabled", enabled);
+        } catch (Exception e) {
+            ret.put("success", false);
+            ret.put("message", "设置失败: " + e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 获取自动恢复状态。
+     */
+    @PluginMethod
+    public void getAutoRecoverStatus(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            AccessibilityAutoRecover recover = AccessibilityAutoRecover.getInstance(getContext());
+            ret.put("enabled", recover.isEnabled());
+            ret.put("shizukuAvailable", ShizukuShell.isAvailable());
+            ret.put("shizukuRunning", ShizukuShell.isRunning());
+            ret.put("lastStatus", AccessibilityAutoRecover.getLastStatus(getContext()));
+        } catch (Exception e) {
+            ret.put("enabled", false);
+            ret.put("shizukuAvailable", false);
+            ret.put("shizukuRunning", false);
+            ret.put("lastStatus", "");
+        }
+        call.resolve(ret);
+    }
+
+    /**
+     * 确保 Shizuku UserService 长驻进程已启动。
+     * 开机后或首次启动时调用一次即可。
+     */
+    @PluginMethod
+    public void ensureShizukuRunning(PluginCall call) {
+        JSObject ret = new JSObject();
+        try {
+            AccessibilityAutoRecover.getInstance(getContext()).ensureShizukuRunning();
+            ret.put("success", true);
+            ret.put("available", ShizukuShell.isAvailable());
+        } catch (Exception e) {
+            ret.put("success", false);
+            ret.put("message", "异常: " + e.getMessage());
+        }
+        call.resolve(ret);
+    }
+
+    @PluginMethod
         JSObject ret = new JSObject();
         try {
             CaptureQueueDao dao = getDao();

@@ -12,6 +12,7 @@ import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
 
 export type { CapturedPayment, ServiceHealth, AccessibilityDiagnosticsResult, NotificationDiagnosticsResult } from '@/features/payment-capture/payment-capture-reader'
+export type { AutoRecoverStatus, AutoRecoverResult } from '@/features/payment-capture/payment-capture-reader'
 
 export interface ConfirmInput {
   event: CapturedPayment
@@ -126,4 +127,24 @@ export function exportDiagnosticLog() {
 /** 通过分享面板分享诊断日志。 */
 export function shareDiagnosticLog() {
   return PaymentCapture.shareDiagnosticLog()
+}
+
+/** 启动自动恢复：检查无障碍是否存活，不存活则通过 Shizuku 恢复。 */
+export function autoRecoverAccessibility() {
+  return PaymentCapture.autoRecoverAccessibility()
+}
+
+/** 设置自动恢复开关。 */
+export function setAutoRecoverEnabled(enabled: boolean) {
+  return PaymentCapture.setAutoRecoverEnabled({ enabled })
+}
+
+/** 获取自动恢复状态。 */
+export function getAutoRecoverStatus() {
+  return PaymentCapture.getAutoRecoverStatus()
+}
+
+/** 确保 Shizuku UserService 长驻进程已启动。 */
+export function ensureShizukuRunning() {
+  return PaymentCapture.ensureShizukuRunning()
 }

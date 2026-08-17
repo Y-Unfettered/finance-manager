@@ -18,7 +18,10 @@ import app.financemanager.capture.shizuku.user.UserService;
  * 通过 Shizuku 绑定 UserService（本地 AIDL 服务），执行 ADB shell 命令。
  * 用于自动启用无障碍服务，绕过小米等定制 ROM 对无障碍权限的限制。
  *
- * 参考：AutoAccounting 项目的 Shell.kt + ShizukuShell.kt
+ * 长驻模式：daemon(true) 让 UserService 像 GKD 一样长期运行在 Shizuku 进程中，
+ * 不会因主 APP 被杀而消失。配合 AccessibilityMonitorService 实现无障碍自动恢复。
+ *
+ * 参考：AutoAccounting 项目的 Shell.kt + ShizukuShell.kt，GKD 的 Shizuku 用法
  *
  * 注意：
  * - Shizuku 必须已安装并在用户授权
@@ -28,6 +31,7 @@ import app.financemanager.capture.shizuku.user.UserService;
 public class ShizukuShell {
 
     private static final String TAG = "ShizukuShell";
+    private static final boolean DAEMON = true;
 
     private final String packageName;
     private volatile IShell mUserService;
@@ -129,7 +133,7 @@ public class ShizukuShell {
             try {
                 ComponentName componentName = new ComponentName(packageName, UserService.class.getName());
                 UserServiceArgs args = new UserServiceArgs(componentName)
-                        .daemon(false)
+                        .daemon(DAEMON)
                         .processNameSuffix("service");
 
                 Shizuku.bindUserService(args, new ServiceConnection() {

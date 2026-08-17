@@ -11,6 +11,8 @@ import {
   AlertTriangle,
   RotateCcw,
   Activity,
+  RefreshCw,
+  Code,
 } from '@lucide/vue'
 import { onActivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -30,11 +32,17 @@ import {
   getAccessibilityDiagnostics,
   getNotificationDiagnostics,
   resetDiagnostics,
+  autoRecoverAccessibility,
+  setAutoRecoverEnabled,
+  getAutoRecoverStatus,
+  ensureShizukuRunning,
 } from '@/features/capture-inbox/capture-inbox-service'
 import type {
   ServiceHealth,
   AccessibilityDiagnosticsResult,
   NotificationDiagnosticsResult,
+  AutoRecoverStatus,
+  AutoRecoverResult,
 } from '@/features/payment-capture/payment-capture-reader'
 
 const router = useRouter()
@@ -47,6 +55,11 @@ const selfTestResult = ref<string | null>(null)
 const diagnoseInfo = ref<unknown | null>(null)
 const diagExporting = ref(false)
 const diagExportResult = ref<string | null>(null)
+
+// 自动恢复状态
+const recoverStatus = ref<AutoRecoverStatus | null>(null)
+const recoverSaving = ref(false)
+const recoverMsg = ref<string | null>(null)
 
 // 诊断面板状态
 const a11yDiag = ref<AccessibilityDiagnosticsResult | null>(null)
@@ -217,6 +230,72 @@ async function doShareDiag(): Promise<void> {
   }
 }
 
+// ============================================================
+// 自动恢复
+// ============================================================
+
+async function loadRecoverStatus(): Promise<void> {
+  try {
+    recoverStatus.value = await getAutoRecoverStatus()
+  } catch {
+    recoverStatus.value = null
+  }
+}
+
+async function doToggleAutoRecover(): Promise<void> {
+  if (!recoverStatus.value) return
+  try {
+    recoverSaving.value = true
+    recoverMsg.value = null
+    const result = await setAutoRecoverEnabled(!recoverStatus.value.enabled)
+    await loadRecoverStatus()
+    if (result.success && !recoverStatus.value!.enabled) {
+      recoverMsg.value = '自动恢复已关闭'
+    } else if (result.success) {
+      recoverMsg.value = '自动恢复已开启，正在检查无障碍服务...'
+      await doAutoRecover()
+    }
+  } catch (e) {
+    recoverMsg.value = `设置失败: ${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    recoverSaving.value = false
+  }
+}
+
+async function doAutoRecover(): Promise<void> {
+  try {
+    recoverSaving.value = true
+    recoverMsg.value = '正在恢复...'
+    const result: AutoRecoverResult = await autoRecoverAccessibility()
+    recoverMsg.value = result.message
+    if (result.message && !result.message.includes('正常')) {
+      await load()
+    }
+  } catch (e) {
+    recoverMsg.value = `恢复异常: ${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    recoverSaving.value = false
+  }
+}
+
+async function doEnsureShizuku(): Promise<void> {
+  try {
+    recoverSaving.value = true
+    recoverMsg.value = '正在启动 Shizuku 服务...'
+    const result = await ensureShizukuRunning()
+    if (result.success) {
+      recoverMsg.value = 'Shizuku 服务已就绪'
+      await loadRecoverStatus()
+    } else {
+      recoverMsg.value = result.message || '启动失败'
+    }
+  } catch (e) {
+    recoverMsg.value = `异常: ${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    recoverSaving.value = false
+  }
+}
+
 function statusLabel(status: string): string {
   switch (status) {
     case 'enabled':
@@ -234,14 +313,22 @@ function statusLabel(status: string): string {
   }
 }
 
-onMounted(() => {
-  load()
+onMounted(async () => {
+  await load()
   startPollDiagnostics()
+  void loadRecoverStatus()
+  // APP 启动时自动确保 Shizuku 就绪 + 尝试恢复无障碍
+  void ensureShizukuRunning()
+  void autoRecoverAccessibility()
 })
 
-onActivated(() => {
-  load()
+onActivated(async () => {
+  await load()
   startPollDiagnostics()
+  void loadRecoverStatus()
+  // 每次进入设置页都尝试恢复一次
+  void ensureShizukuRunning()
+  void autoRecoverAccessibility()
 })
 
 onUnmounted(() => {
@@ -259,6 +346,83 @@ onUnmounted(() => {
       <p class="capture-settings__intro">
         开启后，支付宝/微信支付完成后会自动识别并弹窗确认入账。
       </p>
+
+      <!-- 自动恢复面板 -->
+      <section class="recover-section" v-if="health">
+        <div class="recover-header">
+          <h2>
+            <RefreshCw :size="18" />
+            自动恢复
+          </h2>
+          <label class="recover-toggle">
+            <span class="recover-toggle__label">
+              无障碍被杀后自动恢复
+            </span>
+            <button
+              type="button"
+              class="recover-toggle__switch"
+              :class="{ 'recover-toggle__switch--on': recoverStatus?.enabled }"
+              :disabled="recoverSaving"
+              @click="doToggleAutoRecover"
+              :aria-pressed="recoverStatus?.enabled"
+            >
+              <span class="recover-toggle__knob"></span>
+            </button>
+          </label>
+        </div>
+
+        <BaseCard class="recover-card">
+          <div class="recover-row">
+            <span class="recover-row__k">Shizuku 状态</span>
+            <span class="recover-row__v">
+              <CheckCircle v-if="recoverStatus?.shizukuAvailable" :size="14" class="recover-row__icon ok" />
+              <XCircle v-else :size="14" class="recover-row__icon warn" />
+              {{ recoverStatus?.shizukuAvailable ? '已授权' : '未授权' }}
+            </span>
+          </div>
+          <div class="recover-row">
+            <span class="recover-row__k">无障碍状态</span>
+            <span class="recover-row__v">
+              <CheckCircle v-if="health.accessibility.enabled" :size="14" class="recover-row__icon ok" />
+              <XCircle v-else :size="14" class="recover-row__icon warn" />
+              {{ health.accessibility.enabled ? '正常' : '已断开' }}
+            </span>
+          </div>
+          <div class="recover-row" v-if="recoverStatus?.lastStatus">
+            <span class="recover-row__k">最近恢复</span>
+            <span class="recover-row__v">{{ recoverStatus.lastStatus }}</span>
+          </div>
+
+          <div class="recover-actions">
+            <button
+              class="recover-btn"
+              :disabled="recoverSaving || !recoverStatus?.enabled"
+              @click="doAutoRecover"
+            >
+              <Loader2 v-if="recoverSaving && recoverMsg === '正在恢复...'" :size="14" class="spinner" />
+              <RefreshCw v-else :size="14" />
+              立即恢复无障碍
+            </button>
+            <button
+              class="recover-btn recover-btn--secondary"
+              :disabled="recoverSaving"
+              @click="doEnsureShizuku"
+            >
+              <Loader2 v-if="recoverSaving" :size="14" class="spinner" />
+              <ShieldCheck v-else :size="14" />
+              启动 Shizuku 服务
+            </button>
+          </div>
+
+          <p v-if="recoverMsg" class="recover-msg">
+            {{ recoverMsg }}
+          </p>
+          <p class="recover-note">
+            开启后，每次打开 APP 都会自动检查无障碍服务，如果被系统杀掉会通过 Shizuku 自动恢复。
+            无需再手动去系统设置里开启。
+          </p>
+        </BaseCard>
+      </section>
 
       <template v-if="loading">
         <div class="loading-spinner">
@@ -1265,5 +1429,172 @@ section {
   font-size: var(--type-caption-size);
   text-align: center;
   line-height: 1.5;
+}
+
+/* ============================================================
+ * 自动恢复
+ * ============================================================ */
+
+.recover-section {
+  margin-bottom: var(--space-5);
+}
+
+.recover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.recover-header h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--type-section-title-size);
+}
+
+.recover-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.recover-toggle__label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.recover-toggle__switch {
+  position: relative;
+  display: inline-flex;
+  width: 44px;
+  height: 24px;
+  padding: 0;
+  border-radius: 12px;
+  background: var(--color-divider);
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.recover-toggle__switch--on {
+  background: var(--color-primary);
+}
+
+.recover-toggle__knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: white;
+  transition: transform 0.2s;
+}
+
+.recover-toggle__switch--on .recover-toggle__knob {
+  transform: translateX(20px);
+}
+
+.recover-toggle__switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.recover-card {
+  padding: 14px 16px;
+}
+
+.recover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.recover-row + .recover-row {
+  border-top: 1px solid var(--color-divider);
+}
+
+.recover-row__k {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.recover-row__v {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.recover-row__icon {
+  flex-shrink: 0;
+}
+
+.recover-row__icon.ok {
+  color: var(--color-success);
+}
+
+.recover-row__icon.warn {
+  color: var(--color-danger);
+}
+
+.recover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.recover-btn {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 16px;
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent);
+  color: var(--color-primary-600);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.recover-btn--secondary {
+  background: color-mix(in srgb, #7c3aed 10%, transparent);
+  border-color: color-mix(in srgb, #7c3aed 40%, transparent);
+  color: #7c3aed;
+}
+
+.recover-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.recover-msg {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  background: var(--color-surface);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.recover-note {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-tertiary);
 }
 </style>
