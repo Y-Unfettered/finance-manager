@@ -675,6 +675,7 @@ public class PaymentCapturePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void runSelfTest(PluginCall call) {
         JSObject ret = new JSObject();
         try {
             CaptureQueueDao dao = getDao();
