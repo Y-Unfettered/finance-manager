@@ -63,6 +63,9 @@ export interface IncomeCommand extends BaseCommand {
 export interface TransferCommand extends BaseCommand {
   sourceAccount: AccountPostingRef
   targetAccount: AccountPostingRef
+  originalAmountMinor?: number
+  discountMinor?: number
+  discountIncomeCategory?: CategoryPostingRef
 }
 
 export interface CreditPurchaseCommand extends BaseCommand {
@@ -133,9 +136,29 @@ export function createIncome(command: IncomeCommand): TransactionDraft {
 }
 
 export function createTransfer(command: TransferCommand): TransactionDraft {
-  assertAccount(command.sourceAccount, 'debit', 'sourceAccount')
   assertAccount(command.targetAccount, 'debit', 'targetAccount')
   assertDifferentIds(command.sourceAccount.id, command.targetAccount.id)
+
+  const discountIncomeCategory = command.discountIncomeCategory
+  const originalAmountMinor = command.originalAmountMinor
+  const discountMinor = command.discountMinor
+
+  if (
+    discountIncomeCategory !== undefined &&
+    originalAmountMinor !== undefined &&
+    discountMinor !== undefined
+  ) {
+    assertCategory(discountIncomeCategory, 'income')
+    assertId(discountIncomeCategory.id, 'discountIncomeCategory')
+    if (command.amountMinor + discountMinor !== originalAmountMinor) {
+      throw new Error('转账优惠金额与实际支出不一致')
+    }
+    return createDraft('transfer', command, [
+      accountEntry(command.targetAccount.id, 'debit', originalAmountMinor),
+      accountEntry(command.sourceAccount.id, 'credit', command.amountMinor),
+      categoryEntry(discountIncomeCategory.id, 'credit', discountMinor),
+    ])
+  }
 
   return createDraft('transfer', command, [
     accountEntry(command.targetAccount.id, 'debit', command.amountMinor),

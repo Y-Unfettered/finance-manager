@@ -7,24 +7,16 @@ import android.os.Bundle;
 import android.util.Log;
 import android.widget.Toast;
 
-import com.google.android.gms.tasks.Task;
-import com.google.android.gms.tasks.Tasks;
-import com.google.mlkit.vision.common.InputImage;
-import com.google.mlkit.vision.text.Text;
-import com.google.mlkit.vision.text.TextRecognition;
-import com.google.mlkit.vision.text.TextRecognizer;
-import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
-
 import app.financemanager.capture.accessibility.CaptureDedup;
 import app.financemanager.capture.accessibility.CapturedPaymentInfo;
 import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
+import app.financemanager.local.PaymentCapturePlugin;
 
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 public class PaymentShareActivity extends Activity {
 
@@ -86,34 +78,42 @@ public class PaymentShareActivity extends Activity {
         Toast.makeText(this, "正在识别图片...", Toast.LENGTH_SHORT).show();
 
         executor.execute(() -> {
-            TextRecognizer recognizer = null;
+            OfflineOCR ocr = null;
             try {
-                recognizer = TextRecognition.getClient(
-                        new ChineseTextRecognizerOptions.Builder().build());
+                // 使用 PP-OCR（NCNN 离线推理）替代 ML Kit
+                // 小米澎湃 OS 无 Google Play Services，ML Kit 不可用
+                ocr = OfflineOCR.create(PaymentShareActivity.this.getApplicationContext());
+                if (ocr == null) {
+                    throw new RuntimeException("OCR 引擎初始化失败，请确认模型文件已正确打包");
+                }
 
-                // 分享截图通常是 content:// URI，fromFilePath 读不出；先转 Bitmap 再创建 InputImage
-                InputImage image;
+                // 将 content:// URI 转为 Bitmap
+                android.graphics.Bitmap bitmap = null;
                 try {
-                    android.graphics.Bitmap bitmap = android.provider.MediaStore.Images.Media
+                    bitmap = android.provider.MediaStore.Images.Media
                             .getBitmap(PaymentShareActivity.this.getContentResolver(), imageUri);
-                    image = InputImage.fromBitmap(bitmap, 0);
-                    if (bitmap != null) bitmap.recycle();
                 } catch (Exception e) {
                     throw new RuntimeException("无法读取分享图片: " + imageUri, e);
                 }
-                Task<Text> task = recognizer.process(image);
-                Text result = Tasks.await(task, 15, TimeUnit.SECONDS);
 
-                String fullText = result.getText();
-                Log.d(TAG, "OCR result: " + fullText.substring(0, Math.min(fullText.length(), 200)));
+                if (bitmap == null || bitmap.isRecycled()) {
+                    throw new RuntimeException("图片解码失败");
+                }
 
-                if (fullText.isEmpty()) {
+                String fullText = ocr.recognize(bitmap);
+                if (bitmap != null) {
+                    bitmap.recycle();
+                }
+
+                if (fullText == null || fullText.isEmpty()) {
                     runOnUiThread(() -> {
                         Toast.makeText(this, "图片中未识别到文字", Toast.LENGTH_SHORT).show();
                         finish();
                     });
                     return;
                 }
+
+                Log.d(TAG, "OCR result: " + fullText.substring(0, Math.min(fullText.length(), 200)));
 
                 CapturedPaymentInfo info = parseText(fullText);
                 if (info == null) {
@@ -137,8 +137,8 @@ public class PaymentShareActivity extends Activity {
                     finish();
                 });
             } finally {
-                if (recognizer != null) {
-                    recognizer.close();
+                if (ocr != null) {
+                    ocr.release();
                 }
             }
         });
@@ -240,6 +240,7 @@ public class PaymentShareActivity extends Activity {
             entity.setCreatedAt(System.currentTimeMillis());
 
             dao.insert(entity);
+            PaymentCapturePlugin.notifyCandidate(entity);
             Log.d(TAG, "share written: " + info.getAmount());
         } catch (Exception e) {
             Log.w(TAG, "write failed", e);

@@ -34,9 +34,16 @@ public class WechatAdapter implements PaymentParserAdapter {
     @Override
     public CapturedPaymentInfo parse(AccessibilityService service, AccessibilityNodeInfo root) {
         String text = PaymentParserAdapter.extractVisibleText(root);
-        if (text == null || text.isEmpty()) return null;
+        if (text == null || text.isEmpty()) {
+            AccessibilityDiagnostics.textEmpty(getPackageName());
+            return null;
+        }
 
-        if (!SUCCESS_PATTERN.matcher(text).find()) return null;
+        if (!SUCCESS_PATTERN.matcher(text).find()) {
+            AccessibilityDiagnostics.noKeyword(getPackageName(),
+                    text.substring(0, Math.min(text.length(), 80)));
+            return null;
+        }
 
         CapturedPaymentInfo info = new CapturedPaymentInfo();
         info.setSourcePackage(getPackageName());
@@ -58,10 +65,12 @@ public class WechatAdapter implements PaymentParserAdapter {
         if (orderNo != null) info.setOrderNo(orderNo.trim());
 
         if (!info.isHasAmount()) {
+            AccessibilityDiagnostics.noAmount(getPackageName());
             Log.d(TAG, "微信支付页未提取到金额，跳过");
             return null;
         }
 
+        AccessibilityDiagnostics.parsed(getPackageName(), info.getAmount(), info.getMerchant());
         Log.d(TAG, "微信支付解析成功: " + info);
         return info;
     }

@@ -23,16 +23,23 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // ⚠️ Capacitor 8 的 BridgeActivity.onCreate() 内部已经调用了 this.load()
+        // 创建 Bridge。必须在 super.onCreate() 之前注册插件，否则插件加不进去。
+        try {
+            this.registerPlugin(ClipboardReaderPlugin.class);
+        } catch (Throwable e) {
+            Log.e(TAG, "ClipboardReaderPlugin 注册失败: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage(), e);
+        }
+        try {
+            this.registerPlugin(PaymentCapturePlugin.class);
+        } catch (Throwable e) {
+            Log.e(TAG, "PaymentCapturePlugin 注册失败: " + e.getClass().getSimpleName()
+                    + ": " + e.getMessage(), e);
+        }
+
         super.onCreate(savedInstanceState);
         instance = this;
-
-        // 注册自定义插件：原生剪贴板读取 + onResume 自动检测
-        this.registerPlugin(ClipboardReaderPlugin.class);
-        Log.d(TAG, "onCreate: ClipboardReaderPlugin 已注册");
-
-        // 注册自动记账插件：无障碍 / 通知 / OCR 三通道捕获
-        this.registerPlugin(PaymentCapturePlugin.class);
-        Log.d(TAG, "onCreate: PaymentCapturePlugin 已注册");
         // 拦截 IME（系统输入法）insets，防止 WebView 内部缩小布局视口。
         // 即使 AndroidManifest 设置了 adjustNothing，WebView 仍会在收到 IME
         // insets 时自动缩小 layout viewport，导致页面被压缩、自定义数字键盘

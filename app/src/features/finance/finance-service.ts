@@ -131,6 +131,9 @@ export interface CreateTransferInput {
   occurredAt: string
   note?: string
   attachmentDataUris?: readonly string[]
+  originalAmountMinor?: number
+  discountMinor?: number
+  discountIncomeCategoryId?: string
 }
 
 export interface CreateCreditPurchaseInput {
@@ -280,6 +283,7 @@ export interface EditTransactionFullInput {
   attachmentDataUris?: readonly string[]
   originalAmountMinor?: number
   discountMinor?: number
+  discountIncomeCategoryId?: string
 }
 
 export interface TransactionMetadata {
@@ -1069,6 +1073,7 @@ export class FinanceService implements FinanceServicePort {
   async createTransfer(input: CreateTransferInput): Promise<string> {
     log.debug('createTransfer: start', { sourceAccountId: input.sourceAccountId, targetAccountId: input.targetAccountId })
     try {
+      const discount = validateDiscount(input)
       const [sourceAccount, targetAccount] = await Promise.all([
         this.accounts.findPostingRef(input.sourceAccountId),
         this.accounts.findPostingRef(input.targetAccountId),
@@ -1079,6 +1084,12 @@ export class FinanceService implements FinanceServicePort {
       if (!targetAccount) {
         throw new Error('转入账户不存在')
       }
+      const transferDiscountIncomeCategory = discount && input.discountIncomeCategoryId
+        ? await this.categories.findPostingRef(input.discountIncomeCategoryId)
+        : undefined
+      if (discount && !transferDiscountIncomeCategory) {
+        throw new Error('优惠收入分类不存在')
+      }
 
       const transaction = await this.transactions.create(
         input.ledgerId,
@@ -1088,9 +1099,15 @@ export class FinanceService implements FinanceServicePort {
           sourceAccount,
           targetAccount,
           note: input.note,
+          ...(discount ? {
+            originalAmountMinor: input.originalAmountMinor,
+            discountMinor: input.discountMinor,
+            discountIncomeCategory: transferDiscountIncomeCategory,
+          } : {}),
         }),
         undefined,
         input.attachmentDataUris,
+        discount,
       )
       log.info('createTransfer: success', { transactionId: transaction.id, amountMinor: input.amountMinor })
       return transaction.id
@@ -1378,12 +1395,23 @@ export class FinanceService implements FinanceServicePort {
           ])
           if (!sourceAccount) throw new Error('转出账户不存在')
           if (!targetAccount) throw new Error('转入账户不存在')
+          const transferDiscountIncomeCategory = discount && input.discountIncomeCategoryId
+            ? await this.categories.findPostingRef(input.discountIncomeCategoryId)
+            : undefined
+          if (discount && !transferDiscountIncomeCategory) {
+            throw new Error('优惠收入分类不存在')
+          }
           draft = createTransfer({
             amountMinor: input.amountMinor,
             occurredAt: input.occurredAt,
             sourceAccount,
             targetAccount,
             note: input.note,
+            ...(discount ? {
+              originalAmountMinor: input.originalAmountMinor,
+              discountMinor: input.discountMinor,
+              discountIncomeCategory: transferDiscountIncomeCategory,
+            } : {}),
           })
           break
         }

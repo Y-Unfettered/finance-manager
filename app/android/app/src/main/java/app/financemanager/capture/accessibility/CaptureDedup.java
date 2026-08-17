@@ -7,23 +7,23 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * 捕获事件去重。
  *
- * 策略：相同 sourcePackage + amountMinor 在 60 秒内视为重复。
- * 使用 Map<key, firstSeenTimestamp> 存储最近一次捕获时间戳。
+ * key = 包名 + 金额 + 分钟级时间桶。
+ * 窗口 = 2 分钟（过期自动清理）。
+ *
+ * 同一次支付页面动画（支付宝成功页通常触发 5-6 次内容变化）在同一分钟桶内 → 只留第一条。
+ * 两次不同时间的支付，即使金额相同，只要不在同一分钟内 → 都通过。
+ * 同一分钟内两次同金额支付 → 被去重（概率极低，可接受）。
  */
 public final class CaptureDedup {
 
-    private static final long DEDUP_WINDOW_MS = 60_000;
+    private static final long DEDUP_WINDOW_MS = 2 * 60 * 1000;
+    private static final long DEDUP_BUCKET_MS = 60_000;
 
-    /** key = "package:amountMinor"，value = 首次捕获时间戳 */
     private static final Map<String, Long> SEEN = new ConcurrentHashMap<>();
 
-    /**
-     * 检查是否为重复事件。
-     * @return true 表示重复（应跳过），false 表示新事件（应入库）
-     */
     public static boolean isDuplicate(@Nullable String sourcePackage, @Nullable Long amountMinor) {
-        String key = makeKey(sourcePackage, amountMinor);
         long now = System.currentTimeMillis();
+        String key = makeKey(sourcePackage, amountMinor, now);
         Long lastSeen = SEEN.get(key);
         if (lastSeen != null && (now - lastSeen) < DEDUP_WINDOW_MS) {
             return true;
@@ -33,14 +33,18 @@ public final class CaptureDedup {
         return false;
     }
 
-    private static String makeKey(@Nullable String pkg, @Nullable Long amt) {
+    private static String makeKey(@Nullable String pkg, @Nullable Long amt, long now) {
         if (pkg == null) pkg = "unknown";
-        if (amt == null) return pkg + ":unknown";
-        return pkg + ":" + amt;
+        if (amt == null) return pkg + ":unknown:" + (now / DEDUP_BUCKET_MS);
+        return pkg + ":" + amt + ":" + (now / DEDUP_BUCKET_MS);
     }
 
     private static void cleanup(long now) {
         if (SEEN.size() < 1000) return;
         SEEN.entrySet().removeIf(e -> (now - e.getValue()) > DEDUP_WINDOW_MS * 2);
+    }
+
+    public static void reset() {
+        SEEN.clear();
     }
 }

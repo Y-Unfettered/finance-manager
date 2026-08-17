@@ -11,7 +11,7 @@ import { PaymentCapture, type CapturedPayment } from '@/features/payment-capture
 import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
 
-export type { CapturedPayment, ServiceHealth } from '@/features/payment-capture/payment-capture-reader'
+export type { CapturedPayment, ServiceHealth, AccessibilityDiagnosticsResult, NotificationDiagnosticsResult } from '@/features/payment-capture/payment-capture-reader'
 
 export interface ConfirmInput {
   event: CapturedPayment
@@ -86,4 +86,44 @@ export function openNotificationAccessSettings() {
 /** 运行自检。 */
 export function runSelfTest() {
   return PaymentCapture.runSelfTest()
+}
+
+/** 通过 Shizuku 自动启用无障碍服务。 */
+export function enableAccessibilityViaShizuku() {
+  return PaymentCapture.enableAccessibilityViaShizuku()
+}
+
+/** 请求 Shizuku 授权。 */
+export function requestShizukuPermission() {
+  return PaymentCapture.requestShizukuPermission()
+}
+
+/** 诊断插件加载状态。 */
+export function diagnosePlugin() {
+  return PaymentCapture.diagnose()
+}
+
+/** 无障碍服务诊断信息。 */
+export function getAccessibilityDiagnostics() {
+  return PaymentCapture.getAccessibilityDiagnostics()
+}
+
+/** 通知监听服务诊断信息。 */
+export function getNotificationDiagnostics() {
+  return PaymentCapture.getNotificationDiagnostics()
+}
+
+/** 重置诊断数据。 */
+export function resetDiagnostics() {
+  return PaymentCapture.resetDiagnostics()
+}
+
+/** 导出诊断日志为 JSON 文件。 */
+export function exportDiagnosticLog() {
+  return PaymentCapture.exportDiagnosticLog()
+}
+
+/** 通过分享面板分享诊断日志。 */
+export function shareDiagnosticLog() {
+  return PaymentCapture.shareDiagnosticLog()
 }

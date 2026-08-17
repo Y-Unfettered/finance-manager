@@ -90,6 +90,71 @@ describe('accounting rules', () => {
     ])
   })
 
+  it('allows a credit-card (liability) account as the source of a transfer', () => {
+    const draft = createTransfer({
+      amountMinor: 18800,
+      occurredAt,
+      sourceAccount: creditCard,
+      targetAccount: wechat,
+    })
+
+    expect(draft.type).toBe('transfer')
+    expect(draft.entries).toEqual([
+      { side: 'debit', amountMinor: 18800, target: { kind: 'account', accountId: 'wechat-1' } },
+      { side: 'credit', amountMinor: 18800, target: { kind: 'account', accountId: 'credit-1' } },
+    ])
+    expect(entryTotals(draft.entries)).toEqual({ debitMinor: 18800, creditMinor: 18800 })
+  })
+
+  it('records a transfer with a discount (top-up bonus) using a three-entry structure', () => {
+    const draft = createTransfer({
+      amountMinor: 18800,
+      occurredAt,
+      sourceAccount: creditCard,
+      targetAccount: wechat,
+      originalAmountMinor: 19400,
+      discountMinor: 600,
+      discountIncomeCategory: salary,
+    })
+
+    expect(draft.type).toBe('transfer')
+    expect(draft.amountMinor).toBe(18800)
+    expect(draft.entries).toEqual([
+      { side: 'debit', amountMinor: 19400, target: { kind: 'account', accountId: 'wechat-1' } },
+      { side: 'credit', amountMinor: 18800, target: { kind: 'account', accountId: 'credit-1' } },
+      { side: 'credit', amountMinor: 600, target: { kind: 'category', categoryId: 'salary' } },
+    ])
+    expect(entryTotals(draft.entries)).toEqual({ debitMinor: 19400, creditMinor: 19400 })
+  })
+
+  it('rejects a transfer with mismatched discount math', () => {
+    expect(() =>
+      createTransfer({
+        amountMinor: 18800,
+        occurredAt,
+        sourceAccount: bank,
+        targetAccount: wechat,
+        originalAmountMinor: 19400,
+        discountMinor: 700,
+        discountIncomeCategory: salary,
+      }),
+    ).toThrow('转账优惠金额与实际支出不一致')
+  })
+
+  it('rejects using a non-income category for transfer discount', () => {
+    expect(() =>
+      createTransfer({
+        amountMinor: 18800,
+        occurredAt,
+        sourceAccount: bank,
+        targetAccount: wechat,
+        originalAmountMinor: 19400,
+        discountMinor: 600,
+        discountIncomeCategory: food,
+      }),
+    ).toThrow('Category must be income')
+  })
+
   it('creates a credit purchase that increases both expense and liability', () => {
     const draft = createCreditPurchase({
       amountMinor: 16652,

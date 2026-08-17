@@ -117,6 +117,10 @@ const debitAccounts = computed(() =>
 const creditAccounts = computed(() =>
   activeAccounts.value.filter((a) => a.normalBalance === 'credit'),
 )
+const transferDiscountIncomeCategories = computed(() =>
+  incomeCategories.value.filter((c) => !c.parentId),
+)
+const discountIncomeCategoryId = ref('')
 
 const quickTags = computed<readonly QuickTagDef[]>(() => {
   if (mode.value === 'income') return INCOME_QUICK_TAGS
@@ -193,6 +197,13 @@ const canSubmit = computed(() => {
   if (mode.value === 'refund' && originalRefundTransactionId.value === '') return false
   if (hasCategory.value) {
     return sourceAccountId.value !== '' && selectedCategoryId.value !== ''
+  }
+  if (isTransfer.value && hasDiscount.value) {
+    return (
+      sourceAccountId.value !== '' &&
+      targetAccountId.value !== '' &&
+      discountIncomeCategoryId.value !== ''
+    )
   }
   return sourceAccountId.value !== '' && targetAccountId.value !== ''
 })
@@ -296,6 +307,9 @@ function applyTransactionToForm(tx: TransactionMetadata): void {
   targetAccountId.value = tx.targetAccountId ?? ''
   if (tx.categoryId) selectedCategoryId.value = tx.categoryId
   if (tx.categoryName) selectedCategoryName.value = tx.categoryName
+  if (tx.type === 'transfer' && tx.discountMinor && tx.categoryId) {
+    discountIncomeCategoryId.value = tx.categoryId
+  }
   originalOccurredAt.value = tx.occurredAt
 }
 
@@ -388,6 +402,10 @@ function switchMode(next: EntryMode): void {
   } else {
     selectedCategoryId.value = ''
     selectedCategoryName.value = ''
+    discountIncomeCategoryId.value =
+      incomeCategories.value.find((c) => c.name === '其他收入')?.id ??
+      incomeCategories.value[0]?.id ??
+      ''
   }
   resetAccountsForMode(next)
 }
@@ -625,14 +643,16 @@ async function submit(): Promise<void> {
   try {
     const appliesDiscount =
       (mode.value === 'expense' || mode.value === 'credit_purchase') && hasDiscount.value
-    const originalAmountMinor = appliesDiscount
+    const transferDiscount = mode.value === 'transfer' && hasDiscount.value
+    const appliesAnyDiscount = appliesDiscount || transferDiscount
+    const originalAmountMinor = appliesAnyDiscount
       ? parseCnyInputToMinor(amountDisplay.value)
       : undefined
-    const discountMinor = appliesDiscount
+    const discountMinor = appliesAnyDiscount
       ? parseCnyInputToMinor(discountAmount.value)
       : undefined
     const amountMinor = parseCnyInputToMinor(
-      appliesDiscount ? actualSpending.value : amountDisplay.value,
+      appliesAnyDiscount ? actualSpending.value : amountDisplay.value,
     )
     if (amountMinor <= 0) throw new Error('优惠后金额必须大于 0')
     if (isEditMode.value && editTransactionId.value) {
@@ -654,6 +674,9 @@ async function submit(): Promise<void> {
         attachmentDataUris: attachmentDataUris.value,
         originalAmountMinor,
         discountMinor,
+        discountIncomeCategoryId: mode.value === 'transfer' && transferDiscount
+          ? discountIncomeCategoryId.value || undefined
+          : undefined,
       }
       await finance.editTransactionFull(input)
     } else {
@@ -706,6 +729,11 @@ async function submit(): Promise<void> {
           occurredAt: occurredAtValue,
           note: note.value || undefined,
           attachmentDataUris: attachmentDataUris.value,
+          ...(transferDiscount ? {
+            originalAmountMinor,
+            discountMinor,
+            discountIncomeCategoryId: discountIncomeCategoryId.value || undefined,
+          } : {}),
         })
       } else if (mode.value === 'credit_purchase') {
         await finance.createCreditPurchase({
@@ -928,6 +956,25 @@ onUnmounted(() => {
         </button>
       </div>
     </section>
+
+    <!-- 转账优惠收入分类选择 -->
+    <div v-if="isTransfer && hasDiscount" class="discount-category-row">
+      <span class="discount-category-label">优惠归属</span>
+      <select
+        v-model="discountIncomeCategoryId"
+        class="discount-category-select"
+        aria-label="选择优惠收入分类"
+      >
+        <option disabled value="">选择收入分类</option>
+        <option
+          v-for="cat in transferDiscountIncomeCategories"
+          :key="cat.id"
+          :value="cat.id"
+        >
+          {{ cat.name }}
+        </option>
+      </select>
+    </div>
 
     <section class="record-bottom">
       <!-- 优惠模式：替换顶栏 -->
@@ -1557,6 +1604,31 @@ onUnmounted(() => {
   color: var(--color-danger);
   font-size: var(--type-body-size);
   background: rgb(185 67 67 / 8%);
+  border-radius: var(--radius-control);
+}
+
+.discount-category-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  margin: 0 var(--space-3);
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
+}
+.discount-category-label {
+  color: var(--color-text-secondary);
+  font-size: var(--type-caption-size);
+  flex-shrink: 0;
+}
+.discount-category-select {
+  flex: 1;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--type-body-size);
+  color: var(--color-text-primary);
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
   border-radius: var(--radius-control);
 }
 </style>

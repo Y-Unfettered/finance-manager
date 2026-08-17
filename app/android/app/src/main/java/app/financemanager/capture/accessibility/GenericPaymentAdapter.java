@@ -29,8 +29,15 @@ public class GenericPaymentAdapter implements PaymentParserAdapter {
     @Override
     public CapturedPaymentInfo parse(AccessibilityService service, AccessibilityNodeInfo root) {
         String text = PaymentParserAdapter.extractVisibleText(root);
-        if (text == null || text.isEmpty()) return null;
-        if (!text.contains("成功") && !text.contains("支付") && !text.contains("付款")) return null;
+        if (text == null || text.isEmpty()) {
+            AccessibilityDiagnostics.textEmpty(packageName);
+            return null;
+        }
+        if (!text.contains("成功") && !text.contains("支付") && !text.contains("付款")) {
+            AccessibilityDiagnostics.noKeyword(packageName,
+                    text.substring(0, Math.min(text.length(), 80)));
+            return null;
+        }
 
         CapturedPaymentInfo info = new CapturedPaymentInfo();
         info.setSourcePackage(packageName);
@@ -43,13 +50,17 @@ public class GenericPaymentAdapter implements PaymentParserAdapter {
             info.setAmountMinor(CapturedPaymentInfo.parseAmountMinor(m.group(1)));
         }
 
-        if (!info.isHasAmount()) return null;
+        if (!info.isHasAmount()) {
+            AccessibilityDiagnostics.noAmount(packageName);
+            return null;
+        }
 
         java.util.regex.Pattern merchantPattern =
                 java.util.regex.Pattern.compile("(?:商家|商户|收款方)[:：]\\s*(.+)");
         java.util.regex.Matcher mm = merchantPattern.matcher(text);
         if (mm.find()) info.setMerchant(mm.group(1).trim());
 
+        AccessibilityDiagnostics.parsed(packageName, info.getAmount(), info.getMerchant());
         return info;
     }
 }

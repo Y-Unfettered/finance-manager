@@ -8,6 +8,7 @@ import android.util.Log;
 import app.financemanager.capture.accessibility.CaptureDedup;
 import app.financemanager.capture.accessibility.CapturedPaymentInfo;
 import app.financemanager.capture.accessibility.WhitelistPackages;
+import app.financemanager.local.PaymentCapturePlugin;
 import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
@@ -31,7 +32,15 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
     @Override
     public void onListenerConnected() {
         super.onListenerConnected();
+        NotificationDiagnostics.listenerConnected(this.getApplicationContext());
         Log.d(TAG, "onListenerConnected: 通知监听服务已连接");
+    }
+
+    @Override
+    public void onListenerDisconnected() {
+        super.onListenerDisconnected();
+        NotificationDiagnostics.listenerDisconnected(this.getApplicationContext());
+        Log.d(TAG, "onListenerDisconnected: 通知监听服务已断开");
     }
 
     @Override
@@ -64,6 +73,8 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
 
             Log.d(TAG, "通知 package=" + packageName + " title=" + title + " text=" + text.substring(0, Math.min(text.length(), 150)));
 
+            NotificationDiagnostics.notification(packageName, title, text);
+
             processNotification(packageName, title, text);
         } catch (Exception e) {
             Log.w(TAG, "onNotificationPosted: 处理失败 package=" + packageName, e);
@@ -76,12 +87,24 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
 
         CapturedPaymentInfo info = adapter.parse(title, text, packageName);
         if (info == null) {
+            NotificationDiagnostics.noKeyword(packageName,
+                    (title != null ? title + " " : "") +
+                    (text != null ? text.substring(0, Math.min(text.length(), 40)) : ""));
             Log.d(TAG, "未解析到支付信息: " + packageName);
             return;
         }
 
+        if (info.getAmountMinor() == null || info.getAmountMinor() <= 0) {
+            NotificationDiagnostics.noAmount(packageName);
+            Log.d(TAG, "通知未提取到金额: " + packageName);
+            return;
+        }
+
+        NotificationDiagnostics.parsed(packageName, info.getAmount());
+
         if (CaptureDedup.isDuplicate(info.getSourcePackage(), info.getAmountMinor())) {
-            Log.d(TAG, "去重跳过通知: " + info.getSourcePackage());
+            NotificationDiagnostics.dedup(packageName);
+            Log.d(TAG, "去重跳过通知: " + packageName);
             return;
         }
 
@@ -111,9 +134,14 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
             entity.setCreatedAt(System.currentTimeMillis());
 
             dao.insert(entity);
+
+            NotificationDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
+            PaymentCapturePlugin.notifyCandidate(entity);
+
             Log.d(TAG, "通知已写入捕获队列: " + info.getSourceName()
                     + " " + info.getAmount());
         } catch (Exception e) {
+            NotificationDiagnostics.queueFail(info.getSourcePackage(), e.getMessage());
             Log.w(TAG, "通知写入队列失败", e);
         }
     }

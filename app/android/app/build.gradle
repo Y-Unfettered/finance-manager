@@ -7,9 +7,13 @@ android {
         applicationId "app.financemanager.local"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 41
-        versionName "0.4.1"
+        versionCode 44
+        versionName "0.4.4"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        ndk {
+            // 小米手机仅支持 arm64-v8a，排除其他架构以减小 APK 体积
+            abiFilters "arm64-v8a"
+        }
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -20,6 +24,12 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    // AIDL: Shizuku UserService 通过 AIDL 实现跨进程通信
+    sourceSets {
+        main {
+            aidl.srcDirs = ['src/main/aidl']
         }
     }
 }
@@ -48,9 +58,13 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-runtime:$androidxFragmentVersion"
     implementation "androidx.concurrent:concurrent-futures:1.2.0"
 
-    // OCR - 离线文字识别（Tesseract/TessTwo，不依赖 Google Play Services）
-    // 小米澎湃 OS 中国版无 Google Play Services，ML Kit 不可用，改用 TessTwo
-    implementation 'com.rmtheis:tess-two:9.1.0'
+    // OCR - PP-OCR v5 离线文字识别（PaddleOCR via NCNN，不依赖 Google Play Services）
+    // 小米澎湃 OS 中国版无 Google Play Services，使用 paddleocr4android（NCNN 推理）
+    implementation 'com.github.equationl.paddleocr4android:ncnnandroidppocr:v1.3.0'
+
+    // Shizuku - 用于自动启用无障碍服务（绕过小米等 ROM 的限制）
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
 
     // Gson - JSON 序列化
     implementation 'com.google.code.gson:gson:2.11.0'

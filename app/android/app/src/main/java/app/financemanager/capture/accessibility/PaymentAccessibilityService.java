@@ -38,6 +38,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
+        AccessibilityDiagnostics.serviceConnected(this.getApplicationContext());
         Log.d(TAG, "onServiceConnected: 无障碍服务已启动");
 
         // 注意：FLAG_REPORT_VIEW_IDS 在小米澎湃 OS / HarmonyOS 等定制 ROM 上会导致
@@ -82,15 +83,21 @@ public class PaymentAccessibilityService extends AccessibilityService {
         // 白名单过滤
         if (!WhitelistPackages.contains(packageName)) return;
 
-        // 仅处理窗口状态变化（切到支付成功页/转账页/账单页时触发）
         int eventType = event.getEventType();
         if (eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 && eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
             return;
         }
 
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root == null) return;
+        AccessibilityDiagnostics.event(packageName, eventType);
+
+        // HyperOS 限制窗口内容访问时 getRootInActiveWindow() 会返回 null。
+        // 先重试（最多 3 次，间隔 150ms），失败则用 event.getSource() 降级。
+        AccessibilityNodeInfo root = tryGetRootWithFallback(event);
+        if (root == null) {
+            AccessibilityDiagnostics.rootNull(packageName);
+            return;
+        }
 
         try {
             processWindow(packageName, root);
@@ -100,11 +107,50 @@ public class PaymentAccessibilityService extends AccessibilityService {
     }
 
     /**
+     * 获取当前窗口根节点。
+     * 策略：
+     * 1. 先试 getRootInActiveWindow()，失败最多重试 3 次（HyperOS 首次可能返回 null）
+     * 2. 全部失败则用 event.getSource() 作为降级方案
+     */
+    private AccessibilityNodeInfo tryGetRootWithFallback(AccessibilityEvent event) {
+        // 策略 1：getRootInActiveWindow() + 重试
+        int retryCount = 0;
+        while (retryCount < 3) {
+            AccessibilityNodeInfo root = getRootInActiveWindow();
+            if (root != null) {
+                AccessibilityDiagnostics.getRootRetry(retryCount, true);
+                return root;
+            }
+            retryCount++;
+            try {
+                Thread.sleep(150);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        AccessibilityDiagnostics.getRootRetry(retryCount, false);
+
+        // 策略 2：event.getSource() 降级（拿到触发事件的节点，向上走能拿到部分文本）
+        try {
+            AccessibilityNodeInfo source = event.getSource();
+            if (source != null) {
+                AccessibilityDiagnostics.getRootFallback("source");
+                return source;
+            }
+        } catch (Exception ignored) {}
+
+        AccessibilityDiagnostics.getRootFallback("none");
+        return null;
+    }
+
+    /**
      * 解析窗口内容，写入捕获队列。
      */
     private void processWindow(String packageName, AccessibilityNodeInfo root) {
         PaymentParserAdapter adapter = PaymentParserRegistry.forPackage(packageName);
         if (adapter == null) {
+            AccessibilityDiagnostics.noAdapter(packageName);
             Log.d(TAG, "无适配器: " + packageName);
             return;
         }
@@ -117,6 +163,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
         // 去重检查
         if (CaptureDedup.isDuplicate(info.getSourcePackage(), info.getAmountMinor())) {
+            AccessibilityDiagnostics.dedup(packageName);
             Log.d(TAG, "去重跳过: " + info.getSourcePackage() + " 金额=" + info.getAmount());
             return;
         }
@@ -154,12 +201,16 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
             dao.insert(entity);
 
+            AccessibilityDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
+            PaymentCapturePlugin.notifyCandidate(entity);
+
             lastSourcePackage = info.getSourcePackage();
             lastSourceName = info.getSourceName();
 
             Log.d(TAG, "已写入捕获队列: id=" + entity.getId()
                     + " " + info.getSourceName() + " " + info.getAmount());
         } catch (Exception e) {
+            AccessibilityDiagnostics.queueFail(info.getSourcePackage(), e.getMessage());
             Log.w(TAG, "写入捕获队列失败", e);
         }
     }
@@ -191,6 +242,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        AccessibilityDiagnostics.serviceDestroyed(this.getApplicationContext());
         super.onDestroy();
         Log.d(TAG, "onDestroy: 无障碍服务已销毁");
     }
