@@ -82,6 +82,9 @@ export interface CreditIncomeCommand extends BaseCommand {
 export interface RepaymentCommand extends BaseCommand {
   sourceAccount: AccountPostingRef
   liabilityAccount: AccountPostingRef
+  originalAmountMinor?: number
+  discountMinor?: number
+  discountIncomeCategory?: CategoryPostingRef
 }
 
 export interface RefundCommand extends BaseCommand {
@@ -196,6 +199,27 @@ export function createRepayment(command: RepaymentCommand): TransactionDraft {
   assertAccount(command.liabilityAccount, 'credit', 'liabilityAccount')
   assertDifferentIds(command.sourceAccount.id, command.liabilityAccount.id)
 
+  const discountIncomeCategory = command.discountIncomeCategory
+  const originalAmountMinor = command.originalAmountMinor
+  const discountMinor = command.discountMinor
+
+  if (
+    discountIncomeCategory !== undefined &&
+    originalAmountMinor !== undefined &&
+    discountMinor !== undefined
+  ) {
+    assertCategory(discountIncomeCategory, 'income')
+    assertId(discountIncomeCategory.id, 'discountIncomeCategory')
+    if (command.amountMinor + discountMinor !== originalAmountMinor) {
+      throw new Error('还款优惠金额与实际支出不一致')
+    }
+    return createDraft('repayment', command, [
+      accountEntry(command.liabilityAccount.id, 'debit', originalAmountMinor),
+      accountEntry(command.sourceAccount.id, 'credit', command.amountMinor),
+      categoryEntry(discountIncomeCategory.id, 'credit', discountMinor),
+    ])
+  }
+
   return createDraft('repayment', command, [
     accountEntry(command.liabilityAccount.id, 'debit', command.amountMinor),
     accountEntry(command.sourceAccount.id, 'credit', command.amountMinor),
@@ -291,13 +315,13 @@ export function entryTotals(entries: readonly EntryDraft[]): {
 
 export function assertBalanced(entries: readonly EntryDraft[]): void {
   if (entries.length < 2) {
-    throw new Error('A transaction requires at least two entries')
+    throw new Error('一笔交易至少需要两个分录')
   }
 
   const totals = entryTotals(entries)
   if (totals.debitMinor !== totals.creditMinor) {
     throw new Error(
-      `Unbalanced transaction: debit=${totals.debitMinor}, credit=${totals.creditMinor}`,
+      `借贷不平衡：借方=${totals.debitMinor}，贷方=${totals.creditMinor}`,
     )
   }
 }
@@ -351,6 +375,24 @@ function categoryEntry(categoryId: string, side: EntrySide, amountMinor: number)
   return { side, amountMinor, target: { kind: 'category', categoryId } }
 }
 
+const FIELD_NAMES: Record<string, string> = {
+  paymentAccount: '支付账户',
+  depositAccount: '收款账户',
+  targetAccount: '目标账户',
+  liabilityAccount: '负债账户',
+  sourceAccount: '来源账户',
+  receivableAccount: '应收账户',
+  payableAccount: '应付账户',
+  refundAccount: '退款账户',
+  categoryId: '分类',
+  accountId: '账户',
+}
+
+const BALANCE_NAMES: Record<NormalBalance, string> = {
+  debit: '借方',
+  credit: '贷方',
+}
+
 function assertAccount(
   account: AccountPostingRef,
   expectedBalance: NormalBalance,
@@ -358,38 +400,40 @@ function assertAccount(
 ): void {
   assertId(account.id, field)
   if (account.normalBalance !== expectedBalance) {
-    throw new Error(`${field} must have a ${expectedBalance} normal balance`)
+    throw new Error(
+      `${FIELD_NAMES[field] ?? field}不匹配：应使用${BALANCE_NAMES[expectedBalance]}账户`,
+    )
   }
 }
 
 function assertCategory(category: CategoryPostingRef, expectedKind: CategoryKind): void {
   assertId(category.id, 'category')
   if (category.kind !== expectedKind) {
-    throw new Error(`Category must be ${expectedKind}`)
+    throw new Error(`分类类型不匹配：应为${expectedKind === 'expense' ? '支出' : '收入'}分类`)
   }
 }
 
 function assertPositiveMinorUnits(value: number): void {
   if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error('amountMinor must be a positive safe integer')
+    throw new Error('金额必须为正整数（分）')
   }
 }
 
 function assertOccurredAt(value: string): void {
   if (value.trim() === '' || Number.isNaN(Date.parse(value))) {
-    throw new Error('occurredAt must be a valid ISO date-time')
+    throw new Error('交易日期必须为有效的 ISO 日期时间')
   }
 }
 
 function assertId(value: string, field: string): void {
   if (value.trim() === '') {
-    throw new Error(`${field} is required`)
+    throw new Error(`${FIELD_NAMES[field] ?? field}不能为空`)
   }
 }
 
 function assertDifferentIds(sourceId: string, targetId: string): void {
   if (sourceId === targetId) {
-    throw new Error('Transfer accounts must be different')
+    throw new Error('转账的转出和转入账户不能相同')
   }
 }
 

@@ -35,6 +35,17 @@ const captureEntryStore = useCaptureEntryStore()
 const log = getLogger('clipboard')
 
 const privacyVeil = ref(false)
+
+// 兜底：visibilitychange 在 Capacitor appStateChange 未及时触发时强制兜住遮罩层
+// 避免切任务栏后无障碍服务阻塞主线程导致遮罩层卡住
+if (typeof document !== 'undefined') {
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      privacyVeil.value = false
+    }
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange)
+}
 const routeViewKey = computed(
   () => `${navigationCacheEpoch.value}:${String(route.name ?? route.path)}`,
 )

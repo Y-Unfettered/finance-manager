@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
+import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 
@@ -75,15 +76,15 @@ public class PaymentCapturePlugin extends Plugin {
 
     /**
      * 供原生服务（无障碍 / 通知 / 分享）调用，把新入库的记录推给前端。
-     * 线程安全：INSTANCE 用 volatile，桥接为空时静默跳过。
+     * 线程安全：在任何线程调用均可，内部 post 到主线程执行 bridge 推送。
      */
     public static void notifyCandidate(CaptureQueueEntity entity) {
-        PaymentCapturePlugin instance = INSTANCE;
+        final PaymentCapturePlugin instance = INSTANCE;
         if (instance == null || instance.bridge == null) {
             Log.d(TAG, "notifyCandidate: 插件未就绪，跳过推送");
             return;
         }
-        instance.notifyCaptureCandidate(entity);
+        instance.mainThreadPost(() -> instance.notifyCaptureCandidate(entity));
     }
 
     @PluginMethod
@@ -798,6 +799,22 @@ public class PaymentCapturePlugin extends Plugin {
         }
     }
 
+    /**
+     * 将任务 post 到主线程执行（供非主线程调用 bridge 推送）。
+     */
+    private void mainThreadPost(Runnable task) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            task.run();
+        } else {
+            // 通过 Activity 主线程 handler post
+            try {
+                bridge.getActivity().runOnUiThread(task);
+            } catch (Exception e) {
+                Log.w(TAG, "mainThreadPost 失败", e);
+            }
+        }
+    }
+
     /** 向 WebView 推送捕获事件（供原生服务调用）。 */
     public void notifyCaptureCandidate(CaptureQueueEntity entity) {
         if (bridge == null) {
@@ -861,14 +878,15 @@ public class PaymentCapturePlugin extends Plugin {
      *
      * 原生侧检测到支付成功，在写入捕获队列后调用此方法，
      * 通知前端直接弹出 CaptureQuickEntrySheet。
+     * 线程安全：内部 post 到主线程执行。
      */
     public static void notifyQuickEntry(CaptureQueueEntity entity) {
-        PaymentCapturePlugin instance = INSTANCE;
+        final PaymentCapturePlugin instance = INSTANCE;
         if (instance == null || instance.bridge == null) {
             Log.d(TAG, "notifyQuickEntry: 插件未就绪，跳过推送");
             return;
         }
-        instance.notifyQuickEntryCandidate(entity);
+        instance.mainThreadPost(() -> instance.notifyQuickEntryCandidate(entity));
     }
 
     public void notifyQuickEntryCandidate(CaptureQueueEntity entity) {

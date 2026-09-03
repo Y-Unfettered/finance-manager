@@ -5,7 +5,7 @@ import android.content.SharedPreferences;
 import android.util.Log;
 
 import app.financemanager.capture.accessibility.AccessibilityDiagnostics;
-import app.financemanager.capture.keepalive.CaptureKeepAliveService;
+
 
 /**
  * 无障碍自动恢复管理器。

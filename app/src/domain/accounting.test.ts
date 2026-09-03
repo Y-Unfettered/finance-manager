@@ -152,7 +152,7 @@ describe('accounting rules', () => {
         discountMinor: 600,
         discountIncomeCategory: food,
       }),
-    ).toThrow('Category must be income')
+    ).toThrow('分类类型不匹配：应为收入分类')
   })
 
   it('creates a credit purchase that increases both expense and liability', () => {
@@ -201,6 +201,40 @@ describe('accounting rules', () => {
       { side: 'debit', amountMinor: 12_000, target: { kind: 'account', accountId: 'credit-1' } },
       { side: 'credit', amountMinor: 12_000, target: { kind: 'account', accountId: 'bank-1' } },
     ])
+  })
+
+  it('creates a repayment with discount using three entries', () => {
+    const draft = createRepayment({
+      amountMinor: 94_186,
+      originalAmountMinor: 94_210,
+      discountMinor: 24,
+      discountIncomeCategory: salary,
+      occurredAt,
+      sourceAccount: bank,
+      liabilityAccount: creditCard,
+    })
+
+    expect(draft.type).toBe('repayment')
+    expect(draft.entries).toEqual([
+      { side: 'debit', amountMinor: 94_210, target: { kind: 'account', accountId: 'credit-1' } },
+      { side: 'credit', amountMinor: 94_186, target: { kind: 'account', accountId: 'bank-1' } },
+      { side: 'credit', amountMinor: 24, target: { kind: 'category', categoryId: 'salary' } },
+    ])
+    expect(entryTotals(draft.entries)).toEqual({ debitMinor: 94_210, creditMinor: 94_210 })
+  })
+
+  it('rejects a repayment with inconsistent discount amount', () => {
+    expect(() =>
+      createRepayment({
+        amountMinor: 100,
+        originalAmountMinor: 1000,
+        discountMinor: 500,
+        discountIncomeCategory: salary,
+        occurredAt,
+        sourceAccount: bank,
+        liabilityAccount: creditCard,
+      }),
+    ).toThrow('还款优惠金额与实际支出不一致')
   })
 
   it('creates a refund that increases an asset and reverses the expense category', () => {
@@ -332,7 +366,7 @@ describe('accounting rules', () => {
         payableAccount: bank,
         depositAccount: bank,
       }),
-    ).toThrow('payableAccount must have a credit normal balance')
+    ).toThrow('应付账户不匹配：应使用贷方账户')
   })
 
   it('rejects using a credit account as the source of a repay borrowing', () => {
@@ -343,7 +377,7 @@ describe('accounting rules', () => {
         payableAccount: payable,
         sourceAccount: creditCard,
       }),
-    ).toThrow('sourceAccount must have a debit normal balance')
+    ).toThrow('来源账户不匹配：应使用借方账户')
   })
 
   it.each([0, -1, 10.5, Number.MAX_SAFE_INTEGER + 1])(
@@ -351,7 +385,7 @@ describe('accounting rules', () => {
     (amountMinor) => {
       expect(() =>
         createExpense({ amountMinor, occurredAt, paymentAccount: bank, category: food }),
-      ).toThrow('amountMinor must be a positive safe integer')
+      ).toThrow('金额必须为正整数（分）')
     },
   )
 
@@ -363,7 +397,7 @@ describe('accounting rules', () => {
         sourceAccount: bank,
         targetAccount: bank,
       }),
-    ).toThrow('Transfer accounts must be different')
+    ).toThrow('转账的转出和转入账户不能相同')
   })
 
   it('rejects using a liability as a normal expense payment account', () => {
@@ -374,7 +408,7 @@ describe('accounting rules', () => {
         paymentAccount: creditCard,
         category: food,
       }),
-    ).toThrow('paymentAccount must have a debit normal balance')
+    ).toThrow('支付账户不匹配：应使用借方账户')
   })
 
   it('rejects using a debit account for credit income (refund)', () => {
@@ -385,7 +419,7 @@ describe('accounting rules', () => {
         liabilityAccount: bank,
         category: salary,
       }),
-    ).toThrow('liabilityAccount must have a credit normal balance')
+    ).toThrow('负债账户不匹配：应使用贷方账户')
   })
 
   it('rejects credit income with an expense category', () => {
@@ -396,7 +430,7 @@ describe('accounting rules', () => {
         liabilityAccount: creditCard,
         category: food,
       }),
-    ).toThrow('Category must be income')
+    ).toThrow('分类类型不匹配：应为收入分类')
   })
 
   it('rejects a category with the wrong financial direction', () => {
@@ -407,6 +441,6 @@ describe('accounting rules', () => {
         paymentAccount: bank,
         category: salary,
       }),
-    ).toThrow('Category must be expense')
+    ).toThrow('分类类型不匹配：应为支出分类')
   })
 })

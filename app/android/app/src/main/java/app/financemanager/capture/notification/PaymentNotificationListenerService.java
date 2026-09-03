@@ -14,6 +14,8 @@ import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
 
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 支付通知监听服务。
@@ -28,6 +30,9 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
 
     private static final String TAG = "PaymentNotifListener";
     public static final String PARSER_VERSION = "0.1.0";
+
+    /** 后台线程池：Room 数据库操作必须脱离主线程执行 */
+    private static final ExecutorService DB_EXECUTOR = Executors.newSingleThreadExecutor();
 
     @Override
     public void onListenerConnected() {
@@ -112,38 +117,40 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
     }
 
     private void writeToQueue(CapturedPaymentInfo info) {
-        try {
-            CaptureQueueDao dao = CaptureQueueDatabase
-                    .getInstance(this.getApplicationContext())
-                    .captureQueueDao();
+        DB_EXECUTOR.execute(() -> {
+            try {
+                CaptureQueueDao dao = CaptureQueueDatabase
+                        .getInstance(this.getApplicationContext())
+                        .captureQueueDao();
 
-            CaptureQueueEntity entity = new CaptureQueueEntity();
-            entity.setSourcePackage(info.getSourcePackage() != null ? info.getSourcePackage() : "unknown");
-            entity.setSourceName(info.getSourceName() != null ? info.getSourceName() : "notification");
-            entity.setCaptureMethod("notification");
-            entity.setOccurredAt(String.valueOf(System.currentTimeMillis()));
-            entity.setAmountMinor(info.getAmountMinor());
-            entity.setCurrency("CNY");
-            entity.setMerchant(info.getMerchant());
-            entity.setAccountHint(info.getAccountHint());
-            entity.setSourceOrderId(info.getOrderNo());
-            entity.setRawFingerprint(buildFingerprint(info));
-            entity.setConfidence(parseConfidence(info.getConfidence()));
-            entity.setParserVersion(PARSER_VERSION);
-            entity.setStatus("pending");
-            entity.setCreatedAt(System.currentTimeMillis());
+                CaptureQueueEntity entity = new CaptureQueueEntity();
+                entity.setSourcePackage(info.getSourcePackage() != null ? info.getSourcePackage() : "unknown");
+                entity.setSourceName(info.getSourceName() != null ? info.getSourceName() : "notification");
+                entity.setCaptureMethod("notification");
+                entity.setOccurredAt(String.valueOf(System.currentTimeMillis()));
+                entity.setAmountMinor(info.getAmountMinor());
+                entity.setCurrency("CNY");
+                entity.setMerchant(info.getMerchant());
+                entity.setAccountHint(info.getAccountHint());
+                entity.setSourceOrderId(info.getOrderNo());
+                entity.setRawFingerprint(buildFingerprint(info));
+                entity.setConfidence(parseConfidence(info.getConfidence()));
+                entity.setParserVersion(PARSER_VERSION);
+                entity.setStatus("pending");
+                entity.setCreatedAt(System.currentTimeMillis());
 
-            dao.insert(entity);
+                dao.insert(entity);
 
-            NotificationDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
-            PaymentCapturePlugin.notifyCandidate(entity);
+                NotificationDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
+                PaymentCapturePlugin.notifyCandidate(entity);
 
-            Log.d(TAG, "通知已写入捕获队列: " + info.getSourceName()
-                    + " " + info.getAmount());
-        } catch (Exception e) {
-            NotificationDiagnostics.queueFail(info.getSourcePackage(), e.getMessage());
-            Log.w(TAG, "通知写入队列失败", e);
-        }
+                Log.d(TAG, "通知已写入捕获队列: " + info.getSourceName()
+                        + " " + info.getAmount());
+            } catch (Exception e) {
+                NotificationDiagnostics.queueFail(info.getSourcePackage(), e.getMessage());
+                Log.w(TAG, "通知写入队列失败", e);
+            }
+        });
     }
 
     @Override

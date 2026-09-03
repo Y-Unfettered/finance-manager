@@ -3,11 +3,13 @@ package app.financemanager.capture.accessibility;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
-import app.financemanager.capture.keepalive.CaptureKeepAliveService;
+
 import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
@@ -16,6 +18,8 @@ import app.financemanager.local.PaymentCapturePlugin;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * 自动记账无障碍服务。
@@ -32,7 +36,28 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
     private static final String TAG = "PaymentAccessService";
 
+    /** 后台线程池：Room 数据库操作必须脱离主线程执行 */
+    private static final ExecutorService DB_EXECUTOR = Executors.newSingleThreadExecutor();
+
+    /**
+     * 防重复插入冷却期：同一来源+金额在 5 秒内只处理一次。
+     * 窗口变化事件（TYPE_WINDOW_CONTENT_CHANGED）会频繁触发，
+     * 支付宝成功页停留期间会收到多次事件，需要抑制。
+     */
+    private static final long INSERT_COOLDOWN_MS = 5000;
+
+    private volatile long lastInsertTime = 0;
+    private volatile String lastInsertKey = "";
+
     public static final String PARSER_VERSION = "0.1.0";
+
+    /** 主线程 Handler：用于非阻塞重试 getRootInActiveWindow() */
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    /** 事件去抖：同一包名 500ms 内只处理一次，避免任务栏预览时大量事件堵塞主线程 */
+    private volatile long lastProcessedTime = 0;
+    private volatile String lastProcessedPackage = "";
+    private static final long THROTTLE_MS = 500;
 
     /** 最近一次成功捕获的包名（用于状态展示） */
     private volatile String lastSourcePackage = null;
@@ -45,7 +70,6 @@ public class PaymentAccessibilityService extends AccessibilityService {
         Log.d(TAG, "onServiceConnected: 无障碍服务已启动");
 
         // 启动前台保活服务，防止主进程被系统杀死导致无障碍服务断开
-        CaptureKeepAliveService.start(this.getApplicationContext());
 
         // 注意：FLAG_REPORT_VIEW_IDS 在小米澎湃 OS / HarmonyOS 等定制 ROM 上会导致
         // setServiceInfo() 抛 SecurityException，进而使服务启用即崩溃、被系统移除。
@@ -95,59 +119,70 @@ public class PaymentAccessibilityService extends AccessibilityService {
             return;
         }
 
+        // 去抖：同一包名 500ms 内只处理一次，避免任务栏预览时大量事件堵塞主线程
+        if (isThrottled(packageName)) return;
+        markProcessed(packageName);
+
         AccessibilityDiagnostics.event(packageName, eventType);
 
-        // HyperOS 限制窗口内容访问时 getRootInActiveWindow() 会返回 null。
-        // 先重试（最多 3 次，间隔 150ms），失败则用 event.getSource() 降级。
-        AccessibilityNodeInfo root = tryGetRootWithFallback(event);
-        if (root == null) {
-            AccessibilityDiagnostics.rootNull(packageName);
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root != null) {
+            AccessibilityDiagnostics.getRootRetry(0, true);
+            try {
+                processWindow(packageName, root);
+            } finally {
+                root.recycle();
+            }
             return;
         }
 
+        // 首次获取失败：捕获降级节点，非阻塞重试
+        final AccessibilityNodeInfo[] fallbackRef = new AccessibilityNodeInfo[1];
         try {
-            processWindow(packageName, root);
-        } finally {
-            root.recycle();
+            fallbackRef[0] = event.getSource();
+            if (fallbackRef[0] != null) {
+                AccessibilityDiagnostics.getRootFallback("source");
+            }
+        } catch (Exception ignored) {
+            fallbackRef[0] = null;
         }
+
+        final String pkg = packageName;
+
+        mainHandler.postDelayed(() -> {
+            AccessibilityNodeInfo retryRoot = getRootInActiveWindow();
+            if (retryRoot != null) {
+                AccessibilityDiagnostics.getRootRetry(1, true);
+                try {
+                    processWindow(pkg, retryRoot);
+                } finally {
+                    retryRoot.recycle();
+                }
+            } else if (fallbackRef[0] != null) {
+                final AccessibilityNodeInfo fallback = fallbackRef[0];
+                try {
+                    processWindow(pkg, fallback);
+                } finally {
+                    fallback.recycle();
+                }
+            } else {
+                AccessibilityDiagnostics.getRootRetry(1, false);
+                AccessibilityDiagnostics.rootNull(pkg);
+            }
+        }, 50);
     }
 
-    /**
-     * 获取当前窗口根节点。
-     * 策略：
-     * 1. 先试 getRootInActiveWindow()，失败最多重试 3 次（HyperOS 首次可能返回 null）
-     * 2. 全部失败则用 event.getSource() 作为降级方案
-     */
-    private AccessibilityNodeInfo tryGetRootWithFallback(AccessibilityEvent event) {
-        // 策略 1：getRootInActiveWindow() + 重试
-        int retryCount = 0;
-        while (retryCount < 3) {
-            AccessibilityNodeInfo root = getRootInActiveWindow();
-            if (root != null) {
-                AccessibilityDiagnostics.getRootRetry(retryCount, true);
-                return root;
-            }
-            retryCount++;
-            try {
-                Thread.sleep(150);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
+    private boolean isThrottled(String packageName) {
+        long now = System.currentTimeMillis();
+        if (packageName.equals(lastProcessedPackage) && (now - lastProcessedTime) < THROTTLE_MS) {
+            return true;
         }
-        AccessibilityDiagnostics.getRootRetry(retryCount, false);
+        return false;
+    }
 
-        // 策略 2：event.getSource() 降级（拿到触发事件的节点，向上走能拿到部分文本）
-        try {
-            AccessibilityNodeInfo source = event.getSource();
-            if (source != null) {
-                AccessibilityDiagnostics.getRootFallback("source");
-                return source;
-            }
-        } catch (Exception ignored) {}
-
-        AccessibilityDiagnostics.getRootFallback("none");
-        return null;
+    private void markProcessed(String packageName) {
+        lastProcessedTime = System.currentTimeMillis();
+        lastProcessedPackage = packageName;
     }
 
     /**
@@ -203,50 +238,67 @@ public class PaymentAccessibilityService extends AccessibilityService {
     }
 
     /**
-     * 将解析结果写入 Room 捕获队列，并尝试推送给前端。
+     * 将解析结果写入 Room 捕获队列，并推送给前端。
+     *
+     * Room 数据库操作必须在后台线程执行，主线程上调用 insert() 会抛
+     * IllegalStateException("assertNotSuspendingTransaction")。
+     * 此处通过单线程执行器提交到后台线程执行。
      */
     private void writeToQueue(CapturedPaymentInfo info) {
-        try {
-            CaptureQueueDao dao = CaptureQueueDatabase
-                    .getInstance(this.getApplicationContext())
-                    .captureQueueDao();
-
-            String fingerprint = buildFingerprint(info);
-
-            CaptureQueueEntity entity = new CaptureQueueEntity();
-            entity.setSourcePackage(orNull(info.getSourcePackage()));
-            entity.setSourceName(orNull(info.getSourceName()));
-            entity.setCaptureMethod("accessibility");
-            entity.setOccurredAt(String.valueOf(System.currentTimeMillis()));
-            entity.setAmountMinor(info.getAmountMinor());
-            entity.setCurrency("CNY");
-            entity.setMerchant(info.getMerchant());
-            entity.setAccountHint(info.getAccountHint());
-            entity.setSourceOrderId(info.getOrderNo());
-            entity.setRawFingerprint(fingerprint);
-            entity.setConfidence(parseConfidence(info.getConfidence()));
-            entity.setParserVersion(PARSER_VERSION);
-            entity.setStatus("pending");
-            entity.setSuggestedCategory(info.getSuggestedCategory());
-            entity.setDefaultAccountId(info.getDefaultAccountId());
-            entity.setCreatedAt(System.currentTimeMillis());
-
-            dao.insert(entity);
-
-            AccessibilityDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
-            PaymentCapturePlugin.notifyCandidate(entity);
-            // 当场弹窗记账：同步推送事件给前端，触发 CaptureQuickEntrySheet
-            PaymentCapturePlugin.notifyQuickEntry(entity);
-
-            lastSourcePackage = info.getSourcePackage();
-            lastSourceName = info.getSourceName();
-
-            Log.d(TAG, "已写入捕获队列: id=" + entity.getId()
-                    + " " + info.getSourceName() + " " + info.getAmount());
-        } catch (Exception e) {
-            AccessibilityDiagnostics.queueFail(info.getSourcePackage(), e.getMessage());
-            Log.w(TAG, "写入捕获队列失败", e);
+        // 冷却期检查：避免同一支付页面在停留期间被重复插入
+        long now = System.currentTimeMillis();
+        String key = info.getSourcePackage() + ":" + info.getAmountMinor();
+        synchronized (this) {
+            if (key.equals(lastInsertKey) && (now - lastInsertTime) < INSERT_COOLDOWN_MS) {
+                Log.d(TAG, "冷却期内跳过重复插入: " + key);
+                return;
+            }
+            lastInsertTime = now;
+            lastInsertKey = key;
         }
+
+        DB_EXECUTOR.execute(() -> {
+            try {
+                CaptureQueueDao dao = CaptureQueueDatabase
+                        .getInstance(this.getApplicationContext())
+                        .captureQueueDao();
+
+                String fingerprint = buildFingerprint(info);
+
+                CaptureQueueEntity entity = new CaptureQueueEntity();
+                entity.setSourcePackage(orNull(info.getSourcePackage()));
+                entity.setSourceName(orNull(info.getSourceName()));
+                entity.setCaptureMethod("accessibility");
+                entity.setOccurredAt(String.valueOf(System.currentTimeMillis()));
+                entity.setAmountMinor(info.getAmountMinor());
+                entity.setCurrency("CNY");
+                entity.setMerchant(info.getMerchant());
+                entity.setAccountHint(info.getAccountHint());
+                entity.setSourceOrderId(info.getOrderNo());
+                entity.setRawFingerprint(fingerprint);
+                entity.setConfidence(parseConfidence(info.getConfidence()));
+                entity.setParserVersion(PARSER_VERSION);
+                entity.setStatus("pending");
+                entity.setSuggestedCategory(info.getSuggestedCategory());
+                entity.setDefaultAccountId(info.getDefaultAccountId());
+                entity.setCreatedAt(System.currentTimeMillis());
+
+                dao.insert(entity);
+
+                AccessibilityDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
+                PaymentCapturePlugin.notifyCandidate(entity);
+                PaymentCapturePlugin.notifyQuickEntry(entity);
+
+                lastSourcePackage = info.getSourcePackage();
+                lastSourceName = info.getSourceName();
+
+                Log.d(TAG, "已写入捕获队列: id=" + entity.getId()
+                        + " " + info.getSourceName() + " " + info.getAmount());
+            } catch (Exception e) {
+                AccessibilityDiagnostics.queueFail(info.getSourcePackage(), e.getMessage());
+                Log.w(TAG, "写入捕获队列失败", e);
+            }
+        });
     }
 
     private static String orNull(String v) {

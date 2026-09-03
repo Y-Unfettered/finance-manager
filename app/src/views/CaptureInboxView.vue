@@ -10,13 +10,17 @@ import {
   Image as ImageIcon,
   Clock,
 } from '@lucide/vue'
-import { onActivated, onMounted, ref } from 'vue'
+import { onActivated, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
+import AccountBrandIcon from '@/components/AccountBrandIcon.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import CategoryIcon from '@/components/CategoryIcon.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import { findAccountCatalogItem } from '@/features/finance/account-catalog'
+import { formatMinorToCny } from '@/domain/money'
 import { useFinanceService, type ExpenseCategoryOption } from '@/features/finance/finance-service'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import { useAppStore } from '@/stores/app'
@@ -37,6 +41,7 @@ const loading = ref(false)
 const selected = ref<CapturedPayment | null>(null)
 const showConfirmSheet = ref(false)
 const confirming = ref(false)
+const message = ref('')
 
 const categories = ref<ExpenseCategoryOption[]>([])
 const accounts = ref<AccountBalanceRecord[]>([])
@@ -52,6 +57,10 @@ const health = ref<{
   notification: { enabled: false },
   pendingCount: 0,
 })
+
+function appearance(acc: { name: string; institution?: string }) {
+  return findAccountCatalogItem(acc.name, acc.institution)
+}
 
 async function loadEvents(): Promise<void> {
   try {
@@ -82,9 +91,9 @@ async function loadOptions(): Promise<void> {
     finance.listExpenseCategories(appStore.ledgerId),
     finance.listAccounts(appStore.ledgerId),
   ])
-  categories.value = cats
+  categories.value = cats.filter((c) => !c.parentId)
   accounts.value = accts.filter(
-    (a) => a.normalBalance === 'debit',
+    (a) => !a.archivedAt && a.visibleInEntry !== false && a.normalBalance === 'debit',
   )
 }
 
@@ -92,6 +101,7 @@ async function openConfirm(event: CapturedPayment): Promise<void> {
   selected.value = event
   selectedAccountId.value = ''
   selectedCategoryId.value = ''
+  message.value = ''
   await loadOptions()
   showConfirmSheet.value = true
 }
@@ -100,28 +110,38 @@ async function doConfirm(): Promise<void> {
   if (!selected.value || !selectedAccountId.value || !selectedCategoryId.value) return
   try {
     confirming.value = true
+    message.value = ''
     await confirmEvent({
       event: selected.value,
       accountId: selectedAccountId.value,
       categoryId: selectedCategoryId.value,
     })
+    message.value = '入账成功'
     showConfirmSheet.value = false
     await loadEvents()
+    await loadHealth()
   } catch (e) {
-    alert(e instanceof Error ? e.message : '入账失败')
+    message.value = e instanceof Error ? e.message : '入账失败'
   } finally {
     confirming.value = false
   }
 }
 
+function onDismissConfirm(): void {
+  if (confirming.value) return
+  showConfirmSheet.value = false
+}
+
 async function doDismiss(id: number): Promise<void> {
   await dismissEvent(id)
   await loadEvents()
+  await loadHealth()
 }
 
 async function doDismissAll(): Promise<void> {
   await dismissAll()
   await loadEvents()
+  await loadHealth()
 }
 
 function captureLabel(method: string): string {
@@ -169,7 +189,6 @@ onActivated(async () => {
     />
 
     <div class="capture-inbox__body">
-      <!-- 状态诊断卡 -->
       <section class="health-bar">
         <div class="health-item" :class="{ 'health-item--on': health.accessibility.enabled }">
           <ShieldCheck :size="18" />
@@ -185,7 +204,6 @@ onActivated(async () => {
         </div>
       </section>
 
-      <!-- 空状态 -->
       <div v-if="!loading && events.length === 0" class="empty-state">
         <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M9 12l2 2 4-4" />
@@ -197,12 +215,10 @@ onActivated(async () => {
         </p>
       </div>
 
-      <!-- 加载状态 -->
       <div v-else-if="loading" class="loading-state">
         <Loader2 :size="28" class="loading-state__icon" />
       </div>
 
-      <!-- 事件列表 -->
       <div v-else class="events-list">
         <div class="events-list__header">
           <span class="events-list__count">{{ events.length }} 条待确认</span>
@@ -229,15 +245,16 @@ onActivated(async () => {
           <div class="event-item__actions">
             <button class="event-item__btn event-item__btn--dismiss" @click="doDismiss(event.id)">
               <X :size="16" />
+              忽略
             </button>
             <button class="event-item__btn event-item__btn--confirm" @click="openConfirm(event)">
               <Check :size="16" />
+              确认
             </button>
           </div>
         </BaseCard>
       </div>
 
-      <!-- 设置提示 -->
       <div v-if="!health.accessibility.enabled && !health.notification.enabled" class="setup-hint">
         <AlertCircle :size="16" />
         <span>无障碍服务和通知监听均未开启，自动捕获功能暂不可用。</span>
@@ -255,43 +272,78 @@ onActivated(async () => {
           <span class="confirm-sheet__merchant">{{ selected.merchant || '—' }}</span>
         </div>
 
-        <label class="field">
-          <span class="field__label">付款账户</span>
-          <select v-model="selectedAccountId" class="field__select">
-            <option value="">选择账户</option>
-            <option v-for="a in accounts" :key="a.id" :value="a.id">
-              {{ a.name }}
-            </option>
-          </select>
-        </label>
+        <section class="entry-section">
+          <span class="entry-section__label">支出分类</span>
+          <div class="entry-categories">
+            <button
+              v-for="cat in categories.slice(0, 12)"
+              :key="cat.id"
+              type="button"
+              :class="['entry-cat', { active: selectedCategoryId === cat.id }]"
+              @click="selectedCategoryId = cat.id"
+            >
+              <CategoryIcon
+                :icon-key="cat.iconKey"
+                color="var(--color-primary-500)"
+                :size="28"
+                :label="cat.name"
+              />
+              <span class="entry-cat__label">{{ cat.name }}</span>
+            </button>
+          </div>
+          <div v-if="categories.length === 0" class="entry-empty">暂无支出分类，请先在「设置」中添加</div>
+        </section>
 
-        <label class="field">
-          <span class="field__label">支出分类</span>
-          <select v-model="selectedCategoryId" class="field__select">
-            <option value="">选择分类</option>
-            <option v-for="c in categories" :key="c.id" :value="c.id">
-              {{ c.name }}
-            </option>
-          </select>
-        </label>
+        <section class="entry-section">
+          <span class="entry-section__label">付款账户</span>
+          <div class="entry-accounts">
+            <button
+              v-for="acc in accounts.slice(0, 8)"
+              :key="acc.id"
+              type="button"
+              :class="['entry-account', { active: selectedAccountId === acc.id }]"
+              @click="selectedAccountId = acc.id"
+            >
+              <AccountBrandIcon
+                :label="acc.name"
+                :brand-key="acc.brandKey ?? appearance(acc).id"
+                :symbol="acc.iconKey ?? appearance(acc).symbol"
+                :color="acc.color ?? appearance(acc).color"
+                :size="'small'"
+              />
+              <div class="entry-account__info">
+                <span class="entry-account__name">{{ acc.name }}</span>
+                <span class="entry-account__balance">
+                  {{ formatMinorToCny(acc.balanceMinor) }}
+                </span>
+              </div>
+            </button>
+          </div>
+          <div v-if="accounts.length === 0" class="entry-empty">暂无付款账户，请先在「账户」中添加</div>
+        </section>
 
         <div class="confirm-sheet__actions">
           <button
-            class="btn btn--ghost"
-            @click="showConfirmSheet = false"
+            class="entry-btn entry-btn--dismiss"
+            :disabled="confirming"
+            @click="onDismissConfirm"
           >
-            取消
+            忽略
           </button>
           <button
-            class="btn btn--primary"
+            class="entry-btn entry-btn--confirm"
             :disabled="!selectedAccountId || !selectedCategoryId || confirming"
             @click="doConfirm"
           >
             <CheckCheck v-if="!confirming" :size="16" />
             <Loader2 v-else :size="16" class="spinner" />
-            {{ confirming ? '入账中...' : '确认入账' }}
+            {{ confirming ? '入账中…' : '确认入账' }}
           </button>
         </div>
+
+        <p v-if="message" class="confirm-sheet__message" :class="message === '入账成功' ? 'confirm-sheet__message--success' : 'confirm-sheet__message--error'">
+          {{ message }}
+        </p>
       </div>
     </AppBottomSheet>
   </main>
@@ -520,6 +572,8 @@ onActivated(async () => {
 
 .confirm-sheet {
   padding: 8px 0 16px;
+  max-height: 80vh;
+  overflow-y: auto;
 }
 
 .confirm-sheet__amount {
@@ -527,70 +581,189 @@ onActivated(async () => {
   align-items: baseline;
   gap: 10px;
   padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 1px solid var(--color-divider);
   margin-bottom: 16px;
 }
 
 .confirm-sheet__merchant {
   font-size: 14px;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.entry-section {
+  margin-bottom: var(--space-4);
+}
+
+.entry-section__label {
+  display: block;
+  margin-bottom: var(--space-2);
   color: var(--color-text-tertiary);
-}
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 14px;
-}
-
-.field__label {
   font-size: 13px;
   font-weight: 500;
-  color: var(--color-text);
+  padding-left: 2px;
 }
 
-.field__select {
-  padding: 10px 12px;
-  border: 1px solid var(--color-line);
-  border-radius: 8px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  font-size: 14px;
+.entry-categories {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px var(--space-2);
+}
+
+.entry-cat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: var(--space-1) 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.entry-cat.active {
+  border-color: var(--color-primary-500);
+  background: var(--color-primary-50);
+}
+
+.entry-cat:active {
+  transform: scale(0.95);
+}
+
+.entry-cat__label {
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  text-align: center;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.entry-cat.active .entry-cat__label {
+  color: var(--color-primary-700);
+  font-weight: 600;
+}
+
+.entry-accounts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.entry-account {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: var(--space-2) 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.entry-account.active {
+  border-color: var(--color-primary-500);
+  background: var(--color-primary-50);
+}
+
+.entry-account:active {
+  transform: scale(0.95);
+}
+
+.entry-account__info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  width: 100%;
+}
+
+.entry-account__name {
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.entry-account__balance {
+  color: var(--color-text-tertiary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.entry-empty {
+  padding: 16px 0;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
 }
 
 .confirm-sheet__actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 20px;
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
-.confirm-sheet__actions .btn {
-  flex: 1;
+.entry-btn {
+  height: 46px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 12px;
-  border-radius: 8px;
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 12px;
   cursor: pointer;
+  transition: opacity 0.15s;
 }
 
-.btn--ghost {
-  background: var(--color-surface);
-  border: 1px solid var(--color-line);
-  color: var(--color-text);
-}
-
-.btn--primary {
-  background: var(--color-primary);
-  border: 1px solid var(--color-primary);
-  color: white;
-}
-
-.btn:disabled {
-  opacity: 0.5;
+.entry-btn:disabled {
+  opacity: 0.45;
   cursor: not-allowed;
+}
+
+.entry-btn--dismiss {
+  color: var(--color-text-primary);
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+}
+
+.entry-btn--confirm {
+  color: white;
+  background: var(--color-primary-600);
+  border: 0;
+}
+
+.confirm-sheet__message {
+  margin: var(--space-2) 0 0;
+  font-size: var(--type-caption-size);
+  text-align: center;
+  line-height: 1.4;
+}
+
+.confirm-sheet__message--success {
+  color: var(--color-success);
+}
+
+.confirm-sheet__message--error {
+  color: var(--color-danger);
 }
 
 .spinner {

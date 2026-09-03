@@ -50,13 +50,15 @@ const DEFAULT_RULES: CaptureRule[] = [
     name: '支付宝',
     packageName: 'com.eg.android.AlipayGphone',
     channel: 'accessibility',
-    successKeywords: ['支付成功', '付款成功', '转账成功'],
+    successKeywords: ['支付成功', '付款成功', '转账成功', '交易成功', '成功'],
     amountPatterns: [
       { regex: '[¥￥]\\s*(\\d+[\\.\\d]*)', group: 1 },
       { regex: '\\d+[\\.\\d]*\\s*元', group: 0 },
     ],
     merchantPatterns: [
       { regex: '(?:商家|商户|收款方|对方|店铺|收款人|转入)[:：]?\\s*([^\\n\\r]+)', group: 1 },
+      // 兜底：首行如果没有标签前缀，取不含数字/金额/时间/系统词的文本作为商户
+      { regex: '^([^\\n\\r\\d¥￥创建成功支付付款交易退款提现]*[^\\n\\r\\d¥￥：:])', group: 1 },
     ],
     accountPatterns: [
       { regex: '(?:支付账户|账户|付款方式|银行卡|储蓄卡|余额宝|余额)[:：]\\s*(.+)', group: 1 },

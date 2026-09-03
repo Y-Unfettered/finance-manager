@@ -12,6 +12,9 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
 
+import rikka.shizuku.Shizuku;
+import rikka.shizuku.ShizukuProvider;
+
 public class MainActivity extends BridgeActivity {
     private static volatile MainActivity instance;
     private View privacyOverlay;
@@ -40,6 +43,35 @@ public class MainActivity extends BridgeActivity {
 
         super.onCreate(savedInstanceState);
         instance = this;
+
+        // 注册 Shizuku binder 接收器（sticky 模式：已授权则立即收到，未来授权也能收到）。
+        // ShizukuProvider.onCreate() 已在此时调用 Shizuku.setContext()，所以现在可以注册接收器。
+        // 同时主动请求 binder——因为 Shizuku manager 在扫描授权 app 时如果我们的进程不在，
+        // 之后不会重发，需要主动请求一次。
+        try {
+            Shizuku.addBinderReceivedListenerSticky(new Shizuku.OnBinderReceivedListener() {
+                @Override
+                public void onBinderReceived() {
+                    Log.d(TAG, "Shizuku binder received, ping=" + Shizuku.pingBinder());
+                }
+            });
+            Shizuku.addBinderDeadListener(new Shizuku.OnBinderDeadListener() {
+                @Override
+                public void onBinderDead() {
+                    Log.d(TAG, "Shizuku binder dead");
+                }
+            });
+            // 主动请求 binder（Shizuku manager 之前可能没扫到我们，或 force-stop 后未重发）
+            try {
+                ShizukuProvider.requestBinderForNonProviderProcess(this);
+                Log.d(TAG, "ShizukuProvider.requestBinderForNonProviderProcess called");
+            } catch (Exception e) {
+                Log.w(TAG, "requestBinderForNonProviderProcess 失败", e);
+            }
+            Log.d(TAG, "Shizuku listeners registered, ping=" + Shizuku.pingBinder());
+        } catch (Exception e) {
+            Log.e(TAG, "Shizuku listener 注册失败", e);
+        }
         // 拦截 IME（系统输入法）insets，防止 WebView 内部缩小布局视口。
         // 即使 AndroidManifest 设置了 adjustNothing，WebView 仍会在收到 IME
         // insets 时自动缩小 layout viewport，导致页面被压缩、自定义数字键盘

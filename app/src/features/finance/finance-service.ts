@@ -158,6 +158,9 @@ export interface CreateRepaymentInput {
   merchant?: string
   note?: string
   attachmentDataUris?: readonly string[]
+  originalAmountMinor?: number
+  discountMinor?: number
+  discountIncomeCategoryId?: string
 }
 
 export interface CreateRefundInput {
@@ -1153,12 +1156,19 @@ export class FinanceService implements FinanceServicePort {
   async createRepayment(input: CreateRepaymentInput): Promise<string> {
     log.debug('createRepayment: start', { sourceAccountId: input.sourceAccountId, liabilityAccountId: input.liabilityAccountId })
     try {
+      const discount = validateDiscount(input)
       const [sourceAccount, liabilityAccount] = await Promise.all([
         this.accounts.findPostingRef(input.sourceAccountId),
         this.accounts.findPostingRef(input.liabilityAccountId),
       ])
       if (!sourceAccount) throw new Error('还款账户不存在')
       if (!liabilityAccount) throw new Error('信用账户不存在')
+      const repaymentDiscountIncomeCategory = discount && input.discountIncomeCategoryId
+        ? await this.categories.findPostingRef(input.discountIncomeCategoryId)
+        : undefined
+      if (discount && !repaymentDiscountIncomeCategory) {
+        throw new Error('优惠收入分类不存在')
+      }
 
       const transaction = await this.transactions.create(
         input.ledgerId,
@@ -1169,9 +1179,15 @@ export class FinanceService implements FinanceServicePort {
           liabilityAccount,
           merchant: input.merchant,
           note: input.note,
+          ...(discount ? {
+            originalAmountMinor: input.originalAmountMinor,
+            discountMinor: input.discountMinor,
+            discountIncomeCategory: repaymentDiscountIncomeCategory,
+          } : {}),
         }),
         undefined,
         input.attachmentDataUris,
+        discount,
       )
       log.info('createRepayment: success', { transactionId: transaction.id, amountMinor: input.amountMinor })
       return transaction.id
@@ -1423,6 +1439,12 @@ export class FinanceService implements FinanceServicePort {
           ])
           if (!sourceAccount) throw new Error('还款账户不存在')
           if (!liabilityAccount) throw new Error('信用账户不存在')
+          const repaymentDiscountIncomeCategory = discount && input.discountIncomeCategoryId
+            ? await this.categories.findPostingRef(input.discountIncomeCategoryId)
+            : undefined
+          if (discount && !repaymentDiscountIncomeCategory) {
+            throw new Error('优惠收入分类不存在')
+          }
           draft = createRepayment({
             amountMinor: input.amountMinor,
             occurredAt: input.occurredAt,
@@ -1430,6 +1452,11 @@ export class FinanceService implements FinanceServicePort {
             liabilityAccount,
             merchant: input.merchant,
             note: input.note,
+            ...(discount ? {
+              originalAmountMinor: input.originalAmountMinor,
+              discountMinor: input.discountMinor,
+              discountIncomeCategory: repaymentDiscountIncomeCategory,
+            } : {}),
           })
           break
         }

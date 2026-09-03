@@ -188,17 +188,13 @@ const canSubmit = computed(() => {
   if (loading.value || saving.value) return false
   if (amountDisplay.value === '' || amountDisplay.value === '0' || amountDisplay.value === '0.0')
     return false
-  if (
-    (mode.value === 'expense' || mode.value === 'credit_purchase') &&
-    hasDiscount.value &&
-    Number(discountAmount.value) >= Number(amountDisplay.value)
-  )
+  if (hasDiscount.value && Number(discountAmount.value) >= Number(amountDisplay.value))
     return false
   if (mode.value === 'refund' && originalRefundTransactionId.value === '') return false
   if (hasCategory.value) {
     return sourceAccountId.value !== '' && selectedCategoryId.value !== ''
   }
-  if (isTransfer.value && hasDiscount.value) {
+  if ((isTransfer.value || isRepayment.value) && hasDiscount.value) {
     return (
       sourceAccountId.value !== '' &&
       targetAccountId.value !== '' &&
@@ -307,7 +303,7 @@ function applyTransactionToForm(tx: TransactionMetadata): void {
   targetAccountId.value = tx.targetAccountId ?? ''
   if (tx.categoryId) selectedCategoryId.value = tx.categoryId
   if (tx.categoryName) selectedCategoryName.value = tx.categoryName
-  if (tx.type === 'transfer' && tx.discountMinor && tx.categoryId) {
+  if ((tx.type === 'transfer' || tx.type === 'repayment') && tx.discountMinor && tx.categoryId) {
     discountIncomeCategoryId.value = tx.categoryId
   }
   originalOccurredAt.value = tx.occurredAt
@@ -407,7 +403,30 @@ function switchMode(next: EntryMode): void {
       incomeCategories.value[0]?.id ??
       ''
   }
-  resetAccountsForMode(next)
+  // 切换模式时，如果当前账户对新模式有效，则保留不重置
+  //（例如从支出切到收入时，当前借方账户如"医保"对收入模式也有效）
+  const currentAccount = accounts.value.find((a) => a.id === sourceAccountId.value)
+  const isSourceValidForNext = (() => {
+    if (!currentAccount) return false
+    if (next === 'expense' || next === 'credit_purchase' || next === 'refund' || next === 'transfer') {
+      return activeAccounts.value.some((a) => a.id === currentAccount.id)
+    }
+    // income / repayment：仅借方账户有效
+    return debitAccounts.value.some((a) => a.id === currentAccount.id)
+  })()
+
+  if (!isSourceValidForNext) {
+    resetAccountsForMode(next)
+  } else {
+    if (next === 'transfer') {
+      targetAccountId.value =
+        activeAccounts.value.find((a) => a.id !== sourceAccountId.value)?.id ?? ''
+    } else if (next === 'repayment') {
+      targetAccountId.value = creditAccounts.value[0]?.id ?? ''
+    } else {
+      targetAccountId.value = ''
+    }
+  }
 }
 
 function resetAccountsForMode(next: EntryMode): void {
@@ -642,8 +661,9 @@ async function submit(): Promise<void> {
   errorMessage.value = ''
   try {
     const appliesDiscount =
-      (mode.value === 'expense' || mode.value === 'credit_purchase') && hasDiscount.value
+      (mode.value === 'expense' || mode.value === 'credit_purchase' || mode.value === 'repayment') && hasDiscount.value
     const transferDiscount = mode.value === 'transfer' && hasDiscount.value
+    const repaymentDiscount = mode.value === 'repayment' && hasDiscount.value
     const appliesAnyDiscount = appliesDiscount || transferDiscount
     const originalAmountMinor = appliesAnyDiscount
       ? parseCnyInputToMinor(amountDisplay.value)
@@ -656,10 +676,19 @@ async function submit(): Promise<void> {
     )
     if (amountMinor <= 0) throw new Error('优惠后金额必须大于 0')
     if (isEditMode.value && editTransactionId.value) {
-      const selectedType =
-        mode.value === 'expense' && selectedSourceAccount.value?.normalBalance === 'credit'
-          ? 'credit_purchase'
-          : mode.value
+      // 根据所选账户的 normalBalance 自动确定交易类型：
+      // - expense 模式选了贷方账户 → credit_purchase
+      // - credit_purchase 模式选了借方账户 → expense（换账户时自动降级）
+      const selectedAccount = selectedSourceAccount.value
+      const selectedTarget = selectedTargetAccount.value
+      let selectedType = mode.value
+      if (mode.value === 'expense' && selectedAccount?.normalBalance === 'credit') {
+        selectedType = 'credit_purchase'
+      } else if (mode.value === 'credit_purchase' && selectedAccount?.normalBalance === 'debit') {
+        selectedType = 'expense'
+      } else if (mode.value === 'transfer' && selectedTarget?.normalBalance === 'credit') {
+        selectedType = 'repayment'
+      }
       const input: EditTransactionFullInput = {
         ledgerId: appStore.ledgerId,
         transactionId: editTransactionId.value,
@@ -674,9 +703,10 @@ async function submit(): Promise<void> {
         attachmentDataUris: attachmentDataUris.value,
         originalAmountMinor,
         discountMinor,
-        discountIncomeCategoryId: mode.value === 'transfer' && transferDiscount
-          ? discountIncomeCategoryId.value || undefined
-          : undefined,
+        discountIncomeCategoryId: (mode.value === 'transfer' && transferDiscount)
+          || (mode.value === 'repayment' && repaymentDiscount)
+            ? discountIncomeCategoryId.value || undefined
+            : undefined,
       }
       await finance.editTransactionFull(input)
     } else {
@@ -721,20 +751,38 @@ async function submit(): Promise<void> {
           attachmentDataUris: attachmentDataUris.value,
         })
       } else if (mode.value === 'transfer') {
-        await finance.createTransfer({
-          ledgerId: appStore.ledgerId,
-          amountMinor,
-          sourceAccountId: sourceAccountId.value,
-          targetAccountId: targetAccountId.value,
-          occurredAt: occurredAtValue,
-          note: note.value || undefined,
-          attachmentDataUris: attachmentDataUris.value,
-          ...(transferDiscount ? {
-            originalAmountMinor,
-            discountMinor,
-            discountIncomeCategoryId: discountIncomeCategoryId.value || undefined,
-          } : {}),
-        })
+        if (selectedTargetAccount.value?.normalBalance === 'credit') {
+          await finance.createRepayment({
+            ledgerId: appStore.ledgerId,
+            amountMinor,
+            sourceAccountId: sourceAccountId.value,
+            liabilityAccountId: targetAccountId.value,
+            occurredAt: occurredAtValue,
+            merchant: merchant.value || undefined,
+            note: note.value || undefined,
+            attachmentDataUris: attachmentDataUris.value,
+            ...(transferDiscount ? {
+              originalAmountMinor,
+              discountMinor,
+              discountIncomeCategoryId: discountIncomeCategoryId.value || undefined,
+            } : {}),
+          })
+        } else {
+          await finance.createTransfer({
+            ledgerId: appStore.ledgerId,
+            amountMinor,
+            sourceAccountId: sourceAccountId.value,
+            targetAccountId: targetAccountId.value,
+            occurredAt: occurredAtValue,
+            note: note.value || undefined,
+            attachmentDataUris: attachmentDataUris.value,
+            ...(transferDiscount ? {
+              originalAmountMinor,
+              discountMinor,
+              discountIncomeCategoryId: discountIncomeCategoryId.value || undefined,
+            } : {}),
+          })
+        }
       } else if (mode.value === 'credit_purchase') {
         await finance.createCreditPurchase({
           ledgerId: appStore.ledgerId,
@@ -756,6 +804,11 @@ async function submit(): Promise<void> {
           merchant: merchant.value || undefined,
           note: note.value || undefined,
           attachmentDataUris: attachmentDataUris.value,
+          ...(repaymentDiscount ? {
+            originalAmountMinor,
+            discountMinor,
+            discountIncomeCategoryId: discountIncomeCategoryId.value || undefined,
+          } : {}),
         })
       } else {
         await finance.createRefund({
@@ -958,7 +1011,7 @@ onUnmounted(() => {
     </section>
 
     <!-- 转账优惠收入分类选择 -->
-    <div v-if="isTransfer && hasDiscount" class="discount-category-row">
+    <div v-if="(isTransfer || isRepayment) && hasDiscount" class="discount-category-row">
       <span class="discount-category-label">优惠归属</span>
       <select
         v-model="discountIncomeCategoryId"

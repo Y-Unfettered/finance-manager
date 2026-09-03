@@ -47,6 +47,10 @@ public class RuleBasedParser {
                 configCacheTime = now;
             }
         }
+        // 如果 SharedPreferences 为空（首次安装/清除配置），使用内置默认规则
+        if (configJsonCache == null || configJsonCache.isEmpty()) {
+            return CaptureRuleDefaults.DEFAULT_CONFIG_JSON;
+        }
         return configJsonCache;
     }
 
