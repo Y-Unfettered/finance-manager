@@ -143,13 +143,8 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
 
                 NotificationDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
                 PaymentCapturePlugin.notifyCandidate(entity);
-                try {
-                    app.financemanager.capture.overlay.OverlayEntryManager
-                            .getInstance(getApplicationContext())
-                            .maybeShowOverlay(entity);
-                } catch (Exception ex) {
-                    Log.w(TAG, "maybeShowOverlay 失败", ex);
-                }
+                // 直接拉起 APP，打开记账页面，自动填好金额和商户（最小闭环：检测金额 → 记账页预填）
+                PaymentCapturePlugin.launchRecordForCapture(getApplicationContext(), entity);
 
                 Log.d(TAG, "通知已写入捕获队列: " + info.getSourceName()
                         + " " + info.getAmount());

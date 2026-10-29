@@ -356,6 +356,11 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   }
   async openOverlaySettings(): Promise<void> {}
   async syncOverlayOptions(): Promise<void> {}
+  async setActiveLedgerId(): Promise<void> {}
+  async log(): Promise<void> {}
+  async getPendingCaptureData(): Promise<{ amountMinor?: number; merchant?: string; occurredAt?: string }> {
+    return {}
+  }
 
   async getCaptureRules(): Promise<RuleConfigResult> {
     return { success: false, message: '仅原生平台可用' }

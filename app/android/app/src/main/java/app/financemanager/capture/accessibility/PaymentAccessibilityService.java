@@ -309,17 +309,8 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
                 AccessibilityDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
                 PaymentCapturePlugin.notifyCandidate(entity);
-                // 直接拉起 APP，打开记账页面，自动填好金额和商户
-                try {
-                    android.content.Intent intent = new android.content.Intent(this, app.financemanager.local.MainActivity.class);
-                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                    intent.putExtra("pendingCaptureAmountMinor", entity.getAmountMinor() != null ? entity.getAmountMinor() : 0L);
-                    intent.putExtra("pendingCaptureMerchant", entity.getMerchant() != null ? entity.getMerchant() : "");
-                    intent.putExtra("pendingCaptureOccurredAt", entity.getOccurredAt() != null ? entity.getOccurredAt() : "");
-                    startActivity(intent);
-                } catch (Exception ex) {
-                    Log.w(TAG, "拉起记账页面失败", ex);
-                }
+                // 直接拉起 APP，打开记账页面，自动填好金额和商户（最小闭环：检测金额 → 记账页预填）
+                PaymentCapturePlugin.launchRecordForCapture(getApplicationContext(), entity);
 
                 lastSourcePackage = info.getSourcePackage();
                 lastSourceName = info.getSourceName();

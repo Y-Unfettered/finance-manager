@@ -953,6 +953,33 @@ public class PaymentCapturePlugin extends Plugin {
     }
 
     /**
+     * 拉起 MainActivity 并携带捕获数据，前端 checkPendingCaptureData 会读取并跳转记账页。
+     *
+     * 无障碍 / 通知服务检测到支付后统一走这里：
+     * 支付成功 → 打开 APP → 自动进入原生记账页（/transactions/new）→ 金额已填好
+     * → 用户只调整支付账户/分类 → 点保存。
+     *
+     * 与旧悬浮窗（OverlayEntryManager / pendingOverlayCommit）无关；那条链路已停用。
+     * 任意线程可调用。
+     */
+    public static void launchRecordForCapture(android.content.Context context, CaptureQueueEntity entity) {
+        try {
+            android.content.Intent intent = new android.content.Intent(context, MainActivity.class);
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK
+                    | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            intent.putExtra("pendingCaptureAmountMinor",
+                    entity.getAmountMinor() != null ? entity.getAmountMinor() : 0L);
+            intent.putExtra("pendingCaptureMerchant",
+                    entity.getMerchant() != null ? entity.getMerchant() : "");
+            intent.putExtra("pendingCaptureOccurredAt",
+                    entity.getOccurredAt() != null ? entity.getOccurredAt() : "");
+            context.startActivity(intent);
+        } catch (Exception ex) {
+            Log.w(TAG, "拉起记账页面失败", ex);
+        }
+    }
+
+    /**
      * 前端入账完成后回调原生：原生关闭悬浮窗并 Toast 提示。
      */
     @PluginMethod

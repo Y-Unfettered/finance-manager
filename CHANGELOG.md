@@ -2,6 +2,22 @@
 
 本项目采用语义化版本号。每个版本除本文件的摘要外，还必须在 `版本记录` 目录保留完整记录，包含本次更新、调整、验证结果、已知问题和下一版本计划。
 
+## [0.5.1] - 2026-10-29
+
+### 自动记账：最小闭环「检测金额 → 记账页预填」
+
+- 统一捕获链路：无障碍服务和通知监听服务检测到支付后，都改为**直接拉起 APP 并跳转到原生记账页**（`/transactions/new`），自动填入金额、商户（备注）、时间；用户只需调整支付账户/分类后点保存。
+- 修复「点击记一笔后跳进 APP 却停在首页、不能直接记账」：原悬浮窗卡片「记一笔」走的是 SharedPreferences + `pendingOverlayCommit` 参数，而 `MainActivity` 不消费该参数、前端 `processPendingOverlayCommit()` 定义了但从未被调用。现改为复用 `pendingCapture*` intent 参数路径。
+- 修复「时灵时不灵」：`checkPendingCaptureData()` 原先只在 `onMounted`（冷启动）触发；由于无障碍/通知/Shizuku 服务常驻进程，进程存活时是走 `onNewIntent` 热启动，该函数不会被再次调用。现改为在 `appStateChange isActive` 时补检。
+- 去掉 `paymentCaptureCandidate` 监听器里的直接跳转，避免与拉起记账页路径双重导航；进程存活时不会再重复 push。
+- 移除从未被调用的 `processPendingOverlayCommit` 死代码（旧悬浮窗 SharedPreferences 自动入账路径，随本次停用）。
+- 说明：本次迭代不启用原生悬浮窗卡片（`OverlayEntryManager` 保留但不再触发）；检测到的记录仍保留在「待确认账单」作审计/兜底。
+
+### 验证
+
+- `vue-tsc --noEmit`、ESLint 通过；`vitest run` 33 个文件 240 个用例通过。
+- Android `compileDebugJavaWithJavac` 通过。
+
 ## [0.5.0] - 2026-10-19
 
 ### 自动记账：原生悬浮窗当场确认

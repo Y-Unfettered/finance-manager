@@ -19,7 +19,6 @@ import { useAppStore } from '@/stores/app'
 import { useCaptureEntryStore, parseSuggestedCategory } from '@/stores/capture-entry'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
 import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
-import { financeServiceKey } from '@/features/finance/finance-service'
 import { autoRecoverAccessibility, ensureShizukuRunning } from '@/features/capture-inbox/capture-inbox-service'
 import {
   navigationCacheEpoch,
@@ -35,7 +34,6 @@ const appLockService = inject(appLockServiceKey)
 const autoBackupService = inject(autoBackupServiceKey)
 const clipboardImportStore = useClipboardImportStore()
 const captureEntryStore = useCaptureEntryStore()
-const financeService = inject(financeServiceKey)
 const log = getLogger('clipboard')
 
 const privacyVeil = ref(false)
@@ -214,35 +212,9 @@ async function checkPendingCaptureData() {
   }
 }
 
-/** 处理悬浮窗点"记一笔"后拉起的待入账数据 */
-async function processPendingOverlayCommit() {
-  try {
-    if (!Capacitor.isNativePlatform() || !financeService || !appStore.ledgerId) return
-    const pending = await PaymentCapture.getPendingOverlayCommit() as any
-    if (!pending?.amountMinor) return
-    log.info('收到悬浮窗待入账数据', { amount: pending.amountMinor, merchant: pending.merchant })
-    // 取第一个账户和分类（如果用户在卡片上没选）
-    const accounts = await financeService.listAccounts(appStore.ledgerId)
-    const categories = await financeService.listExpenseCategories(appStore.ledgerId)
-    const accountId = pending.accountId || accounts[0]?.id
-    const categoryId = pending.categoryId || categories[0]?.id
-    if (!accountId || !categoryId) {
-      log.warn('悬浮窗入账失败：找不到账户或分类')
-      return
-    }
-    await financeService.createExpense({
-      ledgerId: appStore.ledgerId,
-      accountId,
-      categoryId,
-      amountMinor: pending.amountMinor,
-      occurredAt: pending.occurredAt || new Date().toISOString(),
-      note: pending.merchant || '',
-    })
-    log.info('悬浮窗入账成功', { amount: pending.amountMinor })
-  } catch (e) {
-    log.error('processPendingOverlayCommit 失败', { msg: e instanceof Error ? e.message : String(e) })
-  }
-}
+// 注：旧的「原生悬浮窗点记一笔 → SharedPreferences → 自动入账」路径（processPendingOverlayCommit）
+// 已随最小闭环方案停用。悬浮窗卡片不再触发，统一由「拉起 MainActivity → checkPendingCaptureData
+// → 记账页预填金额」处理。
 
 onMounted(async () => {
   if (appLockService && appStore.databaseStatus === 'ready') {
@@ -266,6 +238,9 @@ onMounted(async () => {
           startClipboardPolling()
           // 回到前台时补一次月度备份检查：进程常驻跨过午夜时，启动那次检查已过时
           void autoBackupService?.ensureMonthlyBackup()
+          // 热启动补检：捕获服务拉起 MainActivity 时进程常驻，onMounted 已不会再次触发，
+          // 必须在这里补一次待入账检查，否则点完支付后回到前台不会自动进记账页（时灵时不灵的主因）
+          if (appStore.databaseStatus === 'ready') void checkPendingCaptureData()
         }
       })
       log.info('App.vue: appStateChange 监听器注册完成')
@@ -347,16 +322,13 @@ onMounted(async () => {
             log.warn('应用锁锁定 -> 跳过')
             return
           }
-          // 直接跳转到记账页面，自动填好金额和商户
-          router.push({
-            path: '/transactions/new',
-            query: {
-              amount: String(data.amountMinor ?? ''),
-              merchant: data.merchant ?? '',
-              occurredAt: data.occurredAt ?? '',
-            },
+          // 不再在这里直接跳转记账页——统一由「拉起 MainActivity → checkPendingCaptureData」路径处理，
+          // 否则进程存活（WebView 后台常驻）时会与 launchRecordForCapture 双重跳转。
+          // 这里仅记录日志，待确认账单页（capture-inbox）在 route 守卫里自行刷新。
+          log.info('收到支付捕获候选，交由拉起记账页流程处理', {
+            amountMinor: data.amountMinor,
+            merchant: data.merchant,
           })
-          log.info('跳转记账页面', { amountMinor: data.amountMinor, merchant: data.merchant })
         },
       )
       log.info('App.vue: paymentCaptureCandidate 监听器注册完成')

@@ -148,7 +148,7 @@ export const useCaptureEntryStore = defineStore('capture-entry', {
     async loadOptions() {
       this.loading = true
       const delays = [0, 150, 400, 900]
-      let lastErr: unknown = null
+      let lastErr: Error | null = null
       for (let attempt = 0; attempt < delays.length; attempt++) {
         if (attempt > 0) {
           await new Promise((r) => setTimeout(r, delays[attempt]))
@@ -157,22 +157,26 @@ export const useCaptureEntryStore = defineStore('capture-entry', {
           const { useAppStore } = await import('@/stores/app')
           const appStore = useAppStore()
           // 从全局拿 financeService（store 里 inject 拿不到）
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const finance = (window as any).__financeService
           if (!appStore.ledgerId || !finance) {
             lastErr = new Error('ledger not ready: ledgerId=' + appStore.ledgerId + ' finance=' + !!finance)
             // 打日志到 logcat
             try {
               const { PaymentCapture } = await import('@/features/payment-capture/payment-capture-reader')
-              await (PaymentCapture as any).log?.({ msg: 'loadOptions: ' + lastErr.message })
-            } catch {}
+              await PaymentCapture.log({ msg: 'loadOptions: ' + lastErr.message })
+            } catch { /* 日志失败不影响主流程 */ }
             continue
           }
           const [accRows, cats] = await Promise.all([
             finance.listAccounts(appStore.ledgerId),
             finance.listExpenseCategories(appStore.ledgerId),
           ])
-          this.accounts = accRows.filter((a) => a.normalBalance === 'debit' && !a.archivedAt)
-          this.categories = cats.filter((c) => !c.parentId)
+          this.accounts = accRows.filter(
+            (a: { normalBalance?: string; archivedAt?: string }) =>
+              a.normalBalance === 'debit' && !a.archivedAt,
+          )
+          this.categories = cats.filter((c: { parentId?: string | null }) => !c.parentId)
           this.loading = false
           // 同步分类和账户列表给原生悬浮窗
           try {
@@ -187,7 +191,7 @@ export const useCaptureEntryStore = defineStore('capture-entry', {
           } catch (e) { console.warn('syncOverlayOptions 失败', e) }
           return
         } catch (e) {
-          lastErr = e
+          lastErr = e instanceof Error ? e : new Error(String(e))
         }
       }
       this.loading = false
