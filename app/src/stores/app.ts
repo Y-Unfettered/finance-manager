@@ -14,6 +14,7 @@ export const useAppStore = defineStore('app', {
     databaseStatus: 'not_applicable' as DatabaseStatus,
     schemaVersion: 0,
     databaseError: undefined as string | undefined,
+    financeService: undefined as any,
   }),
   actions: {
     markDatabaseInitializing() {

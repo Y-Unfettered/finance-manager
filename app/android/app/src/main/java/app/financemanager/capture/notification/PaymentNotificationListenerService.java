@@ -143,6 +143,13 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
 
                 NotificationDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
                 PaymentCapturePlugin.notifyCandidate(entity);
+                try {
+                    app.financemanager.capture.overlay.OverlayEntryManager
+                            .getInstance(getApplicationContext())
+                            .maybeShowOverlay(entity);
+                } catch (Exception ex) {
+                    Log.w(TAG, "maybeShowOverlay 失败", ex);
+                }
 
                 Log.d(TAG, "通知已写入捕获队列: " + info.getSourceName()
                         + " " + info.getAmount());

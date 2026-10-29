@@ -5,6 +5,7 @@ import App from './App.vue'
 import { installGlobalPinia } from '@/features/debug/app-logger'
 import { initializeFinanceDatabase, requireFinanceDatabase } from './db/bootstrap'
 import { FinanceService, financeServiceKey } from './features/finance/finance-service'
+import { AutoBackupService, autoBackupServiceKey } from './features/backup/auto-backup-service'
 import { BackupService, backupServiceKey } from './features/backup/backup-service'
 import { RestoreService, restoreServiceKey } from './features/backup/restore-service'
 import { ExportService, exportServiceKey } from './features/export/export-service'
@@ -27,6 +28,7 @@ import { systemIdGenerator } from './domain/identity'
 import router from './router'
 import { createRouterTouch } from './router/vue-router-touch'
 import { useAppStore } from './stores/app'
+import { saveTextFile } from './utils/file-io'
 import './design-system/tokens.css'
 import './design-system/global.css'
 
@@ -65,15 +67,34 @@ async function bootstrap(): Promise<void> {
         preferredLedger ??
         (database.ledgerId ? await new LedgerRepository(db).findById(database.ledgerId) : undefined)
       appStore.markDatabaseReady(database.schemaVersion, initialLedger?.id, initialLedger?.name)
-      app.provide(financeServiceKey, new FinanceService(db, systemIdGenerator, systemClock))
+      // 把当前 ledger_id 推给原生悬浮窗
+      try {
+        const { PaymentCapture } = await import('@/features/payment-capture/payment-capture-reader')
+        await PaymentCapture.setActiveLedgerId({ ledgerId: initialLedger?.id ?? '' })
+      } catch {}
+      const financeServiceInstance = new FinanceService(db, systemIdGenerator, systemClock)
+      // 存到全局，供 pinia store 里直接用（绕过 inject）
+      ;(window as any).__financeService = financeServiceInstance
+      appStore.financeService = financeServiceInstance
+      app.provide(financeServiceKey, financeServiceInstance)
       app.provide(
         importServiceKey,
         new ImportService({ database: db, clock: systemClock, ids: systemIdGenerator }),
       )
-      app.provide(
-        backupServiceKey,
-        new BackupService({ database: db, clock: systemClock, appVersion: __APP_VERSION__ }),
-      )
+      const backup = new BackupService({
+        database: db,
+        clock: systemClock,
+        appVersion: __APP_VERSION__,
+      })
+      app.provide(backupServiceKey, backup)
+      const autoBackup = new AutoBackupService(db, {
+        backup,
+        clock: systemClock,
+        writer: {
+          write: (fileName, content) => saveTextFile(fileName, content, 'application/json'),
+        },
+      })
+      app.provide(autoBackupServiceKey, autoBackup)
       app.provide(
         restoreServiceKey,
         new RestoreService({ database: db, clock: systemClock, appVersion: __APP_VERSION__ }),
@@ -88,6 +109,10 @@ async function bootstrap(): Promise<void> {
       app.provide(homePreferencesServiceKey, new HomePreferencesService(db, systemClock))
       app.provide(statisticsServiceKey, new StatisticsService(db, systemIdGenerator, systemClock))
       app.provide(ledgerServiceKey, new LedgerService(db, systemIdGenerator, systemClock))
+
+      // 进程启动即检查一次月度自动备份：开关打开且本月尚无备份时静默创建一份。
+      // 检查本身只做几次 app_settings 读取；真正的全表 dump 只在跨月后首次触发。
+      void autoBackup.ensureMonthlyBackup()
     } else {
       appStore.databaseStatus = 'not_applicable'
     }

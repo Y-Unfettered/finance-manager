@@ -10,14 +10,16 @@ import CaptureQuickEntrySheet from '@/components/CaptureQuickEntrySheet.vue'
 import PinUnlockView from '@/views/PinUnlockView.vue'
 import RoutePageFrame from '@/components/RoutePageFrame.vue'
 import { appLockServiceKey } from '@/features/app-lock/app-lock-service'
+import { autoBackupServiceKey } from '@/features/backup/auto-backup-service'
 import { useAppLockStore } from '@/features/app-lock/app-lock-store'
 import { getLogger } from '@/features/debug/app-logger'
 import { ClipboardReader } from '@/features/clipboard/clipboard-reader'
 import { isConsumedFingerprint } from '@/features/clipboard/clipboard-fingerprint-cache'
 import { useAppStore } from '@/stores/app'
-import { useCaptureEntryStore } from '@/stores/capture-entry'
+import { useCaptureEntryStore, parseSuggestedCategory } from '@/stores/capture-entry'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
 import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
+import { financeServiceKey } from '@/features/finance/finance-service'
 import { autoRecoverAccessibility, ensureShizukuRunning } from '@/features/capture-inbox/capture-inbox-service'
 import {
   navigationCacheEpoch,
@@ -30,8 +32,10 @@ const route = useRoute()
 const router = useRouter()
 const lockStore = useAppLockStore()
 const appLockService = inject(appLockServiceKey)
+const autoBackupService = inject(autoBackupServiceKey)
 const clipboardImportStore = useClipboardImportStore()
 const captureEntryStore = useCaptureEntryStore()
+const financeService = inject(financeServiceKey)
 const log = getLogger('clipboard')
 
 const privacyVeil = ref(false)
@@ -189,6 +193,57 @@ async function appStateClipboardProbe(): Promise<void> {
   }
 }
 
+/** 检查是否有待入账的捕获数据，自动打开记账页面 */
+async function checkPendingCaptureData() {
+  try {
+    if (!Capacitor.isNativePlatform()) return
+    const data = await PaymentCapture.getPendingCaptureData()
+    if (!data?.amountMinor) return
+    log.info('收到待入账捕获数据', { amount: data.amountMinor, merchant: data.merchant })
+    // 跳转到记账页面，带参数
+    router.push({
+      path: '/transactions/new',
+      query: {
+        amount: String(data.amountMinor),
+        merchant: data.merchant ?? '',
+        occurredAt: data.occurredAt ?? '',
+      },
+    })
+  } catch (e) {
+    log.error('checkPendingCaptureData 失败', { msg: e instanceof Error ? e.message : String(e) })
+  }
+}
+
+/** 处理悬浮窗点"记一笔"后拉起的待入账数据 */
+async function processPendingOverlayCommit() {
+  try {
+    if (!Capacitor.isNativePlatform() || !financeService || !appStore.ledgerId) return
+    const pending = await PaymentCapture.getPendingOverlayCommit() as any
+    if (!pending?.amountMinor) return
+    log.info('收到悬浮窗待入账数据', { amount: pending.amountMinor, merchant: pending.merchant })
+    // 取第一个账户和分类（如果用户在卡片上没选）
+    const accounts = await financeService.listAccounts(appStore.ledgerId)
+    const categories = await financeService.listExpenseCategories(appStore.ledgerId)
+    const accountId = pending.accountId || accounts[0]?.id
+    const categoryId = pending.categoryId || categories[0]?.id
+    if (!accountId || !categoryId) {
+      log.warn('悬浮窗入账失败：找不到账户或分类')
+      return
+    }
+    await financeService.createExpense({
+      ledgerId: appStore.ledgerId,
+      accountId,
+      categoryId,
+      amountMinor: pending.amountMinor,
+      occurredAt: pending.occurredAt || new Date().toISOString(),
+      note: pending.merchant || '',
+    })
+    log.info('悬浮窗入账成功', { amount: pending.amountMinor })
+  } catch (e) {
+    log.error('processPendingOverlayCommit 失败', { msg: e instanceof Error ? e.message : String(e) })
+  }
+}
+
 onMounted(async () => {
   if (appLockService && appStore.databaseStatus === 'ready') {
     await lockStore.load(appLockService)
@@ -209,6 +264,8 @@ onMounted(async () => {
           privacyVeil.value = false
           void appStateClipboardProbe()
           startClipboardPolling()
+          // 回到前台时补一次月度备份检查：进程常驻跨过午夜时，启动那次检查已过时
+          void autoBackupService?.ensureMonthlyBackup()
         }
       })
       log.info('App.vue: appStateChange 监听器注册完成')
@@ -290,15 +347,80 @@ onMounted(async () => {
             log.warn('应用锁锁定 -> 跳过')
             return
           }
-          // 当场弹窗记账：直接弹出底部卡片，不再跳转
-          captureEntryStore.showEntry(data)
-          log.info('显示当场弹窗记账', { amountMinor: data.amountMinor, merchant: data.merchant })
+          // 直接跳转到记账页面，自动填好金额和商户
+          router.push({
+            path: '/transactions/new',
+            query: {
+              amount: String(data.amountMinor ?? ''),
+              merchant: data.merchant ?? '',
+              occurredAt: data.occurredAt ?? '',
+            },
+          })
+          log.info('跳转记账页面', { amountMinor: data.amountMinor, merchant: data.merchant })
         },
       )
       log.info('App.vue: paymentCaptureCandidate 监听器注册完成')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       log.error('App.vue: paymentCaptureCandidate 监听器注册失败', { msg })
+    }
+
+    // 原生悬浮窗"记一笔"按钮：用户在微信/支付宝上层点了确认，前端用规则推荐直接入账
+    try {
+      await PaymentCapture.addListener('overlayCommitRequest', async (data) => {
+        log.info('收到 overlayCommitRequest 事件', { amountMinor: data.amountMinor, merchant: data.merchant })
+        try {
+          if (appStore.databaseStatus !== 'ready') {
+            await PaymentCapture.onOverlayCommitDone({ success: false, message: '数据库未就绪' })
+            return
+          }
+          // 加载账户与分类
+          await captureEntryStore.loadOptions()
+          if (!captureEntryStore.accounts.length || !captureEntryStore.categories.length) {
+            await PaymentCapture.onOverlayCommitDone({ success: false, message: '账户或分类为空' })
+            return
+          }
+          // 选账户
+          let accountId = ''
+          if (data.defaultAccountId && captureEntryStore.accounts.some((a) => a.id === data.defaultAccountId)) {
+            accountId = data.defaultAccountId
+          } else if (data.accountHint) {
+            const hint = data.accountHint.toLowerCase()
+            const m = captureEntryStore.accounts.find((a) => a.name.toLowerCase().includes(hint))
+            if (m) accountId = m.id
+          }
+          if (!accountId) accountId = captureEntryStore.accounts[0]!.id
+
+          // 选分类：优先规则建议
+          let categoryId = ''
+          const parsed = parseSuggestedCategory(data.suggestedCategory)
+          if (parsed && captureEntryStore.categories.some((c) => c.id === parsed.categoryId)) {
+            categoryId = parsed.categoryId
+          }
+          if (!categoryId) categoryId = captureEntryStore.categories[0]!.id
+
+          const { confirmEvent } = await import('@/features/capture-inbox/capture-inbox-service')
+          await confirmEvent({
+            event: { ...data, amountMinor: data.amountMinor },
+            accountId,
+            categoryId,
+          })
+          await PaymentCapture.onOverlayCommitDone({
+            success: true,
+            message: `¥${(data.amountMinor / 100).toFixed(2)} ${data.merchant || ''}`.trim(),
+          })
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          log.error('overlayCommitRequest 入账失败', { msg })
+          try {
+            await PaymentCapture.onOverlayCommitDone({ success: false, message: msg })
+          } catch { /* ignore */ }
+        }
+      })
+      log.info('App.vue: overlayCommitRequest 监听器注册完成')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      log.error('App.vue: overlayCommitRequest 监听器注册失败', { msg })
     }
 
     log.info('App.vue: 冷启动兜底检查', { databaseStatus: appStore.databaseStatus, nativePlatform: Capacitor.isNativePlatform() })
@@ -309,6 +431,8 @@ onMounted(async () => {
       // 确保 Shizuku 长驻 + 恢复无障碍服务
       void ensureShizukuRunning()
       void autoRecoverAccessibility()
+      // 检查是否有待入账的捕获数据，自动打开记账页面
+      void checkPendingCaptureData()
     } else {
       log.info('App.vue: 数据库未就绪，等待 ready 后启动轮询')
       const stopWatch = watch(
@@ -324,6 +448,8 @@ onMounted(async () => {
             void ensureShizukuRunning()
             void autoRecoverAccessibility()
             startClipboardPolling()
+            // 检查是否有待入账的捕获数据，自动打开记账页面
+            void checkPendingCaptureData()
           }
         },
       )
@@ -405,9 +531,12 @@ watch(
   overflow-y: auto;
   overscroll-behavior-x: none;
   background: var(--color-background);
+  /* 注意：不要给这个容器常驻 transform / will-change / filter / backdrop-filter / contain（layout 或 paint）。
+     这些属性会让本容器变成 position: fixed 子孙元素的 containing block，
+     于是页面内的弹窗、遮罩层、悬浮按钮不再相对视口定位，而是相对容器内容定位：
+     遮罩盖不满整屏、底部面板浮在半屏中间，还能越过遮罩继续滚动后面的内容。
+     路由切换所需的 translate3d 由下面的 enter/leave 类临时提供，动画期间浏览器会自动建层。 */
   backface-visibility: hidden;
-  contain: layout paint;
-  transform: translate3d(0, 0, 0);
 }
 
 .route-page-frame--contained-scroll {

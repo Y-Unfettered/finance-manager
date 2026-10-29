@@ -74,8 +74,9 @@ public class PaymentAccessibilityService extends AccessibilityService {
         // 注意：FLAG_REPORT_VIEW_IDS 在小米澎湃 OS / HarmonyOS 等定制 ROM 上会导致
         // setServiceInfo() 抛 SecurityException，进而使服务启用即崩溃、被系统移除。
         // 采用"完整 flags → 降级 flags"策略：先尝试包含重要节点 flag，失败则降级。
-        int preferredFlags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
-        int fallbackFlags = 0;
+        int preferredFlags = AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+                | AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+        int fallbackFlags = AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
 
         AccessibilityServiceInfo info = new AccessibilityServiceInfo();
         info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
@@ -119,57 +120,71 @@ public class PaymentAccessibilityService extends AccessibilityService {
             return;
         }
 
+        Log.d(TAG, "收到事件: pkg=" + packageName + " type=" + eventType
+                + " class=" + (event.getClassName() != null ? event.getClassName() : "?"));
+
         // 去抖：同一包名 500ms 内只处理一次，避免任务栏预览时大量事件堵塞主线程
         if (isThrottled(packageName)) return;
         markProcessed(packageName);
 
         AccessibilityDiagnostics.event(packageName, eventType);
 
-        AccessibilityNodeInfo root = getRootInActiveWindow();
-        if (root != null) {
-            AccessibilityDiagnostics.getRootRetry(0, true);
-            try {
-                processWindow(packageName, root);
-            } finally {
-                root.recycle();
-            }
-            return;
-        }
-
-        // 首次获取失败：捕获降级节点，非阻塞重试
-        final AccessibilityNodeInfo[] fallbackRef = new AccessibilityNodeInfo[1];
-        try {
-            fallbackRef[0] = event.getSource();
-            if (fallbackRef[0] != null) {
-                AccessibilityDiagnostics.getRootFallback("source");
-            }
-        } catch (Exception ignored) {
-            fallbackRef[0] = null;
-        }
-
         final String pkg = packageName;
 
-        mainHandler.postDelayed(() -> {
-            AccessibilityNodeInfo retryRoot = getRootInActiveWindow();
-            if (retryRoot != null) {
-                AccessibilityDiagnostics.getRootRetry(1, true);
-                try {
-                    processWindow(pkg, retryRoot);
-                } finally {
-                    retryRoot.recycle();
+        // 处理所有窗口的 root（微信交易详情可能在非焦点窗口）
+        Runnable scan = () -> {
+            try {
+                java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = getWindows();
+                int winCount = windows != null ? windows.size() : -1;
+                Log.d(TAG, "scan: windows=" + winCount);
+                if (windows != null) {
+                    for (android.view.accessibility.AccessibilityWindowInfo w : windows) {
+                        AccessibilityNodeInfo r = w.getRoot();
+                        Log.d(TAG, "  window id=" + w.getId() + " type=" + w.getType() + " active=" + w.isActive() + " root=" + (r != null ? "OK" : "null"));
+                        if (r != null) {
+                            try { processWindow(pkg, r); }
+                            catch (Exception ignored) {}
+                        }
+                    }
                 }
-            } else if (fallbackRef[0] != null) {
-                final AccessibilityNodeInfo fallback = fallbackRef[0];
-                try {
-                    processWindow(pkg, fallback);
-                } finally {
-                    fallback.recycle();
+                // 也兜底拿 active window
+                AccessibilityNodeInfo activeRoot = getRootInActiveWindow();
+                Log.d(TAG, "scan: activeRoot=" + (activeRoot != null ? "OK" : "null"));
+                if (activeRoot != null) {
+                    try { processWindow(pkg, activeRoot); }
+                    finally { activeRoot.recycle(); }
                 }
-            } else {
-                AccessibilityDiagnostics.getRootRetry(1, false);
-                AccessibilityDiagnostics.rootNull(pkg);
+            } catch (Exception e) {
+                Log.e(TAG, "scan 异常", e);
             }
-        }, 50);
+        };
+        scan.run();
+
+        // 分多次重试
+        int[] delays = {100, 300, 600, 1000, 1500};
+        for (int delay : delays) {
+            mainHandler.postDelayed(scan, delay);
+        }
+    }
+
+    private void dumpNode(AccessibilityNodeInfo node, int depth, StringBuilder sb) {
+        if (node == null || depth > 15) return;
+        StringBuilder indent = new StringBuilder();
+        for (int i = 0; i < depth; i++) indent.append("  ");
+        String cls = node.getClassName() != null ? node.getClassName().toString() : "?";
+        String text = node.getText() != null ? node.getText().toString() : "";
+        String desc = node.getContentDescription() != null ? node.getContentDescription().toString() : "";
+        sb.append(indent).append("[").append(cls).append("]");
+        if (!text.isEmpty()) sb.append(" text=\"").append(text).append("\"");
+        if (!desc.isEmpty()) sb.append(" desc=\"").append(desc).append("\"");
+        sb.append("\n");
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            if (child != null) {
+                dumpNode(child, depth + 1, sb);
+                child.recycle();
+            }
+        }
     }
 
     private boolean isThrottled(String packageName) {
@@ -194,6 +209,13 @@ public class PaymentAccessibilityService extends AccessibilityService {
      * 3. 都不成功则跳过
      */
     private void processWindow(String packageName, AccessibilityNodeInfo root) {
+        // 详细日志：打印整个节点树
+        StringBuilder sb = new StringBuilder();
+        dumpNode(root, 0, sb);
+        Log.d(TAG, "===== 节点树开始 (" + packageName + ") =====");
+        Log.d(TAG, sb.toString());
+        Log.d(TAG, "===== 节点树结束 =====");
+
         CapturedPaymentInfo info = null;
 
         // 策略 1：尝试基于规则的解析器
@@ -287,7 +309,17 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
                 AccessibilityDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
                 PaymentCapturePlugin.notifyCandidate(entity);
-                PaymentCapturePlugin.notifyQuickEntry(entity);
+                // 直接拉起 APP，打开记账页面，自动填好金额和商户
+                try {
+                    android.content.Intent intent = new android.content.Intent(this, app.financemanager.local.MainActivity.class);
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    intent.putExtra("pendingCaptureAmountMinor", entity.getAmountMinor() != null ? entity.getAmountMinor() : 0L);
+                    intent.putExtra("pendingCaptureMerchant", entity.getMerchant() != null ? entity.getMerchant() : "");
+                    intent.putExtra("pendingCaptureOccurredAt", entity.getOccurredAt() != null ? entity.getOccurredAt() : "");
+                    startActivity(intent);
+                } catch (Exception ex) {
+                    Log.w(TAG, "拉起记账页面失败", ex);
+                }
 
                 lastSourcePackage = info.getSourcePackage();
                 lastSourceName = info.getSourceName();

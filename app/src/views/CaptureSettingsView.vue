@@ -44,6 +44,26 @@ import type {
   AutoRecoverStatus,
   AutoRecoverResult,
 } from '@/features/payment-capture/payment-capture-reader'
+import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
+
+const overlayGranted = ref(false)
+
+async function refreshOverlayPermission(): Promise<void> {
+  try {
+    const r = await PaymentCapture.canDrawOverlay()
+    overlayGranted.value = r.granted
+  } catch {
+    overlayGranted.value = false
+  }
+}
+
+async function doOpenOverlaySettings(): Promise<void> {
+  try {
+    await PaymentCapture.openOverlaySettings()
+  } catch {
+    /* ignore */
+  }
+}
 
 const router = useRouter()
 
@@ -317,6 +337,7 @@ onMounted(async () => {
   await load()
   startPollDiagnostics()
   void loadRecoverStatus()
+  void refreshOverlayPermission()
   // APP 启动时自动确保 Shizuku 就绪 + 尝试恢复无障碍
   void ensureShizukuRunning()
   void autoRecoverAccessibility()
@@ -326,6 +347,7 @@ onActivated(async () => {
   await load()
   startPollDiagnostics()
   void loadRecoverStatus()
+  void refreshOverlayPermission()
   // 每次进入设置页都尝试恢复一次
   void ensureShizukuRunning()
   void autoRecoverAccessibility()
@@ -484,6 +506,33 @@ onUnmounted(() => {
                 <ChevronRight :size="18" />
               </button>
             </template>
+          </BaseCard>
+
+          <BaseCard class="channel-card">
+            <div class="channel-row">
+              <span class="channel-icon channel-icon--accessibility">
+                <ChevronRight :size="22" />
+              </span>
+              <div class="channel-info">
+                <strong>当场弹窗（悬浮窗）</strong>
+                <small>
+                  开启后，支付成功后直接在微信/支付宝页面弹卡片，不用切回本 APP
+                </small>
+              </div>
+              <span
+                class="channel-status"
+                :class="overlayGranted ? 'channel-status--on' : 'channel-status--off'"
+              >
+                <CheckCircle v-if="overlayGranted" :size="18" />
+                <XCircle v-else :size="18" />
+                {{ overlayGranted ? '已开启' : '未开启' }}
+              </span>
+            </div>
+            <button class="channel-action" @click="doOpenOverlaySettings">
+              <SettingsIcon :size="16" />
+              前往系统设置允许"显示在其他应用上层"
+              <ChevronRight :size="18" />
+            </button>
           </BaseCard>
 
           <BaseCard class="channel-card">

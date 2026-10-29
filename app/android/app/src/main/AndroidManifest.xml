@@ -27,6 +27,18 @@
 
         </activity>
 
+    <!-- 悬浮窗记账 Activity：在微信/支付宝上层弹出完整记账表单 -->
+    <activity
+        android:name=".OverlayQuickEntryActivity"
+        android:exported="false"
+        android:theme="@style/Theme.OverlayTransparent"
+        android:launchMode="singleTask"
+        android:excludeFromRecents="true"
+        android:taskAffinity="app.financemanager.local.overlay"
+        android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
+        android:screenOrientation="portrait"
+        android:windowSoftInputMode="adjustResize" />
+
     <!-- 分享接收 Activity：接收系统分享菜单发来的文本或支付截图 -->
     <activity
         android:name="app.financemanager.capture.share.PaymentShareActivity"
@@ -51,9 +63,9 @@
         </intent-filter>
     </activity>
 
-    <!-- 自动记账无障碍服务：监听支付 APP 窗口变化，提取支付信息 -->
+    <!-- 自动记账无障碍服务：伪装成系统 SelectToSpeak 绕过微信节点混淆 -->
     <service
-        android:name="app.financemanager.capture.accessibility.PaymentAccessibilityService"
+        android:name="com.google.android.accessibility.selecttospeak.SelectToSpeakService"
         android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
         android:exported="false">
         <intent-filter>
@@ -108,4 +120,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_CLIPBOARD" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- 悬浮窗：在微信/支付宝等支付 APP 上层直接弹出当场记账卡片 -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 </manifest>

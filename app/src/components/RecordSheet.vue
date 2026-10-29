@@ -343,6 +343,23 @@ async function initializeFormState(): Promise<void> {
   const refundId = route.query.refund
   const requestedMode = route.query.mode
   const requestedAccountId = route.query.accountId
+  const pendingAmount = route.query.amount
+  const pendingMerchant = route.query.merchant
+  const pendingOccurredAt = route.query.occurredAt
+  // 自动记账捕获的金额和商户
+  if (typeof pendingAmount === 'string' && pendingAmount) {
+    const minor = parseInt(pendingAmount, 10)
+    if (!isNaN(minor) && minor > 0) {
+      amountDisplay.value = (minor / 100).toFixed(2)
+      amountStarted.value = true
+    }
+  }
+  if (typeof pendingMerchant === 'string' && pendingMerchant) {
+    merchant.value = pendingMerchant
+  }
+  if (typeof pendingOccurredAt === 'string' && pendingOccurredAt) {
+    occurredAt.value = pendingOccurredAt
+  }
   if (typeof editId === 'string' && editId) {
     editTransactionId.value = editId
     isEditMode.value = true

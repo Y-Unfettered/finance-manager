@@ -45,6 +45,11 @@ function onConfirm(): void {
 function onClose(): void {
   store.hideEntry()
 }
+
+function retryLoad(): void {
+  store.message = ''
+  void store.loadOptions()
+}
 </script>
 
 <template>
@@ -76,9 +81,15 @@ function onClose(): void {
             </span>
           </div>
 
+          <!-- 加载中提示 -->
+          <p v-if="store.loading" class="entry-loading">正在加载账户与分类…</p>
+
           <!-- 分类选择 -->
-          <section class="entry-section">
+          <section v-if="!store.loading" class="entry-section">
             <span class="entry-section__label">支出分类</span>
+            <div v-if="store.message && !store.categories.length" class="entry-retry" @click="retryLoad">
+              {{ store.message || '加载失败，点此重试' }}
+            </div>
             <div class="entry-categories">
               <button
                 v-for="cat in store.categories.slice(0, 10)"
@@ -430,5 +441,23 @@ function onClose(): void {
 
 .entry-message--error {
   color: var(--color-danger);
+}
+
+.entry-loading {
+  margin: 0 0 var(--space-3);
+  font-size: 13px;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.entry-retry {
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+  font-size: 13px;
+  color: var(--color-primary-600);
+  text-align: center;
+  background: var(--color-primary-50);
+  border-radius: 8px;
+  cursor: pointer;
 }
 </style>

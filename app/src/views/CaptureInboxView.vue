@@ -22,7 +22,10 @@ import MoneyText from '@/components/MoneyText.vue'
 import { findAccountCatalogItem } from '@/features/finance/account-catalog'
 import { formatMinorToCny } from '@/domain/money'
 import { useFinanceService, type ExpenseCategoryOption } from '@/features/finance/finance-service'
+import { getLogger } from '@/features/debug/app-logger'
 import type { AccountBalanceRecord } from '@/domain/entities'
+
+const log = getLogger('capture-inbox')
 import { useAppStore } from '@/stores/app'
 import {
   confirmEvent,
@@ -35,6 +38,8 @@ import {
 
 const appStore = useAppStore()
 const router = useRouter()
+// 必须在 setup 同步期间调 inject，异步函数里调拿不到
+const finance = useFinanceService()
 
 const events = ref<CapturedPayment[]>([])
 const loading = ref(false)
@@ -84,17 +89,28 @@ async function loadHealth(): Promise<void> {
 }
 
 async function loadOptions(): Promise<void> {
-  if (!appStore.ledgerId) return
-  const finance = useFinanceService()
-  if (!finance) return
-  const [cats, accts] = await Promise.all([
-    finance.listExpenseCategories(appStore.ledgerId),
-    finance.listAccounts(appStore.ledgerId),
-  ])
-  categories.value = cats.filter((c) => !c.parentId)
-  accounts.value = accts.filter(
-    (a) => !a.archivedAt && a.visibleInEntry !== false && a.normalBalance === 'debit',
-  )
+  log.info('loadOptions: 开始', { ledgerId: appStore.ledgerId, hasFinance: !!finance })
+  if (!appStore.ledgerId) {
+    log.warn('loadOptions: 失败, ledgerId 为空')
+    return
+  }
+  if (!finance) {
+    log.warn('loadOptions: 失败, finance 为 undefined')
+    return
+  }
+  try {
+    const [cats, accts] = await Promise.all([
+      finance.listExpenseCategories(appStore.ledgerId),
+      finance.listAccounts(appStore.ledgerId),
+    ])
+    categories.value = cats.filter((c) => !c.parentId)
+    accounts.value = accts.filter(
+      (a) => !a.archivedAt && a.visibleInEntry !== false && a.normalBalance === 'debit',
+    )
+    log.info('loadOptions: 成功', { categories: categories.value.length, accounts: accounts.value.length })
+  } catch (e) {
+    log.error('loadOptions: 异常', { msg: e instanceof Error ? e.message : String(e) })
+  }
 }
 
 async function openConfirm(event: CapturedPayment): Promise<void> {

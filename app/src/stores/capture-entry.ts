@@ -101,6 +101,22 @@ export const useCaptureEntryStore = defineStore('capture-entry', {
       state.categories.find((c: ExpenseCategoryOption) => c.id === state.categoryId),
   },
   actions: {
+    /** 悬浮窗模式：按 pendingId 从队列加载记录并初始化表单。 */
+    async loadPendingById(id: number) {
+      try {
+        const { listPendingEvents } = await import('@/features/capture-inbox/capture-inbox-service')
+        const { events } = await listPendingEvents()
+        const found = events.find((e) => e.id === id)
+        if (!found) {
+          this.message = '未找到待入账记录 id=' + id
+          return
+        }
+        await this.showEntry(found)
+      } catch (e) {
+        this.message = e instanceof Error ? e.message : '加载失败'
+      }
+    },
+
     /** 接收原生侧推送的新捕获记录，显示弹窗。 */
     async showEntry(payment: CapturedPayment) {
       this.current = payment
@@ -128,28 +144,55 @@ export const useCaptureEntryStore = defineStore('capture-entry', {
       }
     },
 
-    /** 加载账户和分类选项。 */
+    /** 加载账户和分类选项。失败时指数退避重试，避免切回 APP 时 ledger 未就绪导致弹窗只有金额。 */
     async loadOptions() {
       this.loading = true
-      try {
-        const { useAppStore } = await import('@/stores/app')
-        const { useFinanceService } = await import('@/features/finance/finance-service')
-        const appStore = useAppStore()
-        const finance = useFinanceService()
-        if (!appStore.ledgerId || !finance) {
-          this.loading = false
-          return
+      const delays = [0, 150, 400, 900]
+      let lastErr: unknown = null
+      for (let attempt = 0; attempt < delays.length; attempt++) {
+        if (attempt > 0) {
+          await new Promise((r) => setTimeout(r, delays[attempt]))
         }
-        const [accRows, cats] = await Promise.all([
-          finance.listAccounts(appStore.ledgerId),
-          finance.listExpenseCategories(appStore.ledgerId),
-        ])
-        this.accounts = accRows.filter((a) => a.normalBalance === 'debit' && !a.archivedAt)
-        this.categories = cats.filter((c) => !c.parentId)
-      } catch {
-        // ignore
-      } finally {
-        this.loading = false
+        try {
+          const { useAppStore } = await import('@/stores/app')
+          const appStore = useAppStore()
+          // 从全局拿 financeService（store 里 inject 拿不到）
+          const finance = (window as any).__financeService
+          if (!appStore.ledgerId || !finance) {
+            lastErr = new Error('ledger not ready: ledgerId=' + appStore.ledgerId + ' finance=' + !!finance)
+            // 打日志到 logcat
+            try {
+              const { PaymentCapture } = await import('@/features/payment-capture/payment-capture-reader')
+              await (PaymentCapture as any).log?.({ msg: 'loadOptions: ' + lastErr.message })
+            } catch {}
+            continue
+          }
+          const [accRows, cats] = await Promise.all([
+            finance.listAccounts(appStore.ledgerId),
+            finance.listExpenseCategories(appStore.ledgerId),
+          ])
+          this.accounts = accRows.filter((a) => a.normalBalance === 'debit' && !a.archivedAt)
+          this.categories = cats.filter((c) => !c.parentId)
+          this.loading = false
+          // 同步分类和账户列表给原生悬浮窗
+          try {
+            const { PaymentCapture } = await import('@/features/payment-capture/payment-capture-reader')
+            const { useAppStore } = await import('@/stores/app')
+            const appStore = useAppStore()
+            await PaymentCapture.syncOverlayOptions({
+              ledgerId: appStore.ledgerId ?? '',
+              categories: this.categories.map((c) => ({ id: c.id, name: c.name })),
+              accounts: this.accounts.map((a) => ({ id: a.id, name: a.name })),
+            })
+          } catch (e) { console.warn('syncOverlayOptions 失败', e) }
+          return
+        } catch (e) {
+          lastErr = e
+        }
+      }
+      this.loading = false
+      if (lastErr) {
+        this.message = '选项加载失败，下拉重试'
       }
     },
 

@@ -24,3 +24,10 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Debug/scratch artifacts
+android-native/
+debug_check.db
+screen.png
+wx_ui.xml
+.zcode/

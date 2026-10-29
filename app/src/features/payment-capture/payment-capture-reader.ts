@@ -188,10 +188,29 @@ export interface PaymentCapturePlugin {
   }>
 
   addListener(
-    event: 'paymentCaptureCandidate' | 'paymentCaptureQuickEntry',
+    event: 'paymentCaptureCandidate' | 'paymentCaptureQuickEntry' | 'overlayCommitRequest',
     listener: (data: CapturedPayment) => void,
   ): Promise<PluginListenerHandle>
   removeAllListeners(): Promise<void>
+
+  /** 原生悬浮窗入账完成后回调：原生关悬浮窗 + Toast */
+  onOverlayCommitDone(options: { success: boolean; message: string }): Promise<void>
+
+  /** 检查/打开悬浮窗权限 */
+  canDrawOverlay(): Promise<{ granted: boolean }>
+  openOverlaySettings(): Promise<void>
+
+  /** 前端同步分类和账户列表给原生悬浮窗 */
+  syncOverlayOptions(options: { categories: { id: string; name: string }[]; accounts: { id: string; name: string }[]; ledgerId?: string }): Promise<void>
+
+  /** 前端同步当前账本 ID 给原生 */
+  setActiveLedgerId(options: { ledgerId: string }): Promise<void>
+
+  /** 打日志到 logcat */
+  log(options: { msg: string }): Promise<void>
+
+  /** 获取待入账的捕获数据 */
+  getPendingCaptureData(): Promise<{ amountMinor?: number; merchant?: string; occurredAt?: string }>
 
   // 规则配置
   getCaptureRules(): Promise<RuleConfigResult>
@@ -323,13 +342,20 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   }
 
   async addListener(
-    event: 'paymentCaptureCandidate' | 'paymentCaptureQuickEntry',
+    event: 'paymentCaptureCandidate' | 'paymentCaptureQuickEntry' | 'overlayCommitRequest',
     listener: (data: CapturedPayment) => void,
   ): Promise<PluginListenerHandle> {
     void event
     void listener
     return { remove: async () => {} }
   }
+
+  async onOverlayCommitDone(): Promise<void> {}
+  async canDrawOverlay(): Promise<{ granted: boolean }> {
+    return { granted: false }
+  }
+  async openOverlaySettings(): Promise<void> {}
+  async syncOverlayOptions(): Promise<void> {}
 
   async getCaptureRules(): Promise<RuleConfigResult> {
     return { success: false, message: '仅原生平台可用' }

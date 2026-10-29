@@ -120,10 +120,12 @@ function onCancel(): void {
 </script>
 
 <template>
+  <!-- teleport 到 body：留在页面滚动容器内会跟随滚动偏移，遮罩盖不满屏幕 -->
   <Popup
     v-model:show="popupShow"
     position="bottom"
     round
+    teleport="body"
     :close-on-click-overlay="true"
   >
     <div class="date-picker">

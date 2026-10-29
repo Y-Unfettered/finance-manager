@@ -7,8 +7,8 @@ android {
         applicationId "app.financemanager.local"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 46
-        versionName "0.4.6"
+        versionCode 50
+        versionName "0.5.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // 小米手机仅支持 arm64-v8a，排除其他架构以减小 APK 体积

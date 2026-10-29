@@ -133,10 +133,15 @@ function openFieldPicker(field: MissingField): void {
   // 构建候选列表
   if (field.candidates) {
     if (field.fieldId === 'sourceAccount' || field.fieldId === 'targetAccount') {
-      activeFieldCandidates.value = field.candidates.map((c) => ({
-        text: `${c.name} (${c.id.replace('account_', '').slice(0, 6)}...)`,
-        value: c.id,
-      }))
+      const candidates = field.candidates
+      // 账户 ID 是内部匹配用的随机值，不展示给用户；
+      // 仅当候选里存在同名账户时补上机构名，否则「工资卡→工资卡」这类同名还款无法区分
+      activeFieldCandidates.value = candidates.map((c) => {
+        const acc = accounts.value.find((a) => a.id === c.id)
+        const hasTwin = candidates.some((o) => o !== c && o.name === c.name)
+        const suffix = hasTwin && acc?.institution ? `（${acc.institution}）` : ''
+        return { text: `${c.name}${suffix}`, value: c.id }
+      })
     } else {
       const kind = row?.raw.kind
       const filtered = field.candidates.filter((c) => {
@@ -1141,7 +1146,8 @@ function goToBatches(): void {
             </button>
           </BaseCard>
 
-          <VanPopup v-model:show="showFieldPicker" position="bottom">
+          <!-- 必须 teleport 到 body：留在 .route-page-frame 里会跟随页面滚动偏移，遮罩盖不满屏幕 -->
+          <VanPopup v-model:show="showFieldPicker" position="bottom" teleport="body">
             <VanPicker
               :columns="activeFieldCandidates"
               @confirm="onFieldPickerConfirm"

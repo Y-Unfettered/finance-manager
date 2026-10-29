@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import {
+  CalendarClock,
   CircleCheck,
   DatabaseBackup,
   Download,
   FileUp,
   LoaderCircle,
+  RefreshCcw,
   RotateCcw,
   ShieldCheck,
   TriangleAlert,
@@ -13,8 +15,15 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
+import AppSwitch from '@/components/AppSwitch.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
+import {
+  useAutoBackupService,
+  type AutoBackupResult,
+  type AutoBackupStatus,
+} from '@/features/backup/auto-backup-service'
 import { useBackupService } from '@/features/backup/backup-service'
 import type { BackupTableName, RestoreResult } from '@/features/backup/backup-types'
 import { useRestoreService, type RestoreOutcome } from '@/features/backup/restore-service'
@@ -50,8 +59,11 @@ const router = useRouter()
 const appStore = useAppStore()
 const backup = useBackupService()
 const restoreService = useRestoreService()
+const autoBackup = useAutoBackupService()
 
-const isReady = computed(() => appStore.databaseStatus === 'ready' && !!backup && !!restoreService)
+const isReady = computed(
+  () => appStore.databaseStatus === 'ready' && !!backup && !!restoreService && !!autoBackup,
+)
 
 // 创建备份
 const creating = ref(false)
@@ -75,6 +87,13 @@ const rollbackSaved = ref(false)
 const counts = ref<Record<BackupTableName, number> | undefined>(undefined)
 const countsLoading = ref(false)
 const countsError = ref('')
+
+// 自动备份
+const autoStatus = ref<AutoBackupStatus | undefined>(undefined)
+const autoStatusError = ref('')
+const autoBusy = ref(false)
+const autoMessage = ref('')
+const autoRunError = ref('')
 
 const verificationSummary = computed<RestoreSuccess | undefined>(() => {
   const v = pendingVerification.value
@@ -194,6 +213,65 @@ async function loadCounts(): Promise<void> {
   }
 }
 
+async function loadAutoStatus(): Promise<void> {
+  if (!autoBackup) return
+  autoStatusError.value = ''
+  try {
+    autoStatus.value = await autoBackup.getStatus()
+  } catch (error) {
+    autoStatusError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+function applyAutoBackupResult(result: AutoBackupResult): void {
+  if (result.ok) {
+    autoMessage.value = `已创建自动备份：${result.fileName}`
+  } else if (!result.skipped) {
+    autoRunError.value = result.error
+  }
+}
+
+async function onAutoEnabledChange(enabled: boolean): Promise<void> {
+  if (!autoBackup || autoBusy.value) return
+  autoBusy.value = true
+  autoMessage.value = ''
+  autoRunError.value = ''
+  try {
+    await autoBackup.setEnabled(enabled)
+    // 打开开关即创建本月备份，不必等到下个月
+    if (enabled) {
+      applyAutoBackupResult(await autoBackup.ensureMonthlyBackup())
+    }
+  } finally {
+    autoBusy.value = false
+    await loadAutoStatus()
+  }
+}
+
+async function runAutoBackupNow(): Promise<void> {
+  if (!autoBackup || autoBusy.value) return
+  autoBusy.value = true
+  autoMessage.value = ''
+  autoRunError.value = ''
+  try {
+    applyAutoBackupResult(await autoBackup.runNow())
+  } finally {
+    autoBusy.value = false
+    await loadAutoStatus()
+  }
+}
+
+const nextMonthLabel = computed(() => {
+  const current = autoStatus.value?.currentMonth
+  if (!current) return ''
+  const parts = current.split('-')
+  const year = Number(parts[0])
+  const month = Number(parts[1])
+  if (!year || !month) return ''
+  const next = new Date(year, month, 1)
+  return `${next.getFullYear()} 年 ${next.getMonth() + 1} 月`
+})
+
 function formatStamp(date: Date, withTime: boolean): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
   const datePart = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}`
@@ -210,7 +288,15 @@ function formatDateTime(iso: string): string {
   }).format(new Date(iso))
 }
 
-onMounted(loadCounts)
+onMounted(() => {
+  void loadCounts()
+  void loadAutoStatus()
+})
+
+useRefreshOnActivated(() => {
+  void loadCounts()
+  void loadAutoStatus()
+})
 </script>
 
 <template>
@@ -248,6 +334,74 @@ onMounted(loadCounts)
               <TriangleAlert :size="18" :stroke-width="1.75" />
               <span>{{ createError }}</span>
             </div>
+          </BaseCard>
+        </section>
+
+        <section class="block">
+          <h2>每月自动备份</h2>
+          <BaseCard class="block-card">
+            <div class="block-head">
+              <span class="block-icon">
+                <CalendarClock :size="20" :stroke-width="1.75" aria-hidden="true" />
+              </span>
+              <div class="block-text">
+                <strong>进入新月份自动创建一份</strong>
+                <small>开启后，首次打开应用的当月会自动生成备份，无需手动点。</small>
+              </div>
+            </div>
+
+            <div v-if="autoStatusError" class="result-message result-message--error">
+              <TriangleAlert :size="18" :stroke-width="1.75" />
+              <span>{{ autoStatusError }}</span>
+            </div>
+
+            <template v-else-if="autoStatus">
+              <AppSwitch
+                :model-value="autoStatus.enabled"
+                :disabled="autoBusy"
+                label="自动备份"
+                description="保存在 Documents 目录，与手动备份相同位置"
+                @change="onAutoEnabledChange"
+              />
+
+              <dl v-if="autoStatus.enabled" class="auto-status">
+                <div>
+                  <dt>上次自动备份</dt>
+                  <dd>
+                    {{ autoStatus.lastAt ? formatDateTime(autoStatus.lastAt) : '本月尚未创建' }}
+                  </dd>
+                </div>
+                <div>
+                  <dt>本月状态</dt>
+                  <dd>{{ autoStatus.covered ? '已有备份' : '待创建' }}</dd>
+                </div>
+                <div>
+                  <dt>下次触发</dt>
+                  <dd>
+                    {{ autoStatus.covered && nextMonthLabel ? `进入 ${nextMonthLabel} 后首次打开` : '下次打开应用' }}
+                  </dd>
+                </div>
+              </dl>
+
+              <button
+                class="secondary-button"
+                type="button"
+                :disabled="!autoStatus.enabled || autoBusy"
+                @click="runAutoBackupNow"
+              >
+                <LoaderCircle v-if="autoBusy" :size="18" :stroke-width="2" class="spin" />
+                <RefreshCcw v-else :size="18" :stroke-width="1.75" />
+                现在补一份
+              </button>
+              <div v-if="autoMessage" class="result-message result-message--ok">
+                <CircleCheck :size="18" :stroke-width="1.75" />
+                <span>{{ autoMessage }}</span>
+              </div>
+              <div v-if="autoRunError" class="result-message result-message--error">
+                <TriangleAlert :size="18" :stroke-width="1.75" />
+                <span>{{ autoRunError }}</span>
+              </div>
+            </template>
           </BaseCard>
         </section>
 
@@ -553,6 +707,31 @@ onMounted(loadCounts)
 }
 .counts-state--error {
   color: var(--color-danger);
+}
+.auto-status {
+  display: grid;
+  margin: 0;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--color-background);
+}
+.auto-status div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.auto-status dt {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-body-size);
+}
+.auto-status dd {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--type-body-size);
+  font-weight: 600;
+  text-align: right;
 }
 .page-state {
   padding: var(--space-10) var(--space-4);
