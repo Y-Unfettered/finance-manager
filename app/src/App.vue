@@ -191,20 +191,39 @@ async function appStateClipboardProbe(): Promise<void> {
   }
 }
 
+/**
+ * 归一化捕获时间。
+ * 捕获链路（无障碍/通知）有时把时间存成毫秒字符串（如 "1730330000000"），
+ * 或根本没存（空串），这两种都会让记账页日期校验失败。
+ * 规则：合法 ISO 保留原值；毫秒串转 ISO；其余一律回退为当前时间。
+ */
+function normalizeCapturedOccurredAt(raw: string): string {
+  if (!raw) return new Date().toISOString()
+  // 纯数字串（毫秒时间戳，如 "1730330000000"）转成 ISO；超出 Date 范围则回退当前时间
+  if (/^\d+$/.test(raw)) {
+    const d = new Date(Number(raw))
+    return Number.isNaN(d.getTime()) ? new Date().toISOString() : d.toISOString()
+  }
+  // 合法 ISO 保留原值
+  if (!Number.isNaN(Date.parse(raw))) return raw
+  return new Date().toISOString()
+}
+
 /** 检查是否有待入账的捕获数据，自动打开记账页面 */
 async function checkPendingCaptureData() {
   try {
     if (!Capacitor.isNativePlatform()) return
     const data = await PaymentCapture.getPendingCaptureData()
     if (!data?.amountMinor) return
-    log.info('收到待入账捕获数据', { amount: data.amountMinor, merchant: data.merchant })
+    const occurredAt = normalizeCapturedOccurredAt(data.occurredAt ?? '')
+    log.info('收到待入账捕获数据', { amount: data.amountMinor, merchant: data.merchant, occurredAt })
     // 跳转到记账页面，带参数
     router.push({
       path: '/transactions/new',
       query: {
         amount: String(data.amountMinor),
         merchant: data.merchant ?? '',
-        occurredAt: data.occurredAt ?? '',
+        occurredAt,
       },
     })
   } catch (e) {
@@ -475,7 +494,7 @@ watch(
   <!-- 隐私遮挡：切到后台时覆盖内容，防止任务列表预览泄露账目 -->
   <Transition name="fade">
     <div v-if="privacyVeil" class="privacy-veil">
-      <span class="privacy-veil__text">财务经理</span>
+      <span class="privacy-veil__text">私人记账</span>
     </div>
   </Transition>
 

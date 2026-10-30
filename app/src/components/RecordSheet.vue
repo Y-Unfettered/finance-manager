@@ -357,7 +357,8 @@ async function initializeFormState(): Promise<void> {
   if (typeof pendingMerchant === 'string' && pendingMerchant) {
     merchant.value = pendingMerchant
   }
-  if (typeof pendingOccurredAt === 'string' && pendingOccurredAt) {
+  // 仅接受合法 ISO 日期；空或非法值不写入，保存时会回退为当前时间
+  if (typeof pendingOccurredAt === 'string' && pendingOccurredAt && !Number.isNaN(Date.parse(pendingOccurredAt))) {
     occurredAt.value = pendingOccurredAt
   }
   if (typeof editId === 'string' && editId) {

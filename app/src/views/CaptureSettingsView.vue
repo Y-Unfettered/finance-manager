@@ -877,7 +877,7 @@ onUnmounted(() => {
               </li>
               <li>
                 <strong>方式二：分享截图</strong>
-                <span>长按支付截图，选择「分享」→ 财务经理，OCR 自动识别金额。</span>
+                <span>长按支付截图，选择「分享」→ 私人记账，OCR 自动识别金额。</span>
               </li>
               <li>
                 <strong>方式三：粘贴 JSON</strong>

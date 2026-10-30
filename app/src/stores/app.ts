@@ -4,7 +4,7 @@ export type DatabaseStatus = 'not_applicable' | 'initializing' | 'ready' | 'erro
 
 export const useAppStore = defineStore('app', {
   state: () => ({
-    appName: '财务经理',
+    appName: '私人记账',
     version: __APP_VERSION__,
     profileName: 'lemon',
     ledgerName: '日常账本',
