@@ -118,11 +118,24 @@ async function createMigrationBackup(
   try {
     const repo = new BackupRepository(executor)
     const [data, recordCounts] = await Promise.all([repo.dumpAll(), repo.countAll()])
+    // ⚠️ 此时数据还是旧版本结构，必须记录 dump 时刻的真实 schema 版本。
+    // 若标成 LATEST，"迁移半途失败 → 用本备份恢复"会把迁移记录打回旧版，
+    // 下次启动重复执行非幂等迁移而失败。
+    let realSchemaVersion = LATEST_SCHEMA_VERSION
+    try {
+      const rows = await executor.query<{ version: number }>(
+        'SELECT MAX(version) AS version FROM schema_migrations',
+      )
+      const maxVersion = rows[0]?.version
+      if (typeof maxVersion === 'number' && maxVersion > 0) realSchemaVersion = maxVersion
+    } catch {
+      // 首次初始化（schema_migrations 尚不存在）：空库备份，保持 LATEST 兜底
+    }
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
     const payload: BackupPayload = {
       format: BACKUP_FORMAT,
       version: BACKUP_FORMAT_VERSION,
-      schemaVersion: LATEST_SCHEMA_VERSION,
+      schemaVersion: realSchemaVersion,
       appVersion: 'migration-backup',
       createdAt: systemClock.nowIso(),
       recordCounts,

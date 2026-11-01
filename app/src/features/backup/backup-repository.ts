@@ -32,6 +32,7 @@ const TABLE_SCHEMAS: readonly TableSchema[] = [
       'currency',
       'institution',
       'archived_at',
+      'sort_order',
       'created_at',
       'updated_at',
     ],
@@ -99,6 +100,7 @@ const TABLE_SCHEMAS: readonly TableSchema[] = [
       'error_count',
       'status',
       'note',
+      'execution_errors_json',
       'created_at',
       'voided_at',
     ],
@@ -120,6 +122,7 @@ const TABLE_SCHEMAS: readonly TableSchema[] = [
       'parser_version',
       'confidence',
       'import_batch_id',
+      'fingerprint',
       'created_at',
       'updated_at',
     ],
@@ -278,14 +281,21 @@ export class BackupRepository {
     return counts
   }
 
-  /** 在单个事务中清空所有表并按外键顺序插入备份行。返回各表实际写入行数。 */
+  /**
+   * 在单个事务中清空所有表并按外键顺序插入备份行。返回各表实际写入行数。
+   *
+   * ⚠️ schema_migrations 不参与恢复：备份里的迁移记录可能落后于当前库
+   * （如用旧版本备份恢复到新版本应用），覆盖它会让下次启动重复执行
+   * 非幂等迁移（ALTER TABLE ADD COLUMN）而失败。恢复数据、保留当前库的迁移进度。
+   */
   async replaceAll(data: BackupData): Promise<Record<BackupTableName, number>> {
+    const dataSchemas = TABLE_SCHEMAS.filter((schema) => schema.name !== 'schema_migrations')
     const statements: SqlStatement[] = []
-    for (const schema of [...TABLE_SCHEMAS].reverse()) {
+    for (const schema of [...dataSchemas].reverse()) {
       statements.push({ statement: `DELETE FROM ${schema.name}` })
     }
     const restored = {} as Record<BackupTableName, number>
-    for (const schema of TABLE_SCHEMAS) {
+    for (const schema of dataSchemas) {
       const rows = data[schema.name] ?? []
       restored[schema.name] = rows.length
       for (const row of rows) {
