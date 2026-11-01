@@ -225,7 +225,6 @@ public class OverlayEntryManager {
         Button btnConfirm = makeButton("✓ 记一笔", Color.parseColor("#2563EB"),
                 Color.WHITE, v -> {
             Log.d(TAG, "记一笔按钮被点击");
-            Toast.makeText(appContext, "按钮被点到了！", Toast.LENGTH_SHORT).show();
             v.setEnabled(false);
             // 把 pending 数据存到 SharedPreferences
             android.content.SharedPreferences.Editor ed = sp.edit();

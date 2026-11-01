@@ -30,9 +30,6 @@ import java.util.regex.Pattern;
 public class RuleBasedParser {
 
     private static final String TAG = "RuleBasedParser";
-    private static final Pattern CATEGORY_MAP_KEY = Pattern.compile("categoryId");
-    private static final Pattern CATEGORY_MAP_KIND = Pattern.compile("kind");
-    private static final Pattern CATEGORY_MAP_PATTERN = Pattern.compile("namePattern");
 
     private final Object configCacheLock = new Object();
     private String configJsonCache = "";

@@ -319,7 +319,7 @@ onMounted(async () => {
       log.info('App.vue: backButton 监听器注册完成')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      log.error('App.vue: appStateChange 监听器注册失败', { msg })
+      log.error('App.vue: backButton 监听器注册失败', { msg })
     }
 
     try {
@@ -446,7 +446,7 @@ onMounted(async () => {
 
           const { confirmEvent } = await import('@/features/capture-inbox/capture-inbox-service')
           await confirmEvent({
-            event: { ...data, amountMinor: data.amountMinor },
+            event: { ...data },
             accountId,
             categoryId,
           })
@@ -492,7 +492,6 @@ onMounted(async () => {
             // 确保 Shizuku 长驻 + 恢复无障碍服务
             void ensureShizukuRunning()
             void autoRecoverAccessibility()
-            startClipboardPolling()
             // 检查是否有待入账的捕获数据，自动打开记账页面
             void checkPendingCaptureData()
           }

@@ -71,9 +71,10 @@ async function bootstrap(): Promise<void> {
       try {
         const { PaymentCapture } = await import('@/features/payment-capture/payment-capture-reader')
         await PaymentCapture.setActiveLedgerId({ ledgerId: initialLedger?.id ?? '' })
-      } catch {}
+      } catch { /* ledger 推送失败不阻塞启动 */ }
       const financeServiceInstance = new FinanceService(db, systemIdGenerator, systemClock)
       // 存到全局，供 pinia store 里直接用（绕过 inject）
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- window 逃生舱：供非 setup 上下文（捕获确认链路）读取
       ;(window as any).__financeService = financeServiceInstance
       appStore.financeService = financeServiceInstance
       app.provide(financeServiceKey, financeServiceInstance)

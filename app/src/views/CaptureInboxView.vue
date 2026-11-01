@@ -10,7 +10,7 @@ import {
   Image as ImageIcon,
   Clock,
 } from '@lucide/vue'
-import { onActivated, onMounted, ref, watch } from 'vue'
+import { onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'

@@ -69,9 +69,4 @@ public final class CaptureDedup {
         if (FINGERPRINT_SEEN.size() < 1000) return;
         FINGERPRINT_SEEN.entrySet().removeIf(e -> (now - e.getValue()) > FINGERPRINT_WINDOW_MS * 2);
     }
-
-    public static void reset() {
-        SEEN.clear();
-        FINGERPRINT_SEEN.clear();
-    }
 }

@@ -42,10 +42,6 @@ function onConfirm(): void {
   void store.doConfirm()
 }
 
-function onClose(): void {
-  store.hideEntry()
-}
-
 function retryLoad(): void {
   store.message = ''
   void store.loadOptions()

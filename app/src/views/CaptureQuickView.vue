@@ -5,7 +5,6 @@ import { useCaptureEntryStore } from '@/stores/capture-entry'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import AccountBrandIcon from '@/components/AccountBrandIcon.vue'
 import { findAccountCatalogItem } from '@/features/finance/account-catalog'
-import { formatMinorToCny } from '@/domain/money'
 import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
 
 const route = useRoute()
@@ -27,9 +26,10 @@ async function onConfirm() {
   if (store.message === '入账成功') {
     try {
       await PaymentCapture.onOverlayCommitDone({ success: true, message: `¥${(store.amountMinor / 100).toFixed(2)}` })
-    } catch {}
+    } catch { /* 原生回调失败不阻塞前端流程 */ }
     setTimeout(() => {
-      try { (window as any).AndroidBridge?.finish?.() } catch {}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 原生注入的桥接对象，WebView 中可能不存在
+      try { (window as any).AndroidBridge?.finish?.() } catch { /* 桥接不可用时由 window.close/原生兜底 */ }
       window.close()
     }, 700)
   }
@@ -37,7 +37,7 @@ async function onConfirm() {
 
 async function onDismiss() {
   await store.dismissEvent()
-  try { await PaymentCapture.onOverlayCommitDone({ success: false, message: '已忽略' }) } catch {}
+  try { await PaymentCapture.onOverlayCommitDone({ success: false, message: '已忽略' }) } catch { /* 忽略 */ }
   setTimeout(() => window.close(), 200)
 }
 
@@ -53,7 +53,7 @@ onMounted(async () => {
     <div class="quick-card">
       <header class="quick-header">
         <h2>记一笔</h2>
-        <button class="quick-close" @click="onDismiss" aria-label="关闭">✕</button>
+        <button class="quick-close" aria-label="关闭" @click="onDismiss">✕</button>
       </header>
 
       <div class="quick-body">

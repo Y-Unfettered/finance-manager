@@ -92,10 +92,6 @@ let pollingTimer: number | null = null
 
 const duplicateBlockEnabled = ref(true)
 
-async function loadDuplicateBlock(): Promise<void> {
-  duplicateBlockEnabled.value = await getDuplicateBlockEnabled()
-}
-
 async function toggleDuplicateBlock(): Promise<void> {
   const next = !duplicateBlockEnabled.value
   duplicateBlockEnabled.value = next
@@ -186,7 +182,6 @@ async function load(): Promise<void> {
       setTimeout(() => reject(new Error('getServiceHealth 超时（5秒无响应）')), 5000),
     )
     const result = await Promise.race([getServiceHealth(), timeout])
-    console.log('[CaptureSettings] getServiceHealth ok:', JSON.stringify(result))
     health.value = result
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -398,7 +393,7 @@ onUnmounted(() => {
       </p>
 
       <!-- 自动恢复面板 -->
-      <section class="recover-section" v-if="health">
+      <section v-if="health" class="recover-section">
         <div class="recover-header">
           <h2>
             <RefreshCw :size="18" />
@@ -413,8 +408,8 @@ onUnmounted(() => {
               class="recover-toggle__switch"
               :class="{ 'recover-toggle__switch--on': recoverStatus?.enabled }"
               :disabled="recoverSaving"
-              @click="doToggleAutoRecover"
               :aria-pressed="recoverStatus?.enabled"
+              @click="doToggleAutoRecover"
             >
               <span class="recover-toggle__knob"></span>
             </button>
@@ -438,7 +433,7 @@ onUnmounted(() => {
               {{ health.accessibility.enabled ? '正常' : '已断开' }}
             </span>
           </div>
-          <div class="recover-row" v-if="recoverStatus?.lastStatus">
+          <div v-if="recoverStatus?.lastStatus" class="recover-row">
             <span class="recover-row__k">最近恢复</span>
             <span class="recover-row__v">{{ recoverStatus.lastStatus }}</span>
           </div>

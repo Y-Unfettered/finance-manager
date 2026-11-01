@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import type { FinanceServicePort } from '@/features/finance/finance-service'
 
 export type DatabaseStatus = 'not_applicable' | 'initializing' | 'ready' | 'error'
 
@@ -14,7 +15,7 @@ export const useAppStore = defineStore('app', {
     databaseStatus: 'not_applicable' as DatabaseStatus,
     schemaVersion: 0,
     databaseError: undefined as string | undefined,
-    financeService: undefined as any,
+    financeService: undefined as FinanceServicePort | undefined,
   }),
   actions: {
     markDatabaseInitializing() {

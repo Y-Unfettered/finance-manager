@@ -97,12 +97,6 @@ public final class DuplicateBlocker {
         return false;
     }
 
-    /** 两个时刻是否同一自然日（本地时区）。 */
-    private static boolean sameLocalDay(long a, long b) {
-        SimpleDateFormat f = new SimpleDateFormat("yyyyMMdd", Locale.US);
-        return f.format(new Date(a)).equals(f.format(new Date(b)));
-    }
-
     /** 库内时间字符串（UTC ISO）→ epoch 毫秒；失败 -1。 */
     private static long parseEpochMs(String iso) {
         if (iso == null || iso.isEmpty()) return -1;

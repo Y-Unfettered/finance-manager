@@ -576,7 +576,6 @@ async function initializeFormState(): Promise<void> {
       categoryMatched: suggestedCat ? `${suggestedCat.name}(${suggestedCat.id})` : '(未命中)',
     }
     log.info('记账页捕获预填', prefillDebug)
-    console.log('[capture-prefill]', JSON.stringify(prefillDebug))
   }
   if (typeof editId === 'string' && editId) {
     editTransactionId.value = editId
@@ -729,10 +728,6 @@ function pickQuickTag(tag: QuickTagDef): void {
     fileInput.value?.click()
     return
   }
-  if (tag.action === 'note') {
-    editNote()
-    return
-  }
   if (tag.action === 'fee') {
     // 手续费行内输入（与优惠同构），替代原生 prompt
     feeMode.value = !feeMode.value
@@ -740,12 +735,6 @@ function pickQuickTag(tag: QuickTagDef): void {
     if (!feeMode.value) feeAmount.value = ''
     return
   }
-}
-
-/** 编辑备注（捕获预填与快捷标签共用）。 */
-function editNote(): void {
-  const val = prompt('输入备注内容', note.value)
-  if (val !== null) note.value = val
 }
 
 async function handleImageSelect(event: Event): Promise<void> {
@@ -803,74 +792,6 @@ function handleDateSelect(date: string, label: string): void {
   dateLabel.value = label
 }
 
-function appendDiscount(char: string): void {
-  if (char === 'backspace') {
-    setDiscountCandidate(discountAmount.value.slice(0, -1))
-    return
-  }
-  if (char === 'clear') {
-    setDiscountCandidate('')
-    return
-  }
-  if (char === '-' || char === '+') return
-  if (char === '00' && (discountAmount.value === '' || discountAmount.value === '0')) return
-  if (discountAmount.value === '' || discountAmount.value === '0') {
-    setDiscountCandidate(char === '.' ? '0.' : char)
-    return
-  }
-  if (char === '.' && !discountAmount.value.includes('.')) {
-    setDiscountCandidate(`${discountAmount.value}.`)
-    return
-  }
-  const dotIndex = discountAmount.value.indexOf('.')
-  if (dotIndex !== -1 && discountAmount.value.length - dotIndex >= 3) return
-  if (discountAmount.value.length >= 9) return
-  setDiscountCandidate(`${discountAmount.value}${char}`)
-}
-
-function setDiscountCandidate(value: string): void {
-  const discount = Number(value)
-  const original = Number(amountDisplay.value)
-  if (value && Number.isFinite(discount) && discount >= original) {
-    errorMessage.value = '优惠金额必须小于原金额'
-    return
-  }
-  discountAmount.value = value
-  if (errorMessage.value === '优惠金额必须小于原金额') errorMessage.value = ''
-}
-
-function setFeeCandidate(value: string): void {
-  const main = Number(amountDisplay.value) || 0
-  const fee = Number(value) || 0
-  if (fee >= main && main > 0) {
-    errorMessage.value = '手续费必须小于转出金额'
-    return
-  }
-  feeAmount.value = value
-  if (errorMessage.value === '手续费必须小于转出金额') errorMessage.value = ''
-}
-
-function appendFee(char: string): void {
-  if (char === 'backspace') {
-    setFeeCandidate(feeAmount.value.slice(0, -1))
-    return
-  }
-  if (char === 'clear') {
-    setFeeCandidate('')
-    return
-  }
-  if (char === '-' || char === '+') return
-  if (char === '00' && (feeAmount.value === '' || feeAmount.value === '0')) return
-  if (char === '.' && !feeAmount.value.includes('.')) {
-    setFeeCandidate(`${feeAmount.value}.`)
-    return
-  }
-  const dotIndex = feeAmount.value.indexOf('.')
-  if (dotIndex !== -1 && feeAmount.value.length - dotIndex >= 3) return
-  if (feeAmount.value.length >= 9) return
-  setFeeCandidate(`${feeAmount.value}${char}`)
-}
-
 function appendAmount(char: string): void {
   if (char === 'backspace') {
     amountDisplay.value = amountDisplay.value.slice(0, -1)
@@ -895,14 +816,6 @@ function appendAmount(char: string): void {
   }
   if (char === '.' && !amountDisplay.value.includes('.')) {
     amountDisplay.value += '.'
-    return
-  }
-  if (char === '-' && !amountDisplay.value.startsWith('-')) {
-    amountDisplay.value = '-' + amountDisplay.value
-    return
-  }
-  if (char === '+' && amountDisplay.value.startsWith('-')) {
-    amountDisplay.value = amountDisplay.value.slice(1)
     return
   }
   const dotIndex = amountDisplay.value.indexOf('.')
@@ -1587,25 +1500,6 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.category-item__icon {
-  display: flex;
-  width: 48px;
-  height: 48px;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-tertiary);
-  background: var(--color-background);
-  border-radius: 14px;
-  transition: all 0.15s;
-  border: 2px solid transparent;
-}
-
-.category-item.active .category-item__icon {
-  color: var(--color-primary-600);
-  background: var(--color-primary-50);
-  border-color: var(--color-primary-500);
-}
-
 .category-item.active :deep(.category-icon) {
   box-shadow: 0 0 0 2px var(--color-primary-500);
 }
@@ -1944,73 +1838,6 @@ onUnmounted(() => {
 .record-keyboard--disabled :deep(.van-key--blue) {
   pointer-events: none;
   opacity: 0.4;
-}
-
-.confirm-content {
-  display: grid;
-  gap: var(--space-3);
-  padding: var(--space-2) 0;
-}
-
-.confirm-title {
-  margin: 0;
-  color: var(--color-text-primary);
-  font-size: var(--type-section-title-size);
-  font-weight: 600;
-}
-
-.confirm-text {
-  margin: 0;
-  color: var(--color-text-secondary);
-  font-size: var(--type-body-size);
-  line-height: var(--type-body-line);
-}
-
-.confirm-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
-  padding-top: var(--space-2);
-}
-
-.primary-button {
-  display: flex;
-  height: 48px;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  font-weight: 600;
-  background: var(--color-primary-600);
-  border: 0;
-  border-radius: var(--radius-control);
-}
-
-.primary-button:disabled {
-  opacity: 0.55;
-}
-
-.secondary-button {
-  display: flex;
-  height: 48px;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-primary);
-  font-weight: 500;
-  background: transparent;
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-control);
-}
-
-.secondary-button:disabled {
-  opacity: 0.55;
-}
-
-.form-error {
-  padding: var(--space-2) var(--space-3);
-  color: var(--color-danger);
-  font-size: var(--type-body-size);
-  background: rgb(185 67 67 / 8%);
-  border-radius: var(--radius-control);
 }
 
 .discount-category-row {

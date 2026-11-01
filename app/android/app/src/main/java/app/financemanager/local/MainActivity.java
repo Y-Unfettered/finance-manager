@@ -17,13 +17,8 @@ import rikka.shizuku.Shizuku;
 import rikka.shizuku.ShizukuProvider;
 
 public class MainActivity extends BridgeActivity {
-    private static volatile MainActivity instance;
     private View privacyOverlay;
     private static final String TAG = "MainActivity";
-
-    public static MainActivity getInstance() {
-        return instance;
-    }
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -43,7 +38,6 @@ public class MainActivity extends BridgeActivity {
         }
 
         super.onCreate(savedInstanceState);
-        instance = this;
 
         // 清理之前 overlay 测试数据
         app.financemanager.capture.overlay.OverlayDbWriter.cleanupTestData(this);
