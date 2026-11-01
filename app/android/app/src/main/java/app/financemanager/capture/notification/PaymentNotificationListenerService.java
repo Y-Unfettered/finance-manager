@@ -13,7 +13,6 @@ import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
 
-import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -107,7 +106,7 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
 
         NotificationDiagnostics.parsed(packageName, info.getAmount());
 
-        if (CaptureDedup.isDuplicate(info.getSourcePackage(), info.getAmountMinor())) {
+        if (CaptureDedup.hasSeen(info.getSourcePackage(), info.getAmountMinor())) {
             NotificationDiagnostics.dedup(packageName);
             Log.d(TAG, "去重跳过通知: " + packageName);
             return;
@@ -127,7 +126,7 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
                 entity.setSourcePackage(info.getSourcePackage() != null ? info.getSourcePackage() : "unknown");
                 entity.setSourceName(info.getSourceName() != null ? info.getSourceName() : "notification");
                 entity.setCaptureMethod("notification");
-                entity.setOccurredAt(String.valueOf(System.currentTimeMillis()));
+                entity.setOccurredAt(CapturedPaymentInfo.nowUtcIso());
                 entity.setAmountMinor(info.getAmountMinor());
                 entity.setCurrency("CNY");
                 entity.setMerchant(info.getMerchant());
@@ -140,6 +139,8 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
                 entity.setCreatedAt(System.currentTimeMillis());
 
                 dao.insert(entity);
+                // 落库成功后才标记内存去重：插入失败时允许同一笔通知重试
+                CaptureDedup.markSeen(info.getSourcePackage(), info.getAmountMinor());
 
                 NotificationDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
                 PaymentCapturePlugin.notifyCandidate(entity);
@@ -161,11 +162,13 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
     }
 
     private static String buildFingerprint(CapturedPaymentInfo info) {
-        return info.getSourcePackage() + ":"
-                + "notif:"
-                + (info.getAmountMinor() != null ? info.getAmountMinor() : "0")
-                + ":" + (info.getMerchant() != null ? info.getMerchant() : "")
-                + ":" + UUID.randomUUID().toString().substring(0, 8);
+        String rawPkg = info.getSourcePackage() != null ? info.getSourcePackage() : "unknown";
+        String rawAmt = info.getAmountMinor() != null ? String.valueOf(info.getAmountMinor()) : "0";
+        String rawMerchant = info.getMerchant() != null ? info.getMerchant() : "";
+        // 分钟级时间桶：同一笔支付的通知重发在 1 分钟窗口内指纹一致，能被 capture_fingerprint
+        // 持久拦截。⚠️ 绝不能掺入 UUID/随机数——那会让每次指纹都不同，持久去重层完全失效。
+        return rawPkg + ":notif:" + rawAmt + ":" + rawMerchant + ":"
+                + (System.currentTimeMillis() / 60000L);
     }
 
     private static float parseConfidence(String level) {

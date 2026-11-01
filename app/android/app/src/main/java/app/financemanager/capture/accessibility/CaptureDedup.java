@@ -26,15 +26,25 @@ public final class CaptureDedup {
     private static final Map<String, Long> SEEN = new ConcurrentHashMap<>();
     private static final Map<String, Long> FINGERPRINT_SEEN = new ConcurrentHashMap<>();
 
-    public static boolean isDuplicate(@Nullable String sourcePackage, @Nullable Long amountMinor) {
+    /** 仅检查不标记。与 {@link #markSeen} 配对：落库成功后再标记，插入失败可立即重试。 */
+    public static boolean hasSeen(@Nullable String sourcePackage, @Nullable Long amountMinor) {
         long now = System.currentTimeMillis();
         String key = makeKey(sourcePackage, amountMinor, now);
         Long lastSeen = SEEN.get(key);
-        if (lastSeen != null && (now - lastSeen) < DEDUP_WINDOW_MS) {
-            return true;
-        }
-        SEEN.put(key, now);
+        return lastSeen != null && (now - lastSeen) < DEDUP_WINDOW_MS;
+    }
+
+    /** 标记本分钟桶已见（配合 {@link #hasSeen}：确认写入队列成功后调用）。 */
+    public static void markSeen(@Nullable String sourcePackage, @Nullable Long amountMinor) {
+        long now = System.currentTimeMillis();
+        SEEN.put(makeKey(sourcePackage, amountMinor, now), now);
         cleanup(now);
+    }
+
+    /** 兼容旧调用方（无障碍链路）：检查并立即标记。通知/分享链路请用 hasSeen + markSeen 对。 */
+    public static boolean isDuplicate(@Nullable String sourcePackage, @Nullable Long amountMinor) {
+        if (hasSeen(sourcePackage, amountMinor)) return true;
+        markSeen(sourcePackage, amountMinor);
         return false;
     }
 

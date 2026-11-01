@@ -14,7 +14,6 @@ import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
 import app.financemanager.local.PaymentCapturePlugin;
 
-import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -24,6 +23,12 @@ public class PaymentShareActivity extends Activity {
     public static final String PARSER_VERSION = "0.1.0";
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        executor.shutdown();
+    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -69,9 +74,17 @@ public class PaymentShareActivity extends Activity {
             return;
         }
 
-        writeCaptured(info, "share_text", "分享文本");
-        Toast.makeText(this, "已识别到支付信息，即将打开财务经理", Toast.LENGTH_SHORT).show();
-        finish();
+        // ⚠️ Room 未开 allowMainThreadQueries，主线程写库必然抛 IllegalStateException
+        // （onCreate 运行在主线程）。移入后台线程，按真实结果提示并关闭。
+        executor.execute(() -> {
+            final boolean ok = writeCaptured(info, "share_text", "分享文本");
+            runOnUiThread(() -> {
+                Toast.makeText(this,
+                        ok ? "已识别到支付信息，即将打开私人记账" : "保存失败，请重试",
+                        Toast.LENGTH_SHORT).show();
+                finish();
+            });
+        });
     }
 
     private void handleImageShare(Uri imageUri) {
@@ -212,11 +225,12 @@ public class PaymentShareActivity extends Activity {
         return hasAmount ? info : null;
     }
 
-    private void writeCaptured(CapturedPaymentInfo info, String captureMethod, String sourceName) {
+    /** 写入捕获队列。返回是否成功；调用方据此提示（不得在主线程调用）。 */
+    private boolean writeCaptured(CapturedPaymentInfo info, String captureMethod, String sourceName) {
         try {
-            if (CaptureDedup.isDuplicate(info.getSourcePackage(), info.getAmountMinor())) {
+            if (CaptureDedup.hasSeen(info.getSourcePackage(), info.getAmountMinor())) {
                 Log.d(TAG, "dedup skipped: " + info.getSourcePackage());
-                return;
+                return false;
             }
 
             CaptureQueueDao dao = CaptureQueueDatabase
@@ -227,7 +241,7 @@ public class PaymentShareActivity extends Activity {
             entity.setSourcePackage(info.getSourcePackage() != null ? info.getSourcePackage() : "share");
             entity.setSourceName(sourceName);
             entity.setCaptureMethod(captureMethod);
-            entity.setOccurredAt(java.time.Instant.now().toString());
+            entity.setOccurredAt(CapturedPaymentInfo.nowUtcIso());
             entity.setAmountMinor(info.getAmountMinor() != null ? info.getAmountMinor() : 0L);
             entity.setCurrency("CNY");
             entity.setMerchant(info.getMerchant());
@@ -240,10 +254,15 @@ public class PaymentShareActivity extends Activity {
             entity.setCreatedAt(System.currentTimeMillis());
 
             dao.insert(entity);
+            // 落库成功后才标记内存去重：插入失败时用户可立即重试
+            // （原实现先标记后写库，失败后 2 分钟内重试也会被拦）
+            CaptureDedup.markSeen(info.getSourcePackage(), info.getAmountMinor());
             PaymentCapturePlugin.notifyCandidate(entity);
             Log.d(TAG, "share written: " + info.getAmount());
+            return true;
         } catch (Exception e) {
             Log.w(TAG, "write failed", e);
+            return false;
         }
     }
 
@@ -251,18 +270,10 @@ public class PaymentShareActivity extends Activity {
         String rawPkg = info.getSourcePackage() != null ? info.getSourcePackage() : "share";
         String rawAmt = info.getAmountMinor() != null ? String.valueOf(info.getAmountMinor()) : "0";
         String rawMerchant = info.getMerchant() != null ? info.getMerchant() : "";
-        return rawPkg + ":" + method + ":" + rawAmt + ":" + rawMerchant + ":" + randomToken();
-    }
-
-    private static String randomToken() {
-        Random r = new Random(System.nanoTime());
-        byte[] bytes = new byte[4];
-        r.nextBytes(bytes);
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b & 0xff));
-        }
-        return sb.toString();
+        // 分钟级时间桶：同一笔支付的重复分享在 1 分钟窗口内指纹一致，能被 capture_fingerprint
+        // 持久拦截。⚠️ 绝不能掺入随机数——那会让每次指纹都不同，持久去重层完全失效。
+        return rawPkg + ":" + method + ":" + rawAmt + ":" + rawMerchant + ":"
+                + (System.currentTimeMillis() / 60000L);
     }
 
     private static float parseConfidence(String level) {

@@ -31,7 +31,7 @@ public class AlipayAdapter implements PaymentParserAdapter {
     private static final Pattern SUCCESS_PATTERN = Pattern.compile("(支付成功|付款成功|转账成功)", Pattern.CASE_INSENSITIVE);
 
     // 金额匹配：¥/￥/元 + 可选空格 + 数字(.数字)?
-    private static final Pattern AMOUNT_PATTERN = Pattern.compile("[¥￥]\\s*(\\d+[\\.\\d]*)|\\d+[\\.\\d]*\\s*元");
+    private static final Pattern AMOUNT_PATTERN = Pattern.compile("[¥￥]\\s*(\\d+[\\.\\d]*)|(\\d+[\\.\\d]*)\\s*元");
 
     // 商户提取
     private static final Pattern MERCHANT_PATTERN = Pattern.compile("(?:商家|商户|收款方(?!式)|对方账户|店铺|收款人|转入)[:：]?\\s*([^\\n\\r]+)");
@@ -81,6 +81,7 @@ public class AlipayAdapter implements PaymentParserAdapter {
 
         // 金额必须带 ¥/元 符号——裸数字兜底会把时间戳/编号当金额（实测教训）
         String rawAmount = extractFirst(text, AMOUNT_PATTERN, 1);
+        if (rawAmount == null) rawAmount = extractFirst(text, AMOUNT_PATTERN, 2); // "X 元" 分支取 group(2)
         if (rawAmount != null) {
             info.setAmount(rawAmount);
             Long minor = CapturedPaymentInfo.parseAmountMinor(rawAmount);

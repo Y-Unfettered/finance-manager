@@ -1,10 +1,24 @@
 package app.financemanager.capture.accessibility;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
+
 /**
  * 解析后的支付信息。
  * 各支付 APP 适配器输出统一的 CapturedPaymentInfo 结构。
  */
 public class CapturedPaymentInfo {
+
+    /** 当前时间的 UTC ISO 格式，各捕获通道统一写入 occurredAt 的时间格式。
+     *  ⚠️ 不能用 java.time（minSdk 24 需 API 26+ 或脱糖）；也不能写 epoch 毫秒字符串
+     *  —— 前端把它当 ISO 解析会得到 Invalid Date。 */
+    public static String nowUtcIso() {
+        SimpleDateFormat f = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US);
+        f.setTimeZone(TimeZone.getTimeZone("UTC"));
+        return f.format(new Date());
+    }
 
     private String sourcePackage;
     private String sourceName;

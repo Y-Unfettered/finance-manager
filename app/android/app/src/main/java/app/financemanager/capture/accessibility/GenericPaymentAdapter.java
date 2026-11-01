@@ -11,7 +11,7 @@ public class GenericPaymentAdapter implements PaymentParserAdapter {
 
     private static final String TAG = "GenericAdapter";
     private static final java.util.regex.Pattern AMOUNT_PATTERN =
-            java.util.regex.Pattern.compile("[¥￥]\\s*(\\d+[\\.\\d]*)|\\d+[\\.\\d]*\\s*元");
+            java.util.regex.Pattern.compile("[¥￥]\\s*(\\d+[\\.\\d]*)|(\\d+[\\.\\d]*)\\s*元");
 
     private final String packageName;
     private final String sourceName;
@@ -48,8 +48,10 @@ public class GenericPaymentAdapter implements PaymentParserAdapter {
 
         java.util.regex.Matcher m = AMOUNT_PATTERN.matcher(text);
         if (m.find()) {
-            info.setAmount(m.group(1));
-            info.setAmountMinor(CapturedPaymentInfo.parseAmountMinor(m.group(1)));
+            // 正则两分支：¥ 前缀命中 group(1)，"X 元" 后缀命中 group(2)
+            String amountVal = m.group(1) != null ? m.group(1) : m.group(2);
+            info.setAmount(amountVal);
+            info.setAmountMinor(CapturedPaymentInfo.parseAmountMinor(amountVal));
         }
 
         if (!info.isHasAmount()) {

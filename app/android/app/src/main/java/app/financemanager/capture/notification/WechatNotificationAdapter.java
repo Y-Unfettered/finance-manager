@@ -19,7 +19,7 @@ public class WechatNotificationAdapter implements NotificationParserAdapter {
 
     private static final String TAG = "WechatNotif";
 
-    private static final Pattern AMOUNT_PATTERN = Pattern.compile("[¥￥]\\s*(\\d+[\\.\\d]*)|\\d+[\\.\\d]*\\s*元");
+    private static final Pattern AMOUNT_PATTERN = Pattern.compile("[¥￥]\\s*(\\d+[\\.\\d]*)|(\\d+[\\.\\d]*)\\s*元");
     private static final Pattern MERCHANT_PATTERN = Pattern.compile("(?:商户|商家|收款方)[:：]\\s*(.+)");
     private static final Pattern ORDER_PATTERN = Pattern.compile("(?:订单号|商户单号)[:：]\\s*(\\S+)");
 
@@ -41,8 +41,10 @@ public class WechatNotificationAdapter implements NotificationParserAdapter {
 
         Matcher m = AMOUNT_PATTERN.matcher(combined);
         if (m.find()) {
-            info.setAmount(m.group(1));
-            info.setAmountMinor(CapturedPaymentInfo.parseAmountMinor(m.group(1)));
+            // 正则两分支：¥ 前缀命中 group(1)，"X 元" 后缀命中 group(2)
+            String amountVal = m.group(1) != null ? m.group(1) : m.group(2);
+            info.setAmount(amountVal);
+            info.setAmountMinor(CapturedPaymentInfo.parseAmountMinor(amountVal));
         }
 
         Matcher mm = MERCHANT_PATTERN.matcher(combined);
