@@ -43,6 +43,8 @@ export interface CapturedPayment {
 export interface ServiceHealth {
   accessibility: {
     enabled: boolean
+    /** 活信号：服务当前是否真的连接（设置开着也可能被 MIUI 杀掉，此时 enabled=true 但 connected=false） */
+    connected?: boolean
     configured: boolean
     status: string
   }
@@ -283,7 +285,7 @@ class WebPaymentCapture implements PaymentCapturePlugin {
 
   async getServiceHealth(): Promise<ServiceHealth> {
     return {
-      accessibility: { enabled: false, configured: false, status: 'not_available' },
+      accessibility: { enabled: false, connected: false, configured: false, status: 'not_available' },
       notification: { enabled: false, status: 'not_available' },
       ocr: { enabled: false, status: 'not_available' },
       pendingCount: 0,

@@ -27,8 +27,9 @@ import java.io.InputStreamReader;
 public class UserService extends IShell.Stub {
 
     private static final String TAG = "ShizukuUserService";
+    /** ⚠️ 必须用 Manifest 实际注册的伪装类名（见 PaymentAccessibilityService.REAL_SERVICE_CLASS 注释）。 */
     private static final String ACCESSIBILITY_SERVICE_CLASS =
-            "app.financemanager.capture.accessibility.PaymentAccessibilityService";
+            app.financemanager.capture.accessibility.PaymentAccessibilityService.REAL_SERVICE_CLASS;
     private static final long CHECK_INTERVAL_MS = 30_000; // 30 秒检查一次
 
     private volatile boolean running = true;
@@ -76,7 +77,7 @@ public class UserService extends IShell.Stub {
             Log.d(TAG, "A11yWatchdog 检查: enabled_services=" + current);
 
             if (current.contains(ACCESSIBILITY_SERVICE_CLASS)
-                    || current.contains("PaymentAccessibilityService")) {
+                    || current.contains("SelectToSpeakService")) {
                 Log.d(TAG, "A11yWatchdog: 无障碍服务正常，跳过");
                 return;
             }

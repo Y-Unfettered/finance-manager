@@ -39,6 +39,20 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
     private static final String TAG = "PaymentAccessService";
 
+    /**
+     * 系统设置/无障碍 API 中真实的组件类名。
+     * ⚠️ Manifest 注册的是本类的伪装子类（见 com.google.android.accessibility.selecttospeak
+     * 包下的 SelectToSpeakService），此前 AccessibilityEnabler/UserService/健康检查
+     * 全部误用本类名"PaymentAccessibilityService"去写系统设置和匹配——写入的是
+     * 未注册组件，系统不会启动任何服务，但按错误类名匹配的检查却显示"已启用"。
+     * 所有系统级读写与匹配必须用本常量。
+     */
+    public static final String REAL_SERVICE_CLASS =
+            "com.google.android.accessibility.selecttospeak.SelectToSpeakService";
+
+    /** 服务当前是否已连接（活信号：设置开关开着 ≠ 服务活着，MIUI 杀后台后设置仍是 on）。 */
+    public static volatile boolean sServiceConnected = false;
+
     /** 后台线程池：Room 数据库操作必须脱离主线程执行 */
     private static final ExecutorService DB_EXECUTOR = Executors.newSingleThreadExecutor();
 
@@ -137,6 +151,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
+        sServiceConnected = true;
         AccessibilityDiagnostics.serviceConnected(this.getApplicationContext());
         Log.d(TAG, "onServiceConnected: 无障碍服务已启动");
 
@@ -632,6 +647,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        sServiceConnected = false;
         mainHandler.removeCallbacks(heartbeatRunnable);
         AccessibilityDiagnostics.serviceDestroyed(this.getApplicationContext());
         // 停止前台保活服务（无障碍禁用时不再保活）

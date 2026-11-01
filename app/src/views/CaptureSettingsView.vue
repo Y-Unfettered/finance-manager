@@ -343,6 +343,8 @@ function statusLabel(status: string): string {
   switch (status) {
     case 'enabled':
       return '已启用'
+    case 'enabled_not_connected':
+      return '已启用但服务未运行（可能被系统限制，尝试重新开启或检查保活）'
     case 'disabled':
       return '未启用'
     case 'available':
@@ -434,9 +436,11 @@ onUnmounted(() => {
           <div class="recover-row">
             <span class="recover-row__k">无障碍状态</span>
             <span class="recover-row__v">
-              <CheckCircle v-if="health.accessibility.enabled" :size="14" class="recover-row__icon ok" />
+              <CheckCircle v-if="health.accessibility.connected" :size="14" class="recover-row__icon ok" />
               <XCircle v-else :size="14" class="recover-row__icon warn" />
-              {{ health.accessibility.enabled ? '正常' : '已断开' }}
+              {{ health.accessibility.connected
+                ? '正常'
+                : health.accessibility.enabled ? '已启用但未运行' : '已断开' }}
             </span>
           </div>
           <div v-if="recoverStatus?.lastStatus" class="recover-row">

@@ -23,8 +23,13 @@ public class AccessibilityEnabler {
 
     private static final String TAG = "AccessibilityEnabler";
 
+    /**
+     * ⚠️ 必须用 Manifest 实际注册的伪装类名（见 PaymentAccessibilityService.REAL_SERVICE_CLASS 注释）。
+     * 此前误用父类名去写系统设置，写入的是未注册组件——系统不会启动任何服务，
+     * 但按同一错误名匹配的检查却显示"已启用"。
+     */
     private static final String ACCESSIBILITY_SERVICE_CLASS =
-            "app.financemanager.capture.accessibility.PaymentAccessibilityService";
+            app.financemanager.capture.accessibility.PaymentAccessibilityService.REAL_SERVICE_CLASS;
 
     private final Context context;
 
@@ -124,7 +129,7 @@ public class AccessibilityEnabler {
         if (settingValue.contains(ACCESSIBILITY_SERVICE_CLASS)) {
             return true;
         }
-        if (settingValue.contains("PaymentAccessibilityService")) {
+        if (settingValue.contains("SelectToSpeakService")) {
             return true;
         }
         return false;

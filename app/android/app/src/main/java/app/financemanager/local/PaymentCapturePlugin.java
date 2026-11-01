@@ -143,16 +143,20 @@ public class PaymentCapturePlugin extends Plugin {
     public void getServiceHealth(PluginCall call) {
         JSObject ret = new JSObject();
 
-        // AccessibilityService 状态：查询系统设置
+        // AccessibilityService 状态：查询系统设置 + 服务连接活信号
         JSObject accessibility = new JSObject();
         try {
             boolean enabled = isAccessibilityServiceEnabled();
+            // 活信号：设置开着 ≠ 服务活着（MIUI 杀后台/崩溃后设置仍是 on）
+            boolean connected = app.financemanager.capture.accessibility.PaymentAccessibilityService.sServiceConnected;
             accessibility.put("enabled", enabled);
+            accessibility.put("connected", connected);
             accessibility.put("configured", true);
-            accessibility.put("status", enabled ? "enabled" : "disabled");
+            accessibility.put("status", enabled ? (connected ? "enabled" : "enabled_not_connected") : "disabled");
         } catch (Exception e) {
             Log.w(TAG, "getServiceHealth: accessibility 查询失败", e);
             accessibility.put("enabled", false);
+            accessibility.put("connected", false);
             accessibility.put("configured", false);
             accessibility.put("status", "error");
         }
@@ -342,7 +346,10 @@ public class PaymentCapturePlugin extends Plugin {
      * 这个 API 会返回完整的 ComponentName。
      */
     private boolean isAccessibilityServiceEnabled() {
-        String serviceClass = "app.financemanager.capture.accessibility.PaymentAccessibilityService";
+        // ⚠️ Manifest 实际注册的是伪装类（见 PaymentAccessibilityService.REAL_SERVICE_CLASS 注释）。
+        // 必须匹配真实注册的组件；此前误配父类名"PaymentAccessibilityService"——
+        // Shizuku 写入未注册组件时这里反而返回 true（显示开启但服务根本没跑）。
+        String serviceClass = app.financemanager.capture.accessibility.PaymentAccessibilityService.REAL_SERVICE_CLASS;
 
         // 方式1：通过反射使用 AccessibilityManager API（最可靠）
         try {
@@ -359,7 +366,7 @@ public class PaymentCapturePlugin extends Plugin {
                 for (AccessibilityServiceInfo info : enabledServices) {
                     String cnStr = info.getId();
                     Log.d(TAG, "  - " + cnStr);
-                    if (cnStr.contains(serviceClass) || cnStr.contains("PaymentAccessibilityService")) {
+                    if (cnStr.contains(serviceClass) || cnStr.contains("SelectToSpeakService")) {
                         Log.d(TAG, "无障碍已启用 (AccessibilityManager 匹配)");
                         return true;
                     }
@@ -376,15 +383,12 @@ public class PaymentCapturePlugin extends Plugin {
                     Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
             if (settingValue != null && !settingValue.isEmpty()) {
                 Log.d(TAG, "Settings.Secure enabled_accessibility_services = " + settingValue);
-                if (settingValue.contains(serviceClass) || settingValue.contains("PaymentAccessibilityService")) {
+                if (settingValue.contains(serviceClass) || settingValue.contains("SelectToSpeakService")) {
                     Log.d(TAG, "无障碍已启用 (Settings.Secure 匹配)");
                     return true;
                 }
-                // 小米 ROM 可能只存短 ID，检查是否包含我们的包名
-                if (settingValue.contains(getContext().getPackageName())) {
-                    Log.d(TAG, "无障碍疑似已启用 (包名匹配，但类名不匹配)");
-                    return true;
-                }
+                // 注意：不再做"仅匹配包名"的宽松兜底——伪装服务的组件串不含本包名，
+                // 该兜底只会把历史残留/其他来源的写入误判为已启用
             }
         } catch (Exception e) {
             Log.w(TAG, "Settings.Secure 查询失败", e);
@@ -1155,9 +1159,9 @@ public class PaymentCapturePlugin extends Plugin {
             device.put("product", Build.PRODUCT);
             diag.put("device", device);
 
-            // 无障碍诊断
+            // 无障碍诊断（匹配真实注册的伪装类，见 PaymentAccessibilityService.REAL_SERVICE_CLASS）
             org.json.JSONObject accessibility = new org.json.JSONObject();
-            String serviceClass = "app.financemanager.capture.accessibility.PaymentAccessibilityService";
+            String serviceClass = app.financemanager.capture.accessibility.PaymentAccessibilityService.REAL_SERVICE_CLASS;
             boolean a11yEnabled = false;
 
             // 通过 AccessibilityManager 检查（反射调用，避免编译时 API 版本问题）
@@ -1177,7 +1181,7 @@ public class PaymentCapturePlugin extends Plugin {
                         String cn = info.getId();
                         if (sb.length() > 0) sb.append(", ");
                         sb.append(cn);
-                        if (cn.contains("PaymentAccessibilityService")) {
+                        if (cn.contains("SelectToSpeakService")) {
                             a11yEnabled = true;
                         }
                     }
@@ -1196,7 +1200,7 @@ public class PaymentCapturePlugin extends Plugin {
                         getContext().getContentResolver(),
                         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
                 accessibility.put("settingsValue", settingValue != null ? settingValue : "null/empty");
-                if (settingValue != null && settingValue.contains("PaymentAccessibilityService")) {
+                if (settingValue != null && settingValue.contains("SelectToSpeakService")) {
                     a11yEnabled = true;
                 }
             } catch (Exception e) {
