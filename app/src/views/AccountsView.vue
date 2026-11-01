@@ -110,6 +110,115 @@ function getSectionAccounts(section: AssetSectionSummary) {
       (showArchivedAccounts.value || !account.archivedAt),
   )
 }
+
+// ==================== 账户长按拖拽排序 ====================
+const dragSectionId = ref<AssetSectionId | null>(null)
+const dragAccountId = ref<string | null>(null)
+const dragIndex = ref(-1)
+let dragTimer: ReturnType<typeof setTimeout> | undefined
+let dragActive = false
+let justDragged = false
+let dragStartPoint: { x: number; y: number } | null = null
+
+function onAccountRowTouchStart(
+  account: AssetAccountRecord,
+  section: AssetSectionSummary,
+  event: TouchEvent,
+): void {
+  if (event.touches.length !== 1) return
+  const touch = event.touches[0]
+  if (!touch) return
+  dragStartPoint = { x: touch.clientX, y: touch.clientY }
+  clearTimeout(dragTimer)
+  dragTimer = setTimeout(() => {
+    dragActive = true
+    justDragged = true
+    dragSectionId.value = section.id
+    dragAccountId.value = account.id
+    dragIndex.value = getSectionAccounts(section).findIndex((item) => item.id === account.id)
+    if (typeof navigator !== 'undefined' && navigator.vibrate) navigator.vibrate(15)
+  }, 400)
+}
+
+function onAccountRowTouchMove(event: TouchEvent): void {
+  if (!dragActive || !dragSectionId.value) {
+    // 长按尚未触发：轻微移动即取消长按计时
+    if (dragStartPoint && event.touches.length === 1) {
+      const touch = event.touches[0]
+      if (touch && Math.hypot(touch.clientX - dragStartPoint.x, touch.clientY - dragStartPoint.y) > 12) {
+        clearTimeout(dragTimer)
+      }
+    }
+    return
+  }
+  event.preventDefault()
+  const touch = event.touches[0]
+  if (!touch) return
+  const body = (event.target as HTMLElement | null)?.closest?.('.section-card__body') as
+    | HTMLElement
+    | null
+  if (!body) return
+  const rows = Array.from(body.querySelectorAll<HTMLElement>('[data-drag-row]'))
+  if (rows.length === 0) return
+  const section = overview.value.sections.find((item) => item.id === dragSectionId.value)
+  if (!section) return
+  let toIndex = rows.length - 1
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i]
+    if (!row) continue
+    const rect = row.getBoundingClientRect()
+    if (touch.clientY < rect.top + rect.height / 2) {
+      toIndex = i
+      break
+    }
+  }
+  const fromIndex = dragIndex.value
+  if (toIndex === fromIndex || toIndex < 0) return
+  const list = getSectionAccounts(section)
+  const next = [...list]
+  const moved = next.splice(fromIndex, 1)[0]
+  if (moved === undefined) return
+  next.splice(toIndex, 0, moved)
+  dragIndex.value = toIndex
+  applySectionOrder(next)
+}
+
+function onAccountRowTouchEnd(section: AssetSectionSummary): void {
+  clearTimeout(dragTimer)
+  if (!dragActive) return
+  dragActive = false
+  const sectionId = dragSectionId.value ?? section.id
+  const fresh = overview.value.sections.find((item) => item.id === sectionId)
+  if (fresh && finance && appStore.ledgerId) {
+    const orderedIds = getSectionAccounts(fresh).map((account) => account.id)
+    finance.reorderAccounts(appStore.ledgerId, orderedIds).catch((error) => {
+      console.error('账户排序保存失败', error)
+    })
+  }
+  dragSectionId.value = null
+  dragAccountId.value = null
+  dragIndex.value = -1
+  setTimeout(() => {
+    justDragged = false
+  }, 600)
+}
+
+/** 将某个分组的账户按 newOrder 顺序写回 accounts（其余分组保持原位）。 */
+function applySectionOrder(newOrder: AssetAccountRecord[]): void {
+  const idSet = new Set(newOrder.map((account) => account.id))
+  const next = accounts.value.map((account) => account)
+  let pointer = 0
+  for (let i = 0; i < next.length; i += 1) {
+    const current = next[i]
+    if (current && idSet.has(current.id)) {
+      const item = newOrder[pointer]
+      if (item === undefined) break
+      next[i] = item
+      pointer += 1
+    }
+  }
+  accounts.value = next
+}
 const liabilityRatioLabel = computed(() => `${(overview.value.liabilityRatio * 100).toFixed(2)}%`)
 const pendingIsLiability = computed(() =>
   pendingItem.value ? isLiabilityAccountType(pendingItem.value.type) : false,
@@ -289,6 +398,7 @@ function toggleSection(section: AssetSectionSummary): void {
 }
 
 function openAccount(account: AccountBalanceRecord): void {
+  if (justDragged) return
   void router.push({ name: 'account-detail', params: { accountId: account.id } })
 }
 
@@ -528,9 +638,18 @@ onUnmounted(() => {
               v-for="account in getSectionAccounts(section)"
               :key="account.id"
               class="section-card__row"
-              :class="{ 'credit-account-row': section.id === 'credit' }"
+              :class="{
+                'credit-account-row': section.id === 'credit',
+                'section-card__row--dragging': dragAccountId === account.id,
+              }"
               type="button"
+              :data-drag-row="true"
+              :data-account-id="account.id"
               @click="openAccount(account)"
+              @touchstart.passive="onAccountRowTouchStart(account, section, $event)"
+              @touchmove="onAccountRowTouchMove($event)"
+              @touchend="onAccountRowTouchEnd(section)"
+              @touchcancel="onAccountRowTouchEnd(section)"
             >
               <template v-if="section.id === 'credit'">
                 <AccountBrandIcon
@@ -998,6 +1117,18 @@ onUnmounted(() => {
   border: 0;
   border-top: 1px solid var(--color-divider);
   border-radius: var(--radius-control);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: pan-y;
+}
+
+.section-card__row--dragging {
+  position: relative;
+  z-index: 10;
+  opacity: 0.92;
+  transform: scale(1.02);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
 }
 
 .section-card__row:active {

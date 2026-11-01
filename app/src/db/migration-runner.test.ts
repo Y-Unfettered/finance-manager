@@ -15,7 +15,7 @@ describe('database migrations', () => {
     const executor = new NodeSqliteExecutor()
 
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
     ])
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([])
 
@@ -67,6 +67,8 @@ describe('database migrations', () => {
       { version: 10 },
       { version: 11 },
       { version: 12 },
+      { version: 13 },
+      { version: 14 },
     ])
   })
 
@@ -75,11 +77,11 @@ describe('database migrations', () => {
     await runMigrations(executor, undefined, now)
     executor.database.exec(`
       INSERT INTO ledgers VALUES ('ledger', '日常账本', 'CNY', 1, '${now()}', '${now()}');
-      INSERT INTO accounts VALUES ('bank', 'ledger', '银行卡', 'bank', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}');
-      INSERT INTO accounts VALUES ('credit', 'ledger', '信用卡', 'credit_card', 'credit', 'CNY', NULL, NULL, '${now()}', '${now()}');
+      INSERT INTO accounts VALUES ('bank', 'ledger', '银行卡', 'bank', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}', 0);
+      INSERT INTO accounts VALUES ('credit', 'ledger', '信用卡', 'credit_card', 'credit', 'CNY', NULL, NULL, '${now()}', '${now()}', 0);
       INSERT INTO categories VALUES ('food', 'ledger', NULL, 'expense', '餐饮', 0, NULL, '${now()}', '${now()}');
-      INSERT INTO transactions VALUES ('cash-expense', 'ledger', 'expense', 'posted', 3155, 'CNY', '${now()}', NULL, NULL, NULL, NULL, NULL, NULL, '${now()}', '${now()}', NULL);
-      INSERT INTO transactions VALUES ('credit-expense', 'ledger', 'credit_purchase', 'posted', 16652, 'CNY', '${now()}', NULL, NULL, NULL, NULL, NULL, NULL, '${now()}', '${now()}', NULL);
+      INSERT INTO transactions VALUES ('cash-expense', 'ledger', 'expense', 'posted', 3155, 'CNY', '${now()}', NULL, NULL, NULL, NULL, NULL, NULL, '${now()}', '${now()}', NULL, NULL);
+      INSERT INTO transactions VALUES ('credit-expense', 'ledger', 'credit_purchase', 'posted', 16652, 'CNY', '${now()}', NULL, NULL, NULL, NULL, NULL, NULL, '${now()}', '${now()}', NULL, NULL);
       INSERT INTO entries VALUES ('e1', 'ledger', 'cash-expense', NULL, 'food', 'debit', 3155, '${now()}');
       INSERT INTO entries VALUES ('e2', 'ledger', 'cash-expense', 'bank', NULL, 'credit', 3155, '${now()}');
       INSERT INTO entries VALUES ('e3', 'ledger', 'credit-expense', NULL, 'food', 'debit', 16652, '${now()}');
@@ -114,7 +116,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '原有账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '原有账本' },
     ])
@@ -137,7 +139,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '升级账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '升级账本' },
     ])
@@ -157,7 +159,7 @@ describe('database migrations', () => {
 
     expect(() =>
       executor.database.exec(
-        `INSERT INTO accounts VALUES ('bad-credit', 'ledger', '错误信用卡', 'credit_card', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}');`,
+        `INSERT INTO accounts VALUES ('bad-credit', 'ledger', '错误信用卡', 'credit_card', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}', 0);`,
       ),
     ).toThrow()
   })
@@ -222,7 +224,7 @@ describe('database migrations', () => {
     )
 
     // 升级到 v5/v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9, 10, 11, 12])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14])
 
     // 旧数据保留
     const rows = await executor.query<{ id: string; source: string; record_count: number }>(
@@ -254,8 +256,8 @@ describe('database migrations', () => {
     await runMigrations(executor, undefined, now)
     executor.database.exec(`
       INSERT INTO ledgers VALUES ('ledger', '账本', 'CNY', 1, '${now()}', '${now()}');
-      INSERT INTO accounts VALUES ('bank', 'ledger', '银行卡', 'bank', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}');
-      INSERT INTO accounts VALUES ('credit', 'ledger', '信用卡', 'credit_card', 'credit', 'CNY', NULL, NULL, '${now()}', '${now()}');
+      INSERT INTO accounts VALUES ('bank', 'ledger', '银行卡', 'bank', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}', 0);
+      INSERT INTO accounts VALUES ('credit', 'ledger', '信用卡', 'credit_card', 'credit', 'CNY', NULL, NULL, '${now()}', '${now()}', 0);
       INSERT INTO categories VALUES ('food', 'ledger', NULL, 'expense', '餐饮', 0, NULL, '${now()}', '${now()}');
       INSERT INTO transactions (id, ledger_id, type, status, amount_minor, currency, occurred_at, created_at, updated_at)
         VALUES ('repay-tx', 'ledger', 'repay_borrowing', 'posted', 5000, 'CNY', '${now()}', '${now()}', '${now()}');
@@ -293,7 +295,7 @@ describe('database migrations', () => {
     `)
 
     // 升级到 v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9, 10, 11, 12])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14])
 
     // 旧数据保留
     const tx = await executor.query<{ id: string; type: string }>(
@@ -319,7 +321,7 @@ describe('database migrations', () => {
     await runMigrations(executor, undefined, now)
     executor.database.exec(`
       INSERT INTO ledgers VALUES ('ledger', '账本', 'CNY', 1, '${now()}', '${now()}');
-      INSERT INTO accounts VALUES ('bank', 'ledger', '银行卡', 'bank', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}');
+      INSERT INTO accounts VALUES ('bank', 'ledger', '银行卡', 'bank', 'debit', 'CNY', NULL, NULL, '${now()}', '${now()}', 0);
       INSERT INTO categories VALUES ('food', 'ledger', NULL, 'expense', '餐饮', 0, NULL, '${now()}', '${now()}');
     `)
 
@@ -422,7 +424,7 @@ describe('database migrations', () => {
     `)
 
     // 跑 v12：旧账户补齐 ID，新账户不变
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12, 13, 14])
 
     // 新账户保持原 ID
     const bankRow = await executor.query<{ id: string }>(
@@ -485,7 +487,7 @@ describe('database migrations', () => {
     `)
 
     // 跑 v12：已有 account_ 前缀的账户应该保持不变
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12, 13, 14])
     expect(await executor.query<{ id: string }>('SELECT id FROM accounts')).toEqual([
       { id: 'account_abc' },
     ])

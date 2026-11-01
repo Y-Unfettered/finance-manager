@@ -27,6 +27,12 @@ public class WechatAdapter implements PaymentParserAdapter {
     private static final Pattern MERCHANT_PATTERN = Pattern.compile("(?:商户|商家|收款方)[:：]\\s*(.+)");
     private static final Pattern ORDER_PATTERN = Pattern.compile("(?:商户单号|订单号|交易单号)[:：]\\s*(\\S+)");
 
+    /** 详情页结构词：页面含任一则这是账单详情页，本适配器让位（详情解析归 DetailPageParser）。 */
+    private static final String[] DETAIL_STRUCT_WORDS = {
+            "支付时间", "转账时间", "转账备注", "对方账户", "商户单号", "交易单号",
+            "转账单号", "收款方备注", "账单管理",
+    };
+
     @Override
     public String getPackageName() {
         return WhitelistPackages.WECHAT;
@@ -40,6 +46,13 @@ public class WechatAdapter implements PaymentParserAdapter {
         if (text == null || text.isEmpty()) {
             AccessibilityDiagnostics.textEmpty(getPackageName());
             return null;
+        }
+
+        // 详情页让位：页面含详情结构词时不兜底（详情解析归 DetailPageParser）
+        for (String w : DETAIL_STRUCT_WORDS) {
+            if (text.contains(w)) {
+                return null;
+            }
         }
 
         if (!SUCCESS_PATTERN.matcher(text).find()) {

@@ -55,7 +55,7 @@ public class AccessibilityEnabler {
         String componentName = getComponentName();
 
         try {
-            ShizukuShell shell = new ShizukuShell(context.getPackageName());
+            ShizukuShell shell = ShizukuShell.getInstance(context.getPackageName());
 
             // 获取当前已启用的无障碍服务列表
             String cmdGet = "settings get secure enabled_accessibility_services";

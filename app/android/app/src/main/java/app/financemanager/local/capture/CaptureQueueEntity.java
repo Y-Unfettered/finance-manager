@@ -62,6 +62,29 @@ public class CaptureQueueEntity {
     @Nullable
     public String defaultAccountId;
 
+    // 自动生成的备注（"为什么花"）
+    @Nullable
+    public String note;
+
+    // 方向判定：income/transfer/refund/expense/confirm
+    @Nullable
+    public String direction;
+
+    // 原价与优惠（有红包/优惠时与实付不同）
+    @Nullable
+    public Long originalAmountMinor;
+
+    @Nullable
+    public Long discountMinor;
+
+    // 手续费（如提现服务费）
+    @Nullable
+    public Long feeMinor;
+
+    // 转账转入方账户线索（transfer 用）
+    @Nullable
+    public String targetAccountHint;
+
     public long createdAt;
 
     public long getId() { return id; }
@@ -114,4 +137,19 @@ public class CaptureQueueEntity {
 
     @Nullable public String getDefaultAccountId() { return defaultAccountId; }
     public void setDefaultAccountId(@Nullable String v) { this.defaultAccountId = v; }
+
+    @Nullable public String getNote() { return note; }
+    public void setNote(@Nullable String v) { this.note = v; }
+
+    @Nullable public String getDirection() { return direction; }
+    public void setDirection(@Nullable String v) { this.direction = v; }
+
+    @Nullable public Long getOriginalAmountMinor() { return originalAmountMinor; }
+    public void setOriginalAmountMinor(@Nullable Long v) { this.originalAmountMinor = v; }
+    @Nullable public Long getDiscountMinor() { return discountMinor; }
+    public void setDiscountMinor(@Nullable Long v) { this.discountMinor = v; }
+    @Nullable public Long getFeeMinor() { return feeMinor; }
+    public void setFeeMinor(@Nullable Long v) { this.feeMinor = v; }
+    @Nullable public String getTargetAccountHint() { return targetAccountHint; }
+    public void setTargetAccountHint(@Nullable String v) { this.targetAccountHint = v; }
 }

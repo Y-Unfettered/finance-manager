@@ -214,6 +214,14 @@ export interface StoredTransaction {
   merchant?: string
   counterparty?: string
   note?: string
+  /** 捕获来源（如 "accessibility"），自动记账落库用 */
+  captureSource?: string
+  /** 解析器版本（如 "0.1.0"），自动记账落库用 */
+  parserVersion?: string
+  /** 置信度（0~1），自动记账落库用 */
+  confidence?: number
+  /** 捕获指纹（自动记账防重，随账单数据持久化） */
+  fingerprint?: string
   createdAt: string
   updatedAt: string
 }

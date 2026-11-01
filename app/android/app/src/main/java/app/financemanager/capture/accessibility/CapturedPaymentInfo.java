@@ -18,6 +18,12 @@ public class CapturedPaymentInfo {
     private boolean hasAmount;        // 是否解析到金额（必填字段）
     private String suggestedCategory; // 规则建议的分类 ID（格式 "kind:id"）
     private String defaultAccountId;  // 规则建议的默认账户 ID
+    private String note;              // 自动生成的备注（"为什么花"）
+    private String direction;         // 方向判定：income/transfer/refund/expense/confirm
+    private Long originalAmountMinor; // 原价（订单金额，有优惠时与实付不同）
+    private Long discountMinor;       // 优惠金额（原价 - 实付）
+    private Long feeMinor;            // 手续费（如提现服务费）
+    private String targetAccountHint; // 转账转入方账户线索（transfer 用）
 
     public CapturedPaymentInfo() {
         this.confidence = "high";
@@ -107,6 +113,23 @@ public class CapturedPaymentInfo {
     public String getDefaultAccountId() { return defaultAccountId; }
     public void setDefaultAccountId(String defaultAccountId) { this.defaultAccountId = defaultAccountId; }
 
+    // --- 备注/方向 ---
+
+    public String getNote() { return note; }
+    public void setNote(String note) { this.note = note; }
+
+    public String getDirection() { return direction; }
+    public void setDirection(String direction) { this.direction = direction; }
+
+    public Long getOriginalAmountMinor() { return originalAmountMinor; }
+    public void setOriginalAmountMinor(Long v) { this.originalAmountMinor = v; }
+    public Long getDiscountMinor() { return discountMinor; }
+    public void setDiscountMinor(Long v) { this.discountMinor = v; }
+    public Long getFeeMinor() { return feeMinor; }
+    public void setFeeMinor(Long v) { this.feeMinor = v; }
+    public String getTargetAccountHint() { return targetAccountHint; }
+    public void setTargetAccountHint(String v) { this.targetAccountHint = v; }
+
     @Override
     public String toString() {
         return "CapturedPaymentInfo{"
@@ -117,6 +140,8 @@ public class CapturedPaymentInfo {
                 + ", accountHint='" + accountHint + '\''
                 + ", suggestedCategory='" + suggestedCategory + '\''
                 + ", defaultAccountId='" + defaultAccountId + '\''
+                + ", note='" + note + '\''
+                + ", direction='" + direction + '\''
                 + '}';
     }
 }

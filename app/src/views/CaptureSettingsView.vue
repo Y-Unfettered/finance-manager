@@ -37,6 +37,8 @@ import {
   getAutoRecoverStatus,
   ensureShizukuRunning,
 } from '@/features/capture-inbox/capture-inbox-service'
+import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
+import { getDuplicateBlockEnabled, setDuplicateBlockEnabled } from '@/features/capture-inbox/capture-inbox-service'
 import type {
   ServiceHealth,
   AccessibilityDiagnosticsResult,
@@ -44,7 +46,6 @@ import type {
   AutoRecoverStatus,
   AutoRecoverResult,
 } from '@/features/payment-capture/payment-capture-reader'
-import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
 
 const overlayGranted = ref(false)
 
@@ -89,7 +90,34 @@ const showNotifRing = ref(false)
 const diagLoading = ref(false)
 let pollingTimer: number | null = null
 
+const duplicateBlockEnabled = ref(true)
+
+async function loadDuplicateBlock(): Promise<void> {
+  duplicateBlockEnabled.value = await getDuplicateBlockEnabled()
+}
+
+async function toggleDuplicateBlock(): Promise<void> {
+  const next = !duplicateBlockEnabled.value
+  duplicateBlockEnabled.value = next
+  try {
+    await setDuplicateBlockEnabled(next)
+  } catch {
+    duplicateBlockEnabled.value = !next
+  }
+}
+
+/** 重置捕获去重指纹（调试）：全部清空后，所有已捕获过的账单详情都允许重新捕获。 */
+async function doClearFingerprints(): Promise<void> {
+  try {
+    await PaymentCapture.clearCaptureFingerprints({ pendingOnly: false })
+  } catch (e) {
+    console.warn('[capture-settings] 清空指纹失败', e)
+  }
+}
+
 async function doResetDiag(): Promise<void> {
+  duplicateBlockEnabled.value = await getDuplicateBlockEnabled()
+
   try {
     await resetDiagnostics()
     await load()
@@ -778,6 +806,13 @@ onUnmounted(() => {
               <button class="diag-tools-btn" :disabled="diagLoading" @click="doResetDiag">
                 <RotateCcw :size="15" />
                 清空诊断计数
+              </button>
+              <button class="diag-tools-btn" @click="toggleDuplicateBlock">
+                {{ duplicateBlockEnabled ? '重复交易拦截：开' : '重复交易拦截：关' }}
+              </button>
+              <button class="diag-tools-btn" @click="doClearFingerprints">
+                <RotateCcw :size="15" />
+                重置去重指纹
               </button>
               <button class="diag-tools-btn diag-tools-btn--share" :disabled="diagLoading" @click="doShareDiag">
                 <span class="diag-tools-btn__label">分享诊断日志</span>

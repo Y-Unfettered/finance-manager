@@ -209,25 +209,59 @@ function normalizeCapturedOccurredAt(raw: string): string {
   return new Date().toISOString()
 }
 
+/**
+ * 待入账检查重入锁。
+ * checkPendingCaptureData 会被多处触发（onMounted 冷启动、databaseStatus 就绪 watch、
+ * appStateChange 回前台），彼此没有串行保证；若无锁，原生 getPendingCaptureData
+ * "先读后清"非原子，并发调用可能都读到同一条数据 → 各自 router.push('/transactions/new') 一次，
+ * 记账页被 push 两次。此后保存时 navigateBack 用 router.back() 只回退一层，落回另一个记账页
+ * （页面看似没关闭），再点一次保存才回到主页，并产生两条重复记录。
+ */
+let pendingCaptureCheckInFlight = false
+
 /** 检查是否有待入账的捕获数据，自动打开记账页面 */
 async function checkPendingCaptureData() {
+  if (pendingCaptureCheckInFlight) return
+  pendingCaptureCheckInFlight = true
   try {
     if (!Capacitor.isNativePlatform()) return
     const data = await PaymentCapture.getPendingCaptureData()
     if (!data?.amountMinor) return
+    // 已在记账页：吞掉本次数据（getPendingCaptureData 已读取即清除），不再重复跳转，
+    // 避免 /transactions/new 被重复 push 导致保存后 router.back() 落回记账页产生双记录。
+    if (route.name === 'new-expense') {
+      log.info('已在记账页，忽略重复的待入账捕获', { amount: data.amountMinor, merchant: data.merchant })
+      return
+    }
     const occurredAt = normalizeCapturedOccurredAt(data.occurredAt ?? '')
-    log.info('收到待入账捕获数据', { amount: data.amountMinor, merchant: data.merchant, occurredAt })
-    // 跳转到记账页面，带参数
+    log.info('收到待入账捕获数据', { amount: data.amountMinor, merchant: data.merchant, occurredAt, note: data.note, direction: data.direction })
+    // 跳转到记账页面，带参数（含备注与捕获元数据，供预填与落库）
     router.push({
       path: '/transactions/new',
       query: {
         amount: String(data.amountMinor),
         merchant: data.merchant ?? '',
+        captureId: data.id !== undefined ? String(data.id) : '',
         occurredAt,
+        note: data.note ?? '',
+        direction: data.direction ?? '',
+        accountHint: data.accountHint ?? '',
+        sourcePackage: data.sourcePackage ?? '',
+        fingerprint: data.fingerprint ?? '',
+        suggestedCategory: data.suggestedCategory ?? '',
+        originalAmount: data.originalAmountMinor ? String(data.originalAmountMinor) : '',
+        discount: data.discountMinor ? String(data.discountMinor) : '',
+        fee: data.feeMinor ? String(data.feeMinor) : '',
+        targetAccountHint: data.targetAccountHint ?? '',
+        captureSource: data.captureSource ?? '',
+        parserVersion: data.parserVersion ?? '',
+        confidence: data.confidence !== undefined ? String(data.confidence) : '',
       },
     })
   } catch (e) {
     log.error('checkPendingCaptureData 失败', { msg: e instanceof Error ? e.message : String(e) })
+  } finally {
+    pendingCaptureCheckInFlight = false
   }
 }
 
@@ -263,6 +297,26 @@ onMounted(async () => {
         }
       })
       log.info('App.vue: appStateChange 监听器注册完成')
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      log.error('App.vue: appStateChange 监听器注册失败', { msg })
+    }
+
+    try {
+      // 全局返回键（右滑返回手势）：路由栈可后退时执行 router.back()，
+      // 冷启动直跳记账页（无上一页）时回首页；首页保持系统默认。
+      const { App: AppPlugin } = await import('@capacitor/app')
+      await AppPlugin.addListener('backButton', ({ canGoBack }) => {
+        if (canGoBack && window.history.state?.back != null) {
+          router.back()
+          return
+        }
+        if (route.path !== '/') {
+          void router.replace({ name: 'home' })
+        }
+        // 首页：不处理，保持系统默认行为
+      })
+      log.info('App.vue: backButton 监听器注册完成')
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       log.error('App.vue: appStateChange 监听器注册失败', { msg })

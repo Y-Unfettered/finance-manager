@@ -508,7 +508,12 @@ public class PaymentCapturePlugin extends Plugin {
         try {
             long id = (idVal instanceof Number) ? ((Number) idVal).longValue() : Long.parseLong((String) idVal);
             CaptureQueueDao dao = getDao();
+            // 先取事件拿指纹，删除事件时连带删指纹（允许用户之后重新捕获该笔，PRD §8.4）
+            CaptureQueueEntity entity = dao.getById(id);
             dao.delete(id);
+            if (entity != null && entity.getRawFingerprint() != null && !entity.getRawFingerprint().isEmpty()) {
+                dao.deleteFingerprint(entity.getRawFingerprint());
+            }
         } catch (NumberFormatException e) {
             call.reject("无效 id: " + idVal);
             return;
@@ -874,6 +879,12 @@ public class PaymentCapturePlugin extends Plugin {
         obj.put("createdAt", e.getCreatedAt());
         obj.put("suggestedCategory", e.getSuggestedCategory() != null ? e.getSuggestedCategory() : "");
         obj.put("defaultAccountId", e.getDefaultAccountId() != null ? e.getDefaultAccountId() : "");
+        obj.put("note", e.getNote() != null ? e.getNote() : "");
+        obj.put("direction", e.getDirection() != null ? e.getDirection() : "");
+        obj.put("originalAmountMinor", e.getOriginalAmountMinor());
+        obj.put("discountMinor", e.getDiscountMinor());
+        obj.put("feeMinor", e.getFeeMinor());
+        obj.put("targetAccountHint", e.getTargetAccountHint() != null ? e.getTargetAccountHint() : "");
         return obj;
     }
 
@@ -969,10 +980,41 @@ public class PaymentCapturePlugin extends Plugin {
                     | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
             intent.putExtra("pendingCaptureAmountMinor",
                     entity.getAmountMinor() != null ? entity.getAmountMinor() : 0L);
+            intent.putExtra("pendingCaptureId", entity.getId());
             intent.putExtra("pendingCaptureMerchant",
                     entity.getMerchant() != null ? entity.getMerchant() : "");
             intent.putExtra("pendingCaptureOccurredAt",
                     entity.getOccurredAt() != null ? entity.getOccurredAt() : "");
+            // P1：备注 + 方向 + 捕获元数据（供前端预填备注、切换收支模式、匹配账户、落库 capture_source 等）
+            intent.putExtra("pendingCaptureNote",
+                    entity.getNote() != null ? entity.getNote() : "");
+            intent.putExtra("pendingCaptureDirection",
+                    entity.getDirection() != null ? entity.getDirection() : "");
+            intent.putExtra("pendingCaptureAccountHint",
+                    entity.getAccountHint() != null ? entity.getAccountHint() : "");
+            intent.putExtra("pendingCaptureSourcePackage",
+                    entity.getSourcePackage() != null ? entity.getSourcePackage() : "");
+            intent.putExtra("pendingCaptureFingerprint",
+                    entity.getRawFingerprint() != null ? entity.getRawFingerprint() : "");
+            intent.putExtra("pendingCaptureSuggestedCategory",
+                    entity.getSuggestedCategory() != null ? entity.getSuggestedCategory() : "");
+            if (entity.getOriginalAmountMinor() != null) {
+                intent.putExtra("pendingCaptureOriginalAmount", entity.getOriginalAmountMinor().longValue());
+            }
+            if (entity.getDiscountMinor() != null) {
+                intent.putExtra("pendingCaptureDiscount", entity.getDiscountMinor().longValue());
+            }
+            if (entity.getFeeMinor() != null) {
+                intent.putExtra("pendingCaptureFee", entity.getFeeMinor().longValue());
+            }
+            intent.putExtra("pendingCaptureTargetAccount",
+                    entity.getTargetAccountHint() != null ? entity.getTargetAccountHint() : "");
+            intent.putExtra("pendingCaptureSource",
+                    entity.getCaptureMethod() != null ? entity.getCaptureMethod() : "accessibility");
+            intent.putExtra("pendingCaptureParserVersion",
+                    entity.getParserVersion() != null ? entity.getParserVersion() : "");
+            intent.putExtra("pendingCaptureConfidence",
+                    (double) entity.getConfidence());
             context.startActivity(intent);
         } catch (Exception ex) {
             Log.w(TAG, "拉起记账页面失败", ex);
@@ -1008,23 +1050,134 @@ public class PaymentCapturePlugin extends Plugin {
     }
 
     @PluginMethod
-    public void getPendingCaptureData(PluginCall call) {
+    public synchronized void getPendingCaptureData(PluginCall call) {
         android.content.Intent intent = getActivity() != null ? getActivity().getIntent() : null;
         JSObject ret = new JSObject();
         if (intent != null) {
             long amount = intent.getLongExtra("pendingCaptureAmountMinor", 0);
             if (amount > 0) {
                 ret.put("amountMinor", amount);
+                ret.put("id", intent.getLongExtra("pendingCaptureId", -1));
                 ret.put("merchant", intent.getStringExtra("pendingCaptureMerchant") != null ? intent.getStringExtra("pendingCaptureMerchant") : "");
                 ret.put("occurredAt", intent.getStringExtra("pendingCaptureOccurredAt") != null ? intent.getStringExtra("pendingCaptureOccurredAt") : "");
+                // P1：备注 + 方向 + 账户线索 + 捕获元数据
+                ret.put("note", intent.getStringExtra("pendingCaptureNote") != null ? intent.getStringExtra("pendingCaptureNote") : "");
+                ret.put("direction", intent.getStringExtra("pendingCaptureDirection") != null ? intent.getStringExtra("pendingCaptureDirection") : "");
+                ret.put("accountHint", intent.getStringExtra("pendingCaptureAccountHint") != null ? intent.getStringExtra("pendingCaptureAccountHint") : "");
+                ret.put("sourcePackage", intent.getStringExtra("pendingCaptureSourcePackage") != null ? intent.getStringExtra("pendingCaptureSourcePackage") : "");
+                ret.put("fingerprint", intent.getStringExtra("pendingCaptureFingerprint") != null ? intent.getStringExtra("pendingCaptureFingerprint") : "");
+                ret.put("suggestedCategory", intent.getStringExtra("pendingCaptureSuggestedCategory") != null ? intent.getStringExtra("pendingCaptureSuggestedCategory") : "");
+                ret.put("originalAmountMinor", intent.getLongExtra("pendingCaptureOriginalAmount", 0));
+                ret.put("discountMinor", intent.getLongExtra("pendingCaptureDiscount", 0));
+                ret.put("feeMinor", intent.getLongExtra("pendingCaptureFee", 0));
+                ret.put("targetAccountHint", intent.getStringExtra("pendingCaptureTargetAccount") != null ? intent.getStringExtra("pendingCaptureTargetAccount") : "");
+                ret.put("captureSource", intent.getStringExtra("pendingCaptureSource") != null ? intent.getStringExtra("pendingCaptureSource") : "accessibility");
+                ret.put("parserVersion", intent.getStringExtra("pendingCaptureParserVersion") != null ? intent.getStringExtra("pendingCaptureParserVersion") : "");
+                ret.put("confidence", intent.getDoubleExtra("pendingCaptureConfidence", 0.0));
                 // 读出来就清掉
                 intent.removeExtra("pendingCaptureAmountMinor");
+                intent.removeExtra("pendingCaptureId");
                 intent.removeExtra("pendingCaptureMerchant");
                 intent.removeExtra("pendingCaptureOccurredAt");
+                intent.removeExtra("pendingCaptureNote");
+                intent.removeExtra("pendingCaptureDirection");
+                intent.removeExtra("pendingCaptureAccountHint");
+                intent.removeExtra("pendingCaptureSourcePackage");
+                intent.removeExtra("pendingCaptureFingerprint");
+                intent.removeExtra("pendingCaptureSuggestedCategory");
+                intent.removeExtra("pendingCaptureOriginalAmount");
+                intent.removeExtra("pendingCaptureDiscount");
+                intent.removeExtra("pendingCaptureFee");
+                intent.removeExtra("pendingCaptureTargetAccount");
+                intent.removeExtra("pendingCaptureSource");
+                intent.removeExtra("pendingCaptureParserVersion");
+                intent.removeExtra("pendingCaptureConfidence");
             }
         }
         Log.d(TAG, "getPendingCaptureData: amount=" + ret.optLong("amountMinor", 0));
         call.resolve(ret);
+    }
+
+    /**
+     * 重复交易拦截开关（设置页控制）：开启后捕获命中已存交易（金额+商户+时间一致）时
+     * 不再跳转记账页。默认开启。
+     */
+    @PluginMethod
+    public void setDuplicateBlockEnabled(PluginCall call) {
+        Boolean enabled = call.getBoolean("enabled", true);
+        android.content.SharedPreferences prefs = getContext()
+                .getSharedPreferences("capture_prefs", android.content.Context.MODE_PRIVATE);
+        prefs.edit().putBoolean("duplicate_block_enabled", enabled != null && enabled).apply();
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getDuplicateBlockEnabled(PluginCall call) {
+        android.content.SharedPreferences prefs = getContext()
+                .getSharedPreferences("capture_prefs", android.content.Context.MODE_PRIVATE);
+        JSObject ret = new JSObject();
+        ret.put("enabled", prefs.getBoolean("duplicate_block_enabled", true));
+        call.resolve(ret);
+    }
+
+    /**
+     * 清空捕获指纹（调试/测试用）。
+     * pendingOnly=true 时仅清 pending（"全部忽略"后允许重捕），confirmed（已入账）保留；
+     * 否则全部清空——所有已捕获过的账单详情都允许重新捕获。
+     */
+    @PluginMethod
+    public void clearCaptureFingerprints(PluginCall call) {
+        boolean pendingOnly = call.getBoolean("pendingOnly", false);
+        try {
+            CaptureQueueDao dao = CaptureQueueDatabase.getInstance(getContext()).captureQueueDao();
+            java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+            executor.execute(() -> {
+                try {
+                    if (pendingOnly) dao.clearPendingFingerprints();
+                    else dao.clearAllFingerprints();
+                    Log.d(TAG, "指纹已清空 pendingOnly=" + pendingOnly);
+                } catch (Exception e) {
+                    Log.w(TAG, "清空指纹失败", e);
+                } finally {
+                    executor.shutdown();
+                }
+            });
+        } catch (Exception e) {
+            Log.w(TAG, "clearCaptureFingerprints 异常", e);
+        }
+        call.resolve();
+    }
+
+    /**
+     * 前端确认入账成功后回调：把该笔捕获指纹置为 confirmed（永久拦截重复捕获，PRD §8.4）。
+     * 用户放弃（未保存）则不调用——pending 指纹 30 分钟后自动过期，允许重新捕获。
+     */
+    @PluginMethod
+    public void markCaptureConfirmed(PluginCall call) {
+        String fingerprint = call.getString("fingerprint", "");
+        if (fingerprint == null || fingerprint.isEmpty()) {
+            call.resolve();
+            return;
+        }
+        try {
+            CaptureQueueDao dao = CaptureQueueDatabase
+                    .getInstance(getContext())
+                    .captureQueueDao();
+            java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newSingleThreadExecutor();
+            executor.execute(() -> {
+                try {
+                    dao.updateFingerprintStatus(fingerprint, "confirmed");
+                    Log.d(TAG, "指纹已置 confirmed: " + fingerprint);
+                } catch (Exception e) {
+                    Log.w(TAG, "置 confirmed 失败: " + fingerprint, e);
+                } finally {
+                    executor.shutdown();
+                }
+            });
+        } catch (Exception e) {
+            Log.w(TAG, "markCaptureConfirmed 异常", e);
+        }
+        call.resolve();
     }
 
     @PluginMethod

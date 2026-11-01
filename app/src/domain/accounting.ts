@@ -39,6 +39,14 @@ export interface TransactionDraft {
   merchant?: string
   counterparty?: string
   note?: string
+  /** 捕获来源（如 "accessibility"），自动记账落库用 */
+  captureSource?: string
+  /** 解析器版本（如 "0.1.0"），自动记账落库用 */
+  parserVersion?: string
+  /** 置信度（0~1），自动记账落库用 */
+  confidence?: number
+  /** 捕获指纹（自动记账防重：随账单数据持久化） */
+  fingerprint?: string
   entries: readonly EntryDraft[]
 }
 
@@ -48,6 +56,11 @@ interface BaseCommand {
   merchant?: string
   counterparty?: string
   note?: string
+  captureSource?: string
+  parserVersion?: string
+  confidence?: number
+  /** 捕获指纹（自动记账防重：随账单数据持久化） */
+  fingerprint?: string
 }
 
 export interface ExpenseCommand extends BaseCommand {
@@ -66,6 +79,9 @@ export interface TransferCommand extends BaseCommand {
   originalAmountMinor?: number
   discountMinor?: number
   discountIncomeCategory?: CategoryPostingRef
+  /** 手续费（如微信提现服务费）：转出 amountMinor 中被扣掉的部分，记入费用分类 */
+  feeMinor?: number
+  feeCategory?: CategoryPostingRef
 }
 
 export interface CreditPurchaseCommand extends BaseCommand {
@@ -145,6 +161,29 @@ export function createTransfer(command: TransferCommand): TransactionDraft {
   const discountIncomeCategory = command.discountIncomeCategory
   const originalAmountMinor = command.originalAmountMinor
   const discountMinor = command.discountMinor
+
+  // 手续费分支（如微信提现服务费）：转出申请额 = 实到 + 手续费
+  // 分录：转入 debit 实到、转出 credit 申请额、手续费分类 debit 手续费
+  const feeMinor = command.feeMinor
+  const feeCategory = command.feeCategory
+  if (feeMinor !== undefined && feeMinor > 0) {
+    if (feeCategory === undefined) {
+      throw new Error('手续费需要费用分类')
+    }
+    assertCategory(feeCategory, 'expense')
+    assertId(feeCategory.id, 'feeCategory')
+    if (originalAmountMinor === undefined) {
+      throw new Error('手续费需要转出申请金额')
+    }
+    if (originalAmountMinor - feeMinor !== command.amountMinor) {
+      throw new Error('手续费金额与实际到账不一致')
+    }
+    return createDraft('transfer', command, [
+      accountEntry(command.targetAccount.id, 'debit', command.amountMinor),
+      accountEntry(command.sourceAccount.id, 'credit', originalAmountMinor),
+      categoryEntry(feeCategory.id, 'debit', feeMinor),
+    ])
+  }
 
   if (
     discountIncomeCategory !== undefined &&
@@ -343,6 +382,10 @@ function createDraft(
     merchant: normalizeOptionalText(command.merchant),
     counterparty: normalizeOptionalText(command.counterparty),
     note: normalizeOptionalText(command.note),
+    captureSource: normalizeOptionalText(command.captureSource),
+    parserVersion: normalizeOptionalText(command.parserVersion),
+    confidence: command.confidence,
+    fingerprint: normalizeOptionalText(command.fingerprint),
     entries,
   }
 }

@@ -43,6 +43,10 @@ const bulkDeleting = ref(false)
 const bulkEditing = ref(false)
 const bulkEditDate = ref('')
 const bulkEditNote = ref('')
+const showArchiveConfirm = ref(false)
+const showDeleteAccountVerify = ref(false)
+const deleteAccountVerifyExpected = ref('')
+const deletingAccount = ref(false)
 const accountPage = ref<HTMLElement>()
 const bottomActionsVisible = ref(true)
 const form = ref({
@@ -374,14 +378,51 @@ async function toggleArchive() {
   try {
     if (account.value.archivedAt) {
       await finance.unarchiveAccount(account.value.ledgerId, account.value.id)
+      showMore.value = false
+      await load()
     } else {
-      if (!confirm('归档后记账时不再显示该账户，历史流水仍会保留。确认归档？')) return
-      await finance.archiveAccount(account.value.ledgerId, account.value.id)
+      // 自定义确认弹窗（替代安卓原生 confirm，保持 UI 一致）
+      showArchiveConfirm.value = true
     }
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function confirmArchive(): Promise<void> {
+  if (!finance || !account.value) return
+  error.value = ''
+  try {
+    await finance.archiveAccount(account.value.ledgerId, account.value.id)
+    showArchiveConfirm.value = false
     showMore.value = false
     await load()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+/** 删除账户：彻底删除（区别于归档）。仅当账户只有期初余额/已作废交易时允许。 */
+function startDeleteAccount(): void {
+  if (!finance || !account.value) return
+  error.value = ''
+  deleteAccountVerifyExpected.value = String(Math.floor(1000 + Math.random() * 9000))
+  showDeleteAccountVerify.value = true
+}
+
+async function confirmDeleteAccount(): Promise<void> {
+  if (!finance || !account.value || deletingAccount.value) return
+  deletingAccount.value = true
+  error.value = ''
+  try {
+    await finance.deleteAccount(account.value.ledgerId, account.value.id)
+    showDeleteAccountVerify.value = false
+    showMore.value = false
+    router.back()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    deletingAccount.value = false
   }
 }
 function updateBottomActionsVisibility(): void {
@@ -566,8 +607,14 @@ onUnmounted(() => {
           核对并调整{{ liability ? '欠款' : '余额' }}</button
         ><button type="button" @click="toggleArchive">
           {{ account.archivedAt ? '恢复使用' : '归档账户' }}
+        </button
+        ><button type="button" class="danger-action" @click="startDeleteAccount">
+          删除账户
         </button>
-        <p>账户存在余额或欠款时不能归档；有历史流水的账户不会被直接删除。</p>
+        <p>
+          归档：不再显示但保留历史流水；余额或欠款非零时不能归档。
+          删除：连同期初余额调整一并清除，仅限没有记账流水的账户。
+        </p>
       </div></AppBottomSheet
     ><AppBottomSheet v-model:show="showAdjust" :title="liability ? '调整当前欠款' : '调整当前余额'"
       ><form class="editor" @submit.prevent="adjust">
@@ -624,6 +671,34 @@ onUnmounted(() => {
       @update:show="closeDeleteVerify"
       @confirm="deleteSelection"
     />
+    <!-- 归档确认（自定义弹窗，替代安卓原生 confirm） -->
+    <AppBottomSheet v-model:show="showArchiveConfirm" title="归档账户">
+      <div class="confirm-body">
+        <p class="confirm-text">
+          归档后记账时不再显示该账户，历史流水仍会保留。确认归档「{{ account?.name }}」吗？
+        </p>
+        <p v-if="error" class="error">{{ error }}</p>
+        <div class="confirm-actions">
+          <button type="button" @click="showArchiveConfirm = false">取消</button>
+          <button
+            type="button"
+            class="primary"
+            :disabled="saving"
+            @click="confirmArchive"
+          >
+            {{ saving ? '归档中…' : '确认归档' }}
+          </button>
+        </div>
+      </div>
+    </AppBottomSheet>
+    <DeleteVerifyPopup
+      :show="showDeleteAccountVerify"
+      :expected-number="deleteAccountVerifyExpected"
+      count-label="确定删除该账户吗？期初余额调整等关联记录会一并清除，删除后不可恢复。"
+      :deleting="deletingAccount"
+      @update:show="showDeleteAccountVerify = $event"
+      @confirm="confirmDeleteAccount"
+    />
     <AppBottomSheet v-model:show="showBulkEdit" title="批量修改">
       <form class="bulk-edit" @submit.prevent="applyBulkEdit">
         <p>只会修改已填写的字段，留空的内容保持原样。</p>
@@ -649,6 +724,40 @@ onUnmounted(() => {
   min-height: 100dvh;
   padding-bottom: calc(78px + env(safe-area-inset-bottom));
   background: var(--color-background);
+}
+/* 删除账户入口（危险操作，区别于普通菜单项） */
+.danger-action {
+  color: var(--color-danger, #dc2626);
+}
+/* 归档确认弹窗内容 */
+.confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-2) 0 var(--space-4);
+}
+.confirm-text {
+  color: var(--color-text);
+  line-height: 1.6;
+}
+.confirm-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+.confirm-actions button {
+  flex: 1;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--type-body-size);
+}
+.confirm-actions .primary {
+  background: var(--color-primary-500);
+  border-color: var(--color-primary-500);
+  color: #fff;
+  font-weight: 600;
 }
 .safe-top {
   position: sticky;

@@ -33,7 +33,9 @@ public class GenericPaymentAdapter implements PaymentParserAdapter {
             AccessibilityDiagnostics.textEmpty(packageName);
             return null;
         }
-        if (!text.contains("成功") && !text.contains("支付") && !text.contains("付款")) {
+        // 只认完整成功词（"成功/支付/付款"单字会把首页"付款码"、活动页"立减XX元"全误判）
+        if (!text.contains("支付成功") && !text.contains("付款成功")
+                && !text.contains("转账成功") && !text.contains("交易成功")) {
             AccessibilityDiagnostics.noKeyword(packageName,
                     text.substring(0, Math.min(text.length(), 80)));
             return null;

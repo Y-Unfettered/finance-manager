@@ -900,3 +900,88 @@ describe('FinanceService', () => {
     await expect(service.voidTransaction(ledger.id, expenseId)).rejects.toThrow('交易已撤销')
   })
 })
+
+describe('FinanceService.deleteAccount', () => {
+  it('deletes an account with only opening-balance adjustments and removes them from the ledger', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+
+    const gas = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'cash',
+      name: '燃气费账户',
+      initialBalanceMinor: 5000,
+    })
+    // 期初余额调整已生成，账户余额为期初值
+    expect((await service.listAccounts(ledger.id)).find((a) => a.id === gas.id)?.balanceMinor).toBe(5000)
+
+    await service.deleteAccount(ledger.id, gas.id)
+
+    const remaining = await service.listAccounts(ledger.id)
+    expect(remaining.find((a) => a.id === gas.id)).toBeUndefined()
+  })
+
+  it('refuses to delete an account that has real posted transactions', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+
+    const bank = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'cash',
+      name: '测试银行',
+      initialBalanceMinor: 10000,
+    })
+    const food = (await service.listExpenseCategories(ledger.id)).find(
+      (category) => category.name === '餐饮',
+    )!
+    await service.createExpense({
+      ledgerId: ledger.id,
+      amountMinor: 300,
+      accountId: bank.id,
+      categoryId: food.id,
+      occurredAt: clock.nowIso(),
+    })
+
+    await expect(service.deleteAccount(ledger.id, bank.id)).rejects.toThrow(
+      '账户存在记账流水',
+    )
+    expect((await service.listAccounts(ledger.id)).find((a) => a.id === bank.id)).toBeDefined()
+  })
+
+  it('allows voiding an opening-balance adjustment', async () => {
+    const database = new NodeSqliteExecutor()
+    const ids = new SequenceIdGenerator()
+    await runMigrations(database, undefined, clock.nowIso)
+    const { ledger } = await new LedgerInitializationService(
+      new LedgerRepository(database),
+      ids,
+      clock,
+    ).initialize()
+    const service = new FinanceService(database, ids, clock)
+
+    const gas = await service.createAccount({
+      ledgerId: ledger.id,
+      type: 'cash',
+      name: '电费账户',
+      initialBalanceMinor: 8000,
+    })
+    const txs = await service.listAccountActivity(gas.id)
+    const opening = txs.find((t) => t.type === 'opening_balance')!
+    await service.voidTransaction(ledger.id, opening.transactionId)
+    expect((await service.listAccounts(ledger.id)).find((a) => a.id === gas.id)?.balanceMinor).toBe(0)
+  })
+})

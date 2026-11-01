@@ -13,11 +13,14 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
+import app.financemanager.local.capture.CaptureFingerprintEntity;
 import app.financemanager.local.PaymentCapturePlugin;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -46,6 +49,12 @@ public class PaymentAccessibilityService extends AccessibilityService {
      */
     private static final long INSERT_COOLDOWN_MS = 5000;
 
+    /**
+     * pending 指纹有效期：超过此时长视为用户放弃（捕获后未保存），
+     * 允许重新捕获。confirmed 指纹永久拦截（已入账）。
+     */
+    private static final long PENDING_FINGERPRINT_TTL_MS = 30 * 60 * 1000;
+
     private volatile long lastInsertTime = 0;
     private volatile String lastInsertKey = "";
 
@@ -63,13 +72,80 @@ public class PaymentAccessibilityService extends AccessibilityService {
     private volatile String lastSourcePackage = null;
     private volatile String lastSourceName = null;
 
+    /**
+     * 详情捕获确认窗口（600ms）：页面渐进加载时，金额/付款方式先渲染、备注字段后到。
+     * 首次解析成功先不写队列，窗口内再次解析到同页面且备注更完整则用新的；
+     * 窗口过期后由后续重试轮（600/1000/1500ms）落队列，最迟 1.5s 必捕获。
+     */
+    private static final long DETAIL_CONFIRM_DELAY_MS = 600;
+    private volatile CapturedPaymentInfo pendingDetailInfo = null;
+    private volatile long pendingDetailAt = 0;
+    private volatile boolean pendingDetailFlushScheduled = false;
+
+    /** 确认窗口过期后落队列：指纹查重（内存+DB）→ 残缺页丢弃 → 写队列。 */
+    private void flushPendingDetail() {
+        pendingDetailFlushScheduled = false;
+        CapturedPaymentInfo confirmed = pendingDetailInfo;
+        if (confirmed == null) return;
+        pendingDetailInfo = null;
+
+        String pkg = confirmed.getSourcePackage();
+        // 残缺页特征：方向不明（confirm）且无备注——页面字段区根本没渲染完，
+        // 这类数据拉起记账页只会让用户面对"死循环提示"。静默丢弃，等加载完整后的新一轮。
+        if ("confirm".equals(confirmed.getDirection())
+                && (confirmed.getNote() == null || confirmed.getNote().isEmpty())) {
+            AccessibilityDiagnostics.dedup(pkg);
+            Log.d(TAG, "残缺页（方向不明且无备注），静默丢弃: amount=" + confirmed.getAmount());
+            return;
+        }
+
+        String fp = buildFingerprint(confirmed);
+        if (CaptureDedup.isDuplicateFingerprint(fp)) {
+            AccessibilityDiagnostics.dedup(pkg);
+            Log.d(TAG, "指纹内存去重跳过: " + fp);
+            return;
+        }
+        // DB 指纹兜底 + 层 2 数据比对（Bug①修复：全部移到后台线程——Room/SQLite 禁止主线程访问）
+        final CapturedPaymentInfo pendingConfirm = confirmed;
+        DB_EXECUTOR.execute(() -> {
+            try {
+                CaptureQueueDao dao = CaptureQueueDatabase
+                        .getInstance(getApplicationContext())
+                        .captureQueueDao();
+                if (dao.findByFingerprint(fp) != null) {
+                    AccessibilityDiagnostics.dedup(pkg);
+                    Log.d(TAG, "指纹DB去重跳过（重启后内存已清）: " + fp);
+                    return;
+                }
+                // 层 2 重复拦截：与已存交易（金额+商户+时间秒级）一致 → 已记录过，静默拦截
+                long occurredEpoch = parseOccurredEpoch(pendingConfirm.getOccurredAt());
+                if (DuplicateBlocker.isDuplicateOfStored(getApplicationContext(),
+                        pendingConfirm.getAmountMinor() != null ? pendingConfirm.getAmountMinor() : 0,
+                        pendingConfirm.getMerchant(), pendingConfirm.getOccurredAt(), occurredEpoch, fp)) {
+                    AccessibilityDiagnostics.dedup(pkg);
+                    Log.d(TAG, "重复交易拦截（已存于 transactions）: amount=" + pendingConfirm.getAmount()
+                            + " merchant=" + pendingConfirm.getMerchant());
+                    return;
+                }
+                writeToQueue(pendingConfirm);
+            } catch (Exception e) {
+                Log.w(TAG, "落队列检查异常", e);
+            }
+        });
+    }
+
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
         AccessibilityDiagnostics.serviceConnected(this.getApplicationContext());
         Log.d(TAG, "onServiceConnected: 无障碍服务已启动");
 
-        // 启动前台保活服务，防止主进程被系统杀死导致无障碍服务断开
+        // 启动前台保活服务，防止 MIUI 杀后台导致主进程死亡、无障碍服务断开
+        try {
+            app.financemanager.capture.keepalive.CaptureKeepAliveService.start(this.getApplicationContext());
+        } catch (Exception e) {
+            Log.w(TAG, "启动保活服务失败", e);
+        }
 
         // 注意：FLAG_REPORT_VIEW_IDS 在小米澎湃 OS / HarmonyOS 等定制 ROM 上会导致
         // setServiceInfo() 抛 SecurityException，进而使服务启用即崩溃、被系统移除。
@@ -101,7 +177,63 @@ public class PaymentAccessibilityService extends AccessibilityService {
         if (!configured) {
             Log.e(TAG, "setServiceInfo 全部失败，无障碍服务将无法正常捕获窗口事件");
         }
+
+        // 前台心跳兜底：微信/支付宝账单详情是 H5 渐进渲染，加载完成不触发窗口切换事件，
+        // 纯事件驱动会在"页面还没内容"的阶段消耗完全部机会后永远沉默。
+        // 心跳每 2.5s 检查一次前台，前台为白名单 APP 时主动扫当前窗口；
+        // 同页面重复扫描由指纹去重/确认窗口拦截，不会重复弹。
+        mainHandler.postDelayed(heartbeatRunnable, HEARTBEAT_INTERVAL_MS);
     }
+
+    private static final long HEARTBEAT_INTERVAL_MS = 2500;
+    private final Runnable heartbeatRunnable = new Runnable() {
+        @Override
+        public void run() {
+            try {
+                heartbeatRound++;
+                AccessibilityNodeInfo active = getRootInActiveWindow();
+                String pkg = active != null && active.getPackageName() != null
+                        ? active.getPackageName().toString() : "";
+
+                // activeRoot 不可用时（部分 ROM 对事件外读取有限制）遍历窗口列表兜底
+                if (active == null) {
+                    try {
+                        for (android.view.accessibility.AccessibilityWindowInfo w : getWindows()) {
+                            AccessibilityNodeInfo r = w.getRoot();
+                            if (r != null && r.getPackageName() != null
+                                    && WhitelistPackages.contains(r.getPackageName().toString())) {
+                                active = r;
+                                pkg = r.getPackageName().toString();
+                                break;
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                // 状态日志（低频）：定位心跳是否存活/节点读取是否受限
+                if (heartbeatRound % 8 == 1) {
+                    Log.d(TAG, "心跳#" + heartbeatRound + ": active=" + (active != null ? "OK" : "null")
+                            + " pkg=" + pkg + " windows=" + (getWindows() != null ? getWindows().size() : -1));
+                }
+
+                if (WhitelistPackages.contains(pkg)) {
+                    long now = android.os.SystemClock.elapsedRealtime();
+                    if (now - lastHeartbeatScanAt >= HEARTBEAT_INTERVAL_MS) {
+                        lastHeartbeatScanAt = now;
+                        processWindow(pkg, active, true);
+                        if (active != null) active.recycle();
+                    }
+                }
+            } catch (Throwable t) {
+                // 防止未捕获异常断掉心跳链
+                Log.w(TAG, "心跳扫描异常: " + t);
+            }
+            mainHandler.postDelayed(this, HEARTBEAT_INTERVAL_MS);
+        }
+    };
+    private int heartbeatRound = 0;
+    private volatile long lastHeartbeatScanAt = 0;
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -142,7 +274,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
                         AccessibilityNodeInfo r = w.getRoot();
                         Log.d(TAG, "  window id=" + w.getId() + " type=" + w.getType() + " active=" + w.isActive() + " root=" + (r != null ? "OK" : "null"));
                         if (r != null) {
-                            try { processWindow(pkg, r); }
+                            try { processWindow(pkg, r, true); }
                             catch (Exception ignored) {}
                         }
                     }
@@ -151,7 +283,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
                 AccessibilityNodeInfo activeRoot = getRootInActiveWindow();
                 Log.d(TAG, "scan: activeRoot=" + (activeRoot != null ? "OK" : "null"));
                 if (activeRoot != null) {
-                    try { processWindow(pkg, activeRoot); }
+                    try { processWindow(pkg, activeRoot, true); }
                     finally { activeRoot.recycle(); }
                 }
             } catch (Exception e) {
@@ -160,10 +292,18 @@ public class PaymentAccessibilityService extends AccessibilityService {
         };
         scan.run();
 
-        // 分多次重试
-        int[] delays = {100, 300, 600, 1000, 1500};
+        // 分多次重试：微信/支付宝账单详情是 H5 渐进渲染，早期 dump 常为空白且
+        // 渲染完成不一定再触发内容变化事件——靠重试轮主动 dump，末轮覆盖到 6 秒（慢网）
+        int[] delays = {100, 300, 600, 1000, 1500, 2500, 4000, 6000};
         for (int delay : delays) {
-            mainHandler.postDelayed(scan, delay);
+            mainHandler.postDelayed(() -> {
+                try {
+                    scan.run();
+                } catch (Throwable t) {
+                    // 防止单轮异常断掉整条重试链
+                    Log.w(TAG, "重试轮异常: " + t);
+                }
+            }, delay);
         }
     }
 
@@ -204,30 +344,51 @@ public class PaymentAccessibilityService extends AccessibilityService {
      * 解析窗口内容，写入捕获队列。
      *
      * 解析策略（优先级从高到低）：
-     * 1. RuleBasedParser：基于用户配置的 JSON 规则（支持自定义规则）
-     * 2. PaymentParserRegistry：预置的硬编码适配器
-     * 3. 都不成功则跳过
+     * 1a. RuleBasedParser.parseBillDetail：账单/订单详情页规则（pageType=bill-detail，P1）
+     * 1b. RuleBasedParser.parse：成功页规则（pageType 缺省，向后兼容）
+     * 2.  PaymentParserRegistry：预置的硬编码适配器兜底
+     * 3.  都不成功则跳过
      */
+    private static final boolean DEBUG_DUMP_NODE_TREE = false;
+
     private void processWindow(String packageName, AccessibilityNodeInfo root) {
-        // 详细日志：打印整个节点树
-        StringBuilder sb = new StringBuilder();
-        dumpNode(root, 0, sb);
-        Log.d(TAG, "===== 节点树开始 (" + packageName + ") =====");
-        Log.d(TAG, sb.toString());
-        Log.d(TAG, "===== 节点树结束 =====");
+        processWindow(packageName, root, false);
+    }
+
+    private void processWindow(String packageName, AccessibilityNodeInfo root, boolean quiet) {
+        // 节点树全量 dump 日志量巨大（会挤爆 logcat buffer），默认关闭；排障时置 true
+        if (DEBUG_DUMP_NODE_TREE) {
+            StringBuilder sb = new StringBuilder();
+            dumpNode(root, 0, sb);
+            Log.d(TAG, "===== 节点树开始 (" + packageName + ") =====");
+            Log.d(TAG, sb.toString());
+            Log.d(TAG, "===== 节点树结束 =====");
+        }
 
         CapturedPaymentInfo info = null;
 
-        // 策略 1：尝试基于规则的解析器
+        // 策略 1a：详情页规则（优先命中，避免成功页正则误判详情页）
+        app.financemanager.capture.accessibility.rules.RuleBasedParser ruleParser =
+                new app.financemanager.capture.accessibility.rules.RuleBasedParser();
         try {
-            app.financemanager.capture.accessibility.rules.RuleBasedParser ruleParser =
-                    new app.financemanager.capture.accessibility.rules.RuleBasedParser();
-            info = ruleParser.parse(this, root, packageName);
+            info = ruleParser.parseBillDetail(this, root, packageName);
             if (info != null) {
-                Log.d(TAG, "RuleBasedParser 解析成功: " + packageName);
+                Log.d(TAG, "DetailPageParser 解析成功: " + packageName);
             }
         } catch (Exception e) {
-            Log.d(TAG, "RuleBasedParser 跳过: " + e.getMessage());
+            Log.d(TAG, "DetailPageParser 跳过: " + e.getMessage());
+        }
+
+        // 策略 1b：成功页规则
+        if (info == null) {
+            try {
+                info = ruleParser.parse(this, root, packageName);
+                if (info != null) {
+                    Log.d(TAG, "RuleBasedParser 解析成功: " + packageName);
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "RuleBasedParser 跳过: " + e.getMessage());
+            }
         }
 
         // 策略 2：回退到硬编码适配器
@@ -248,7 +409,36 @@ public class PaymentAccessibilityService extends AccessibilityService {
             return;
         }
 
-        // 去重检查
+        // 去重检查（详情页走指纹；成功页走旧 CaptureDedup）
+        if (info.getDirection() != null) {
+            // 详情捕获确认窗口：同页面且备注更完整时更新待发数据；窗口未过期则不落队列
+            long now = System.currentTimeMillis();
+            CapturedPaymentInfo prev = pendingDetailInfo;
+            boolean samePage = prev != null
+                    && prev.getAmountMinor() != null
+                    && prev.getAmountMinor().equals(info.getAmountMinor());
+            if (samePage && (prev.getNote() == null || prev.getNote().isEmpty())
+                    && info.getNote() != null && !info.getNote().isEmpty()) {
+                pendingDetailInfo = info;
+            } else if (!samePage) {
+                pendingDetailInfo = info;
+                pendingDetailAt = now;
+            }
+            if (now - pendingDetailAt < DETAIL_CONFIRM_DELAY_MS) {
+                Log.d(TAG, "详情捕获确认窗口内，等待更完整数据（备注="
+                        + (pendingDetailInfo.getNote() != null ? "有" : "无") + "）");
+                // 重试链末轮（6000ms）之后可能没有新事件了——主动调度一次落队列，
+                // 否则末轮命中的数据会永远停在确认窗口里
+                if (!pendingDetailFlushScheduled) {
+                    pendingDetailFlushScheduled = true;
+                    long remaining = DETAIL_CONFIRM_DELAY_MS - (now - pendingDetailAt) + 50;
+                    mainHandler.postDelayed(this::flushPendingDetail, Math.max(remaining, 50));
+                }
+                return;
+            }
+            flushPendingDetail();
+            return;
+        }
         if (CaptureDedup.isDuplicate(info.getSourcePackage(), info.getAmountMinor())) {
             AccessibilityDiagnostics.dedup(packageName);
             Log.d(TAG, "去重跳过: " + info.getSourcePackage() + " 金额=" + info.getAmount());
@@ -265,18 +455,27 @@ public class PaymentAccessibilityService extends AccessibilityService {
      * Room 数据库操作必须在后台线程执行，主线程上调用 insert() 会抛
      * IllegalStateException("assertNotSuspendingTransaction")。
      * 此处通过单线程执行器提交到后台线程执行。
+     *
+     * 详情页（direction != null）走业务指纹去重：内存快速层（processWindow 已做）
+     * + capture_fingerprint 表持久层（DB_EXECUTOR 串行，防 5 次重试穿透）。
+     * 成功页保留 5 秒金额冷却（原逻辑）。
      */
     private void writeToQueue(CapturedPaymentInfo info) {
-        // 冷却期检查：避免同一支付页面在停留期间被重复插入
-        long now = System.currentTimeMillis();
-        String key = info.getSourcePackage() + ":" + info.getAmountMinor();
-        synchronized (this) {
-            if (key.equals(lastInsertKey) && (now - lastInsertTime) < INSERT_COOLDOWN_MS) {
-                Log.d(TAG, "冷却期内跳过重复插入: " + key);
-                return;
+        boolean isDetail = info.getDirection() != null;
+        String fp = isDetail ? buildFingerprint(info) : null;
+
+        // 成功页：5 秒冷却（详情页由指纹去重负责，不再用金额冷却）
+        if (!isDetail) {
+            long now = System.currentTimeMillis();
+            String key = info.getSourcePackage() + ":" + info.getAmountMinor();
+            synchronized (this) {
+                if (key.equals(lastInsertKey) && (now - lastInsertTime) < INSERT_COOLDOWN_MS) {
+                    Log.d(TAG, "冷却期内跳过重复插入: " + key);
+                    return;
+                }
+                lastInsertTime = now;
+                lastInsertKey = key;
             }
-            lastInsertTime = now;
-            lastInsertKey = key;
         }
 
         DB_EXECUTOR.execute(() -> {
@@ -285,13 +484,49 @@ public class PaymentAccessibilityService extends AccessibilityService {
                         .getInstance(this.getApplicationContext())
                         .captureQueueDao();
 
-                String fingerprint = buildFingerprint(info);
+                // 详情页：DB 持久指纹查重 + 预占 pending 指纹
+                if (isDetail) {
+                    CaptureFingerprintEntity existing = dao.findByFingerprint(fp);
+                    if (existing != null) {
+                        long now = System.currentTimeMillis();
+                        if ("confirmed".equals(existing.getStatus())) {
+                            // 已确认入账：永久拦截（PRD §8.4）
+                            AccessibilityDiagnostics.dedup(info.getSourcePackage());
+                            Log.d(TAG, "指纹已确认入账，跳过: " + fp);
+                            return;
+                        }
+                        if ("pending".equals(existing.getStatus())
+                                && now - existing.getCreatedAt() < PENDING_FINGERPRINT_TTL_MS) {
+                            // 预占期内（防同页面 5 次重试穿透）：拦截
+                            AccessibilityDiagnostics.dedup(info.getSourcePackage());
+                            Log.d(TAG, "指纹预占期内，跳过: " + fp);
+                            return;
+                        }
+                        // pending 超时（用户上次捕获后未保存就放弃）→ 删除旧指纹，允许重新捕获
+                        dao.deleteFingerprint(fp);
+                        Log.d(TAG, "pending 指纹已过期，允许重新捕获: " + fp);
+                    }
+                    CaptureFingerprintEntity fpEnt = new CaptureFingerprintEntity();
+                    fpEnt.setFingerprint(fp);
+                    fpEnt.setSourcePackage(info.getSourcePackage());
+                    fpEnt.setAmountMinor(info.getAmountMinor());
+                    fpEnt.setOccurredAt(info.getOccurredAt());
+                    fpEnt.setSourceOrderId(info.getOrderNo());
+                    fpEnt.setStatus("pending");
+                    fpEnt.setCreatedAt(System.currentTimeMillis());
+                    dao.insertFingerprint(fpEnt);
+                }
+
+                String fingerprint = fp != null ? fp : buildFingerprint(info);
 
                 CaptureQueueEntity entity = new CaptureQueueEntity();
                 entity.setSourcePackage(orNull(info.getSourcePackage()));
                 entity.setSourceName(orNull(info.getSourceName()));
                 entity.setCaptureMethod("accessibility");
-                entity.setOccurredAt(String.valueOf(System.currentTimeMillis()));
+                // 详情页用真实交易时间（解析出的创建/支付时间）；成功页无时间，保留毫秒串（前端归一化）
+                String occurred = info.getOccurredAt();
+                entity.setOccurredAt(occurred != null && !occurred.isEmpty()
+                        ? occurred : String.valueOf(System.currentTimeMillis()));
                 entity.setAmountMinor(info.getAmountMinor());
                 entity.setCurrency("CNY");
                 entity.setMerchant(info.getMerchant());
@@ -303,13 +538,20 @@ public class PaymentAccessibilityService extends AccessibilityService {
                 entity.setStatus("pending");
                 entity.setSuggestedCategory(info.getSuggestedCategory());
                 entity.setDefaultAccountId(info.getDefaultAccountId());
+                entity.setNote(info.getNote());
+                entity.setDirection(info.getDirection());
+                entity.setOriginalAmountMinor(info.getOriginalAmountMinor());
+                entity.setDiscountMinor(info.getDiscountMinor());
+                entity.setFeeMinor(info.getFeeMinor());
+                entity.setTargetAccountHint(info.getTargetAccountHint());
                 entity.setCreatedAt(System.currentTimeMillis());
 
                 dao.insert(entity);
 
                 AccessibilityDiagnostics.queueInsert(info.getSourcePackage(), entity.getId());
                 PaymentCapturePlugin.notifyCandidate(entity);
-                // 直接拉起 APP，打开记账页面，自动填好金额和商户（最小闭环：检测金额 → 记账页预填）
+                // 直接拉起 APP，打开记账页面，自动填好金额和备注（最小闭环：检测金额 → 记账页预填）
+                // 正金额（收入/转账/退款）也拉起，由用户在记账页确认方向（不自动落账）
                 PaymentCapturePlugin.launchRecordForCapture(getApplicationContext(), entity);
 
                 lastSourcePackage = info.getSourcePackage();
@@ -328,11 +570,38 @@ public class PaymentAccessibilityService extends AccessibilityService {
         return v != null ? v : "";
     }
 
+    /**
+     * 业务指纹（PRD §8.2）：优先订单号/户号/交易单号；否则 hash(金额+时间+商户)。
+     * 详情页去重键；购物与支付宝双通道共用 hash 键，确保跨体系指纹一致。
+     */
     private static String buildFingerprint(CapturedPaymentInfo info) {
-        return info.getSourcePackage() + ":"
-                + (info.getAmountMinor() != null ? info.getAmountMinor() : "0")
-                + ":" + (info.getMerchant() != null ? info.getMerchant() : "")
-                + ":" + UUID.randomUUID().toString().substring(0, 8);
+        String orderId = info.getOrderNo();
+        if (orderId != null && !orderId.isEmpty()) {
+            return "order:" + orderId;
+        }
+        StringBuilder base = new StringBuilder();
+        base.append(info.getAmountMinor() != null ? info.getAmountMinor() : "0");
+        base.append('|');
+        base.append(info.getOccurredAt() != null ? info.getOccurredAt() : "");
+        base.append('|');
+        base.append(info.getMerchant() != null ? info.getMerchant() : "");
+        return "tx:" + Integer.toHexString(base.toString().hashCode());
+    }
+
+    /** ISO 时间 → epoch 毫秒（失败 -1）。 */
+    private static long parseOccurredEpoch(String iso) {
+        if (iso == null || iso.isEmpty()) return -1;
+        String[] patterns = {"yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSS"};
+        for (String pattern : patterns) {
+            try {
+                SimpleDateFormat f = new SimpleDateFormat(pattern, Locale.US);
+                f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+                Date d = f.parse(iso);
+                if (d != null) return d.getTime();
+            } catch (Exception ignored) {
+            }
+        }
+        return -1;
     }
 
     private static float parseConfidence(String level) {
@@ -351,7 +620,14 @@ public class PaymentAccessibilityService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        mainHandler.removeCallbacks(heartbeatRunnable);
         AccessibilityDiagnostics.serviceDestroyed(this.getApplicationContext());
+        // 停止前台保活服务（无障碍禁用时不再保活）
+        try {
+            app.financemanager.capture.keepalive.CaptureKeepAliveService.stop(this.getApplicationContext());
+        } catch (Exception e) {
+            Log.w(TAG, "停止保活服务失败", e);
+        }
         super.onDestroy();
         Log.d(TAG, "onDestroy: 无障碍服务已销毁");
     }

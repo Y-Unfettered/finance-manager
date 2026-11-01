@@ -173,6 +173,17 @@ public class MainActivity extends BridgeActivity {
         if (getBridge() != null) {
             getBridge().onResume();
         }
+        // 无障碍自动恢复（"打开 APP 即恢复"）：服务不存活且 Shizuku 可用时自动重新启用。
+        // 延迟 1.5s：避开启动期与 Bridge 初始化抢主线程；Shizuku 不可用/未授权时静默跳过。
+        findViewById(android.R.id.content).postDelayed(() -> {
+            try {
+                app.financemanager.capture.shizuku.AccessibilityAutoRecover
+                        .getInstance(getApplicationContext())
+                        .checkAndRestore();
+            } catch (Exception e) {
+                Log.w(TAG, "无障碍自动恢复异常", e);
+            }
+        }, 1500);
     }
 
     @Override

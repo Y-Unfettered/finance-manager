@@ -99,7 +99,16 @@ export interface UpdateAccountInput extends Omit<
   accountId: string
 }
 
-export interface CreateExpenseInput {
+/** 捕获元数据（自动记账落库用，随交易写入 capture_source/parser_version/confidence）。 */
+export interface CaptureMetadataInput {
+  captureSource?: string
+  parserVersion?: string
+  confidence?: number
+  /** 捕获指纹（防重，随账单持久化） */
+  fingerprint?: string
+}
+
+export interface CreateExpenseInput extends CaptureMetadataInput {
   ledgerId: string
   amountMinor: number
   accountId: string
@@ -112,7 +121,7 @@ export interface CreateExpenseInput {
   discountMinor?: number
 }
 
-export interface CreateIncomeInput {
+export interface CreateIncomeInput extends CaptureMetadataInput {
   ledgerId: string
   amountMinor: number
   accountId: string
@@ -123,7 +132,7 @@ export interface CreateIncomeInput {
   attachmentDataUris?: readonly string[]
 }
 
-export interface CreateTransferInput {
+export interface CreateTransferInput extends CaptureMetadataInput {
   ledgerId: string
   amountMinor: number
   sourceAccountId: string
@@ -134,9 +143,13 @@ export interface CreateTransferInput {
   originalAmountMinor?: number
   discountMinor?: number
   discountIncomeCategoryId?: string
+  /** 手续费（如微信提现服务费），转出申请额 = amountMinor + feeMinor */
+  feeMinor?: number
+  /** 手续费记入的费用分类 id（如"其他支出"） */
+  feeCategoryId?: string
 }
 
-export interface CreateCreditPurchaseInput {
+export interface CreateCreditPurchaseInput extends CaptureMetadataInput {
   ledgerId: string
   amountMinor: number
   liabilityAccountId: string
@@ -149,7 +162,7 @@ export interface CreateCreditPurchaseInput {
   discountMinor?: number
 }
 
-export interface CreateRepaymentInput {
+export interface CreateRepaymentInput extends CaptureMetadataInput {
   ledgerId: string
   amountMinor: number
   sourceAccountId: string
@@ -163,7 +176,7 @@ export interface CreateRepaymentInput {
   discountIncomeCategoryId?: string
 }
 
-export interface CreateRefundInput {
+export interface CreateRefundInput extends CaptureMetadataInput {
   ledgerId: string
   amountMinor: number
   refundAccountId: string
@@ -321,6 +334,7 @@ export interface FinanceServicePort {
     now?: Date,
   ): Promise<RecentSummary>
   listAccounts(ledgerId: string): Promise<AccountBalanceRecord[]>
+  reorderAccounts(ledgerId: string, orderedAccountIds: string[]): Promise<void>
   getAccount(accountId: string): Promise<AccountBalanceRecord | undefined>
   getAccountDetail(accountId: string): Promise<AccountDetailRecord | undefined>
   listAccountActivity(accountId: string): Promise<AccountActivityRecord[]>
@@ -338,6 +352,7 @@ export interface FinanceServicePort {
   renameAccount(input: RenameAccountInput): Promise<void>
   archiveAccount(ledgerId: string, accountId: string): Promise<void>
   unarchiveAccount(ledgerId: string, accountId: string): Promise<void>
+  deleteAccount(ledgerId: string, accountId: string): Promise<void>
   listReceivables(ledgerId: string): Promise<ReceivableBalanceRecord[]>
   createReceivable(input: CreateReceivableInput): Promise<ReceivableRecord>
   recoverReceivable(input: RecoverReceivableInput): Promise<void>
@@ -426,6 +441,10 @@ export class FinanceService implements FinanceServicePort {
 
   listAccounts(ledgerId: string): Promise<AccountBalanceRecord[]> {
     return this.accounts.listBalances(ledgerId)
+  }
+
+  reorderAccounts(ledgerId: string, orderedAccountIds: string[]): Promise<void> {
+    return this.accounts.reorder(ledgerId, orderedAccountIds, new Date().toISOString())
   }
 
   getAccount(accountId: string): Promise<AccountBalanceRecord | undefined> {
@@ -784,6 +803,26 @@ export class FinanceService implements FinanceServicePort {
     }
   }
 
+  /**
+   * 彻底删除账户及其关联交易（区别于归档：归档保留历史，删除不留痕迹）。
+   *
+   * 适用场景：刚建错/不再需要的账户（如燃气费、电费账户）——其下通常只有
+   * 期初余额调整（opening_balance），删除账户时一并清除。
+   * 存在真实记账流水时拒绝删除（引导先作废流水，或使用归档保留历史）。
+   */
+  async deleteAccount(ledgerId: string, accountId: string): Promise<void> {
+    log.debug('deleteAccount: start', { accountId })
+    try {
+      const account = await this.accounts.findBalance(accountId)
+      if (!account || account.ledgerId !== ledgerId) throw new Error('账户不存在')
+      await this.accounts.deleteWithTransactions(ledgerId, accountId)
+      log.info('deleteAccount: success', { accountId })
+    } catch (error) {
+      log.error('deleteAccount: failed', { accountId , error: error instanceof Error ? error.message : String(error) })
+      throw error
+    }
+  }
+
   listReceivables(ledgerId: string): Promise<ReceivableBalanceRecord[]> {
     return this.receivables.listByLedger(ledgerId)
   }
@@ -1025,6 +1064,10 @@ export class FinanceService implements FinanceServicePort {
           category,
           merchant: input.merchant,
           note: input.note,
+          captureSource: input.captureSource,
+          parserVersion: input.parserVersion,
+          confidence: input.confidence,
+          fingerprint: input.fingerprint,
         }),
         undefined,
         input.attachmentDataUris,
@@ -1061,6 +1104,10 @@ export class FinanceService implements FinanceServicePort {
           category,
           merchant: input.merchant,
           note: input.note,
+          captureSource: input.captureSource,
+          parserVersion: input.parserVersion,
+          confidence: input.confidence,
+          fingerprint: input.fingerprint,
         }),
         undefined,
         input.attachmentDataUris,
@@ -1094,6 +1141,14 @@ export class FinanceService implements FinanceServicePort {
         throw new Error('优惠收入分类不存在')
       }
 
+      // 手续费分类（费用）：仅在有手续费时解析
+      const transferFeeCategory = input.feeMinor && input.feeMinor > 0 && input.feeCategoryId
+        ? await this.categories.findPostingRef(input.feeCategoryId)
+        : undefined
+      if (input.feeMinor && input.feeMinor > 0 && !transferFeeCategory) {
+        throw new Error('手续费分类不存在')
+      }
+
       const transaction = await this.transactions.create(
         input.ledgerId,
         createTransfer({
@@ -1102,6 +1157,15 @@ export class FinanceService implements FinanceServicePort {
           sourceAccount,
           targetAccount,
           note: input.note,
+          captureSource: input.captureSource,
+          parserVersion: input.parserVersion,
+          confidence: input.confidence,
+          fingerprint: input.fingerprint,
+          ...(input.feeMinor && input.feeMinor > 0 && transferFeeCategory ? {
+            feeMinor: input.feeMinor,
+            feeCategory: transferFeeCategory,
+            originalAmountMinor: input.amountMinor + input.feeMinor,
+          } : {}),
           ...(discount ? {
             originalAmountMinor: input.originalAmountMinor,
             discountMinor: input.discountMinor,
@@ -1140,6 +1204,10 @@ export class FinanceService implements FinanceServicePort {
           category,
           merchant: input.merchant,
           note: input.note,
+          captureSource: input.captureSource,
+          parserVersion: input.parserVersion,
+          confidence: input.confidence,
+          fingerprint: input.fingerprint,
         }),
         undefined,
         input.attachmentDataUris,
@@ -1179,6 +1247,10 @@ export class FinanceService implements FinanceServicePort {
           liabilityAccount,
           merchant: input.merchant,
           note: input.note,
+          captureSource: input.captureSource,
+          parserVersion: input.parserVersion,
+          confidence: input.confidence,
+          fingerprint: input.fingerprint,
           ...(discount ? {
             originalAmountMinor: input.originalAmountMinor,
             discountMinor: input.discountMinor,
@@ -1233,6 +1305,10 @@ export class FinanceService implements FinanceServicePort {
         category,
         merchant: input.merchant,
         note: input.note,
+        captureSource: input.captureSource,
+        parserVersion: input.parserVersion,
+        confidence: input.confidence,
+        fingerprint: input.fingerprint,
       }),
       { originalTransactionId: input.originalTransactionId, relationType: 'refund' },
       input.attachmentDataUris,
@@ -1259,9 +1335,7 @@ export class FinanceService implements FinanceServicePort {
       if (transaction.status === 'void') {
         throw new Error('交易已撤销')
       }
-      if (transaction.type === 'opening_balance') {
-        throw new Error('期初余额不能撤销，请通过余额调整修正')
-      }
+      // 期初余额调整允许作废：作废后账户余额随之归零（如删错期初、或准备删除整个账户）
       if (
         ['expense', 'credit_purchase'].includes(transaction.type) &&
         (await this.transactions.refundedAmount(transaction.id)) > 0

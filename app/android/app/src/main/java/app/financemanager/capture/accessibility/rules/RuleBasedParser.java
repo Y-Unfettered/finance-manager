@@ -55,7 +55,7 @@ public class RuleBasedParser {
     }
 
     /**
-     * 按包名查找匹配的规则，并解析窗口文本。
+     * 按包名查找匹配的规则，并解析窗口文本（成功页规则，pageType 缺省）。
      *
      * @return 解析结果，null 表示无法解析
      */
@@ -69,7 +69,7 @@ public class RuleBasedParser {
             return null;
         }
 
-        JSONObject rule = findBestRule(configJson, packageName);
+        JSONObject rule = findBestRule(configJson, packageName, null);
         if (rule == null) {
             Log.d(TAG, "无匹配规则: " + packageName);
             return null;
@@ -89,8 +89,36 @@ public class RuleBasedParser {
         }
     }
 
-    /** 从 JSON 中查找最佳匹配规则。 */
-    private JSONObject findBestRule(String configJson, String packageName) {
+    /**
+     * 解析账单/订单详情页（pageType=bill-detail 规则）。
+     *
+     * 命中详情页规则时交给 DetailPageParser 做结构化解析；无详情页规则返回 null，
+     * 由调用方回退到成功页解析（parse），不破坏现有逻辑。
+     */
+    public CapturedPaymentInfo parseBillDetail(
+            AccessibilityService service,
+            AccessibilityNodeInfo root,
+            String packageName) {
+
+        String configJson = getConfigJson(service.getApplicationContext());
+        if (configJson == null || configJson.isEmpty()) {
+            return null;
+        }
+
+        // 多模板共存：同包名可能有多条详情规则（不同页面模板），按优先级降序逐条尝试，
+        // 第一条签名+解析通过的生效——而不是只取最高优先级的那一条。
+        java.util.List<JSONObject> rules = findDetailRules(configJson, packageName, "bill-detail");
+        for (JSONObject rule : rules) {
+            CapturedPaymentInfo info = new DetailPageParser().parse(service, root, packageName, rule);
+            if (info != null) {
+                return info;
+            }
+        }
+        return null;
+    }
+
+    /** 从 JSON 中查找最佳匹配规则。pageType 为 null 表示成功页规则（缺省），否则按 pageType 过滤。 */
+    private JSONObject findBestRule(String configJson, String packageName, String pageType) {
         JSONObject bestRule = null;
         int bestPriority = -1;
 
@@ -104,6 +132,13 @@ public class RuleBasedParser {
                 if (!rule.optBoolean("enabled", true)) continue;
                 String pkg = rule.optString("packageName", "");
                 if (!pkg.equals(packageName)) continue;
+                // pageType 匹配：null 请求只匹配"无 pageType（缺省=成功页）"的规则
+                String rulePageType = rule.optString("pageType", "");
+                if (pageType == null) {
+                    if (!rulePageType.isEmpty()) continue;
+                } else {
+                    if (!pageType.equals(rulePageType)) continue;
+                }
                 int priority = rule.optInt("priority", 0);
                 if (priority > bestPriority) {
                     bestPriority = priority;
@@ -116,9 +151,47 @@ public class RuleBasedParser {
         return bestRule;
     }
 
+    /**
+     * 查找同包名、同 pageType 的全部启用规则，按优先级降序排列（多模板共存用）。
+     */
+    private java.util.List<JSONObject> findDetailRules(
+            String configJson, String packageName, String pageType) {
+        java.util.List<JSONObject> out = new java.util.ArrayList<>();
+        try {
+            JSONObject config = new JSONObject(configJson);
+            JSONArray rules = config.optJSONArray("rules");
+            if (rules == null) return out;
+            for (int i = 0; i < rules.length(); i++) {
+                JSONObject rule = rules.getJSONObject(i);
+                if (!rule.optBoolean("enabled", true)) continue;
+                if (!packageName.equals(rule.optString("packageName", ""))) continue;
+                if (!pageType.equals(rule.optString("pageType", ""))) continue;
+                out.add(rule);
+            }
+            out.sort((a, b) -> Integer.compare(b.optInt("priority", 0), a.optInt("priority", 0)));
+        } catch (Exception e) {
+            Log.w(TAG, "解析规则列表失败", e);
+        }
+        return out;
+    }
+
     /** 应用单条规则解析文本。 */
     private CapturedPaymentInfo applyRule(String text, String packageName, JSONObject rule)
             throws Exception {
+        // 0. 排除词：页面含任一 excludeKeywords（如账单详情结构词）则本规则拒绝，
+        //    防止成功页规则在详情页上抢活（详情签名失败时兜底会误抓）
+        JSONArray excludeKeywords = rule.optJSONArray("excludeKeywords");
+        if (excludeKeywords != null) {
+            for (int i = 0; i < excludeKeywords.length(); i++) {
+                String ex = excludeKeywords.optString(i, "");
+                if (!ex.isEmpty() && text.contains(ex)) {
+                    AccessibilityDiagnostics.noKeyword(packageName,
+                            "排除词命中: " + ex);
+                    return null;
+                }
+            }
+        }
+
         // 1. 检查成功关键词
         JSONArray keywords = rule.optJSONArray("successKeywords");
         boolean hasKeyword = false;
@@ -130,8 +203,11 @@ public class RuleBasedParser {
                 }
             }
         } else {
-            // 无关键词时默认检查"成功"、"支付"、"付款"
-            hasKeyword = text.contains("成功") || text.contains("支付") || text.contains("付款");
+            // 无关键词时默认只认完整成功词。
+            // 不能用"成功/支付/付款"单字：支付宝首页"付款码"、活动页"立减XX元"会全被误判，
+            // 导致任意页面只要有个数字就写队列 + 拉起记账页。
+            hasKeyword = text.contains("支付成功") || text.contains("付款成功")
+                    || text.contains("转账成功") || text.contains("交易成功");
         }
         if (!hasKeyword) {
             AccessibilityDiagnostics.noKeyword(packageName,

@@ -171,6 +171,18 @@ function captureLabel(method: string): string {
   return map[method] || method
 }
 
+/** P1：方向标签文案。 */
+function directionLabel(direction: string): string {
+  const map: Record<string, string> = {
+    income: '收入',
+    transfer: '转账',
+    refund: '退款',
+    confirm: '待确认',
+    expense: '支出',
+  }
+  return map[direction] || direction
+}
+
 function captureIcon(method: string) {
   switch (method) {
     case 'accessibility': return ShieldCheck
@@ -254,6 +266,13 @@ onActivated(async () => {
                 <span class="event-item__method">{{ captureLabel(event.captureMethod) }}</span>
                 <Clock :size="12" />
                 <span>{{ formatTime(event.occurredAt) }}</span>
+              </div>
+              <!-- P1：备注与方向标签 -->
+              <div v-if="event.note || event.direction" class="event-item__note-row">
+                <span v-if="event.direction && event.direction !== 'expense'" class="event-item__direction">
+                  {{ directionLabel(event.direction) }}
+                </span>
+                <span v-if="event.note" class="event-item__note">{{ event.note }}</span>
               </div>
             </div>
           </div>
@@ -498,11 +517,13 @@ onActivated(async () => {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  min-width: 0;
 }
 
 .event-item__amount {
   font-weight: 600;
   font-size: 16px;
+  flex: none;
 }
 
 .event-item__merchant {
@@ -511,6 +532,7 @@ onActivated(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
 .event-item__meta {
@@ -521,6 +543,14 @@ onActivated(async () => {
   font-size: 12px;
   color: var(--color-text-tertiary);
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+.event-item__account {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .event-item__method {
@@ -528,6 +558,32 @@ onActivated(async () => {
   background: var(--color-surface);
   border-radius: 4px;
   font-size: 11px;
+}
+
+/* P1：备注与方向标签 */
+.event-item__note-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.event-item__direction {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+}
+
+.event-item__note {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .event-item__actions {

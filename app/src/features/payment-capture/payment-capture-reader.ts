@@ -25,6 +25,18 @@ export interface CapturedPayment {
   suggestedCategory?: string
   /** 规则建议的默认账户 ID */
   defaultAccountId?: string
+  /** 自动生成的备注（"为什么花"） */
+  note?: string
+  /** 原价（有优惠时与实付不同，单位分） */
+  originalAmountMinor?: number
+  /** 优惠金额（单位分） */
+  discountMinor?: number
+  /** 手续费（如提现服务费，单位分） */
+  feeMinor?: number
+  /** 转账转入方账户线索（transfer 用） */
+  targetAccountHint?: string
+  /** 方向判定：income/transfer/refund/expense/confirm */
+  direction?: string
 }
 
 /** 服务健康状态。 */
@@ -171,6 +183,8 @@ export interface PaymentCapturePlugin {
     rawFingerprint?: string
     confidence?: number
     parserVersion?: string
+    note?: string
+    direction?: string
   }): Promise<CapturedPayment>
 
   exportDiagnosticLog(): Promise<{
@@ -186,6 +200,16 @@ export interface PaymentCapturePlugin {
     filePath?: string
     message: string
   }>
+
+  /** 确认入账成功后回调原生：指纹置 confirmed（永久拦截重复捕获） */
+  markCaptureConfirmed(options: { fingerprint: string }): Promise<void>
+
+  /** 清空捕获指纹（调试用）：pendingOnly=true 仅清 pending，否则全部清空 */
+  clearCaptureFingerprints(options: { pendingOnly?: boolean }): Promise<void>
+
+  /** 重复交易拦截开关：开启后捕获命中已存交易时不跳转记账页（默认开） */
+  setDuplicateBlockEnabled(options: { enabled: boolean }): Promise<void>
+  getDuplicateBlockEnabled(): Promise<{ enabled: boolean }>
 
   addListener(
     event: 'paymentCaptureCandidate' | 'paymentCaptureQuickEntry' | 'overlayCommitRequest',
@@ -210,7 +234,26 @@ export interface PaymentCapturePlugin {
   log(options: { msg: string }): Promise<void>
 
   /** 获取待入账的捕获数据 */
-  getPendingCaptureData(): Promise<{ amountMinor?: number; merchant?: string; occurredAt?: string }>
+  getPendingCaptureData(): Promise<{
+    amountMinor?: number
+    merchant?: string
+    occurredAt?: string
+    /** 队列条目 id（保存后 acknowledge 用） */
+    id?: number
+    note?: string
+    direction?: string
+    accountHint?: string
+    sourcePackage?: string
+    fingerprint?: string
+    suggestedCategory?: string
+    originalAmountMinor?: number
+    discountMinor?: number
+    feeMinor?: number
+    targetAccountHint?: string
+    captureSource?: string
+    parserVersion?: string
+    confidence?: number
+  }>
 
   // 规则配置
   getCaptureRules(): Promise<RuleConfigResult>
@@ -351,6 +394,12 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   }
 
   async onOverlayCommitDone(): Promise<void> {}
+  async markCaptureConfirmed(): Promise<void> {}
+  async clearCaptureFingerprints(): Promise<void> {}
+  async setDuplicateBlockEnabled(): Promise<void> {}
+  async getDuplicateBlockEnabled(): Promise<{ enabled: boolean }> {
+    return { enabled: true }
+  }
   async canDrawOverlay(): Promise<{ granted: boolean }> {
     return { granted: false }
   }
@@ -358,7 +407,26 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   async syncOverlayOptions(): Promise<void> {}
   async setActiveLedgerId(): Promise<void> {}
   async log(): Promise<void> {}
-  async getPendingCaptureData(): Promise<{ amountMinor?: number; merchant?: string; occurredAt?: string }> {
+  async getPendingCaptureData(): Promise<{
+    amountMinor?: number
+    merchant?: string
+    occurredAt?: string
+    /** 队列条目 id（保存后 acknowledge 用） */
+    id?: number
+    note?: string
+    direction?: string
+    accountHint?: string
+    sourcePackage?: string
+    fingerprint?: string
+    suggestedCategory?: string
+    originalAmountMinor?: number
+    discountMinor?: number
+    feeMinor?: number
+    targetAccountHint?: string
+    captureSource?: string
+    parserVersion?: string
+    confidence?: number
+  }> {
     return {}
   }
 

@@ -118,7 +118,7 @@ public class AccessibilityAutoRecover {
     public void ensureShizukuRunning() {
         if (ShizukuShell.isAvailable()) {
             // 触发一次 exec 来确保 UserService 已绑定（daemon 模式下次调用会复用）
-            new ShizukuShell(context.getPackageName()).exec("echo 1");
+            ShizukuShell.getInstance(context.getPackageName()).exec("echo 1");
             Log.d(TAG, "Shizuku UserService 已就绪（daemon 模式）");
         }
     }

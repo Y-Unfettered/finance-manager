@@ -7,6 +7,9 @@ import { useRoute, useRouter } from 'vue-router'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import { formatMinorToCny, parseCnyInputToMinor } from '@/domain/money'
+import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
+import { getLogger } from '@/features/debug/app-logger'
+import { matchCaptureAccount } from '@/features/capture/capture-account-matcher'
 import {
   useFinanceService,
   type EditTransactionFullInput,
@@ -47,11 +50,11 @@ const INCOME_QUICK_TAGS = [
 const TRANSFER_QUICK_TAGS = [
   { label: '今天', action: 'date' },
   { label: '图片', action: 'image' },
-  { label: '手续费', action: 'note' },
+  { label: '手续费', action: 'fee' },
   { label: '优惠', action: 'discount' },
 ] as const
 
-type QuickTagAction = 'account' | 'date' | 'image' | 'discount' | 'note'
+type QuickTagAction = 'account' | 'date' | 'image' | 'discount' | 'note' | 'fee'
 
 interface QuickTagDef {
   label: string
@@ -60,6 +63,7 @@ interface QuickTagDef {
 
 const route = useRoute()
 const router = useRouter()
+const log = getLogger('recordSheet')
 const appStore = useAppStore()
 const finance = useFinanceService()
 const preferencesService = useHomePreferencesService()
@@ -100,6 +104,8 @@ const occurredAt = ref('')
 const dateLabel = ref('今天')
 
 const discountMode = ref(false)
+const feeMode = ref(false)
+const feeAmount = ref('')
 const discountAmount = ref('')
 
 const editTransactionId = ref('')
@@ -121,6 +127,74 @@ const transferDiscountIncomeCategories = computed(() =>
   incomeCategories.value.filter((c) => !c.parentId),
 )
 const discountIncomeCategoryId = ref('')
+
+// 自动记账捕获元数据（P1：备注/方向/来源，落库 transactions 用）
+const captureSource = ref('')
+const captureParserVersion = ref('')
+const captureConfidence = ref<number | undefined>(undefined)
+const captureDirection = ref('')
+const captureHintVisible = ref(false)
+const captureFingerprint = ref('')
+const captureId = ref(-1)
+// 捕获合并显示：输入框显示「商户 + 备注」拼接文本，保存时未改动则拆回两字段落库
+const capturePresetCombined = ref('')
+const capturePresetMerchant = ref('')
+
+/** 方向提示文案（P1 正金额场景）。 */
+const directionHintText = computed(() => {
+  switch (captureDirection.value) {
+    case 'income': return '收入/外部打款'
+    case 'transfer': return '自账户转账/提现'
+    case 'refund': return '退款'
+    default: return '收入/转账'
+  }
+})
+
+
+
+/**
+ * 规则分类建议（"kind:categoryId"，如 expense:insurance）→ 用户实际分类。
+ * 匹配顺序：① 精确 id；② 分类语义词典（通用资产：categoryId → 用户分类名常见关键词）。
+ * 词典覆盖不到时返回 ''，保持用户默认分类。
+ */
+function matchCaptureCategory(
+  suggested: string,
+): { id: string; name: string } | null {
+  if (!suggested) return null
+  const [kind, catId] = suggested.split(':')
+  if (!catId) return null
+  const pool = kind === 'income' ? incomeCategories.value : expenseCategories.value
+  if (pool.length === 0) return null
+
+  // ① 精确 id
+  const byId = pool.find((c) => c.id === catId)
+  if (byId) return { id: byId.id, name: byId.name }
+
+  // ② 语义词典：分类名含关键词即命中（如 insurance → 保险/医疗/健康）
+  const dictionary: Record<string, string[]> = {
+    food: ['餐', '食', '吃', '美食', '外卖', '饮'],
+    grocery: ['日用', '超市', '百货', '生鲜', '日用品'],
+    utilities: ['缴费', '水电', '燃气', '生活', '话费', '通讯', '居家'],
+    gas: ['加油', '油费'],
+    insurance: ['保险', '医保', '医疗', '健康', '保障'],
+    medical: ['医疗', '医药', '健康', '就诊'],
+    health: ['医疗', '健康', '医药', '就诊'],
+    transport: ['交通', '出行', '通勤', '车'],
+    shopping: ['购物', '网购', '数码', '服饰', '穿戴'],
+    entertainment: ['娱乐', '影音', '游戏', '旅游', '休闲'],
+    education: ['教育', '学习', '书', '培训'],
+    housing: ['住房', '房租', '居住'],
+    pet: ['宠物'],
+    'income-other': ['红包', '收红包', '其他收入', '收入', '返现', '奖励'],
+    salary: ['工资', '薪水'],
+  }
+  const keywords = dictionary[catId]
+  if (keywords) {
+    const byKeyword = pool.find((c) => keywords.some((k) => c.name.includes(k)))
+    if (byKeyword) return { id: byKeyword.id, name: byKeyword.name }
+  }
+  return null
+}
 
 const quickTags = computed<readonly QuickTagDef[]>(() => {
   if (mode.value === 'income') return INCOME_QUICK_TAGS
@@ -220,6 +294,18 @@ const actualSpending = computed(() => {
   const main = Number(amountDisplay.value) || 0
   const disc = Number(discountAmount.value) || 0
   const val = Math.max(0, main - disc)
+  return val.toFixed(2)
+})
+
+const hasFee = computed(
+  () => feeAmount.value !== '' && feeAmount.value !== '0' && feeAmount.value !== '0.0',
+)
+
+// 手续费模式：金额框显示转出申请额，实到 = 申请额 - 手续费（与优惠同构）
+const actualArrival = computed(() => {
+  const main = Number(amountDisplay.value) || 0
+  const fee = Number(feeAmount.value) || 0
+  const val = Math.max(0, main - fee)
   return val.toFixed(2)
 })
 
@@ -327,11 +413,15 @@ async function initializeFormState(): Promise<void> {
   dateLabel.value = '今天'
   discountMode.value = false
   discountAmount.value = ''
+  feeMode.value = false
+  feeAmount.value = ''
   editTransactionId.value = ''
   isEditMode.value = false
   isCopyMode.value = false
   originalOccurredAt.value = ''
   originalRefundTransactionId.value = ''
+  capturePresetCombined.value = ''
+  capturePresetMerchant.value = ''
   errorMessage.value = ''
   accountPickerShow.value = false
   datePickerShow.value = false
@@ -346,6 +436,11 @@ async function initializeFormState(): Promise<void> {
   const pendingAmount = route.query.amount
   const pendingMerchant = route.query.merchant
   const pendingOccurredAt = route.query.occurredAt
+  const pendingNote = route.query.note
+  const pendingDirection = route.query.direction
+  const pendingCaptureSource = route.query.captureSource
+  const pendingParserVersion = route.query.parserVersion
+  const pendingConfidence = route.query.confidence
   // 自动记账捕获的金额和商户
   if (typeof pendingAmount === 'string' && pendingAmount) {
     const minor = parseInt(pendingAmount, 10)
@@ -360,6 +455,128 @@ async function initializeFormState(): Promise<void> {
   // 仅接受合法 ISO 日期；空或非法值不写入，保存时会回退为当前时间
   if (typeof pendingOccurredAt === 'string' && pendingOccurredAt && !Number.isNaN(Date.parse(pendingOccurredAt))) {
     occurredAt.value = pendingOccurredAt
+    // 日期标签同步（否则标签仍显示"今天"而实际是账单交易时间）
+    const picked = new Date(pendingOccurredAt)
+    const diffDays = Math.floor((Date.now() - picked.getTime()) / (1000 * 60 * 60 * 24))
+    dateLabel.value =
+      diffDays === 0 ? '今天' : diffDays === 1 ? '昨天' : diffDays === 2 ? '前天'
+      : `${picked.getMonth() + 1}月${picked.getDate()}日`
+  }
+  // P1：自动备注预填（"为什么花"）
+  // 显示上把「商户 + 备注」拼进原本那一个输入框（不动 UI 布局）；
+  // note.value 保留捕获备注（快捷标签"备注"可改），保存时若输入框未被用户改动则拆回两字段落库。
+  if (typeof pendingNote === 'string' && pendingNote && pendingNote.length > 0) {
+    note.value = pendingNote
+    const presetMerchant = merchant.value
+    if (presetMerchant && !pendingNote.includes(presetMerchant)) {
+      capturePresetCombined.value = `${presetMerchant} ${pendingNote}`
+      capturePresetMerchant.value = presetMerchant
+      merchant.value = capturePresetCombined.value
+    } else {
+      // 备注已含商户（或商户为空）：框里只显示备注
+      capturePresetCombined.value = pendingNote
+      capturePresetMerchant.value = presetMerchant
+      merchant.value = pendingNote
+    }
+  }
+  // P1：原价/优惠预填——金额框填原价、优惠框填优惠，实付由记账页自动算出
+  const pendingOriginal = route.query.originalAmount
+  const pendingDiscount = route.query.discount
+  if (
+    typeof pendingOriginal === 'string' && pendingOriginal &&
+    typeof pendingDiscount === 'string' && pendingDiscount
+  ) {
+    const originalMinor = parseInt(pendingOriginal, 10)
+    const discountMinor = parseInt(pendingDiscount, 10)
+    if (!isNaN(originalMinor) && originalMinor > 0 && !isNaN(discountMinor) && discountMinor > 0) {
+      amountDisplay.value = (originalMinor / 100).toFixed(2)
+      amountStarted.value = true
+      discountAmount.value = (discountMinor / 100).toFixed(2)
+      discountMode.value = true
+    }
+  }
+  // P1：手续费预填（提现服务费）——金额框填申请额、手续费框填服务费，实到自动算
+  const pendingFee = route.query.fee
+  if (typeof pendingFee === 'string' && pendingFee) {
+    const feeMinor = parseInt(pendingFee, 10)
+    if (!isNaN(feeMinor) && feeMinor > 0) {
+      feeAmount.value = (feeMinor / 100).toFixed(2)
+      feeMode.value = true
+      discountMode.value = false
+    }
+  }
+  // P1：捕获元数据（非编辑/复制/退款模式才透传，避免编辑时误带来源）
+  if (!editId && !copyId && !refundId) {
+    if (typeof pendingCaptureSource === 'string') captureSource.value = pendingCaptureSource
+    if (typeof pendingParserVersion === 'string') captureParserVersion.value = pendingParserVersion
+    if (typeof pendingConfidence === 'string' && pendingConfidence) {
+      const c = Number(pendingConfidence)
+      if (!Number.isNaN(c)) captureConfidence.value = c
+    }
+    const pendingAccountHint = route.query.accountHint
+    const pendingSourcePackage = route.query.sourcePackage
+    const pendingFingerprint = route.query.fingerprint
+    const pendingSuggestedCategory = route.query.suggestedCategory
+    if (typeof pendingFingerprint === 'string') captureFingerprint.value = pendingFingerprint
+    const pendingCaptureId = route.query.captureId
+    if (typeof pendingCaptureId === 'string' && pendingCaptureId) {
+      captureId.value = parseInt(pendingCaptureId, 10)
+    }
+    if (typeof pendingDirection === 'string' && pendingDirection) {
+      captureDirection.value = pendingDirection
+      // 方向明确时自动切到对应模式（income→收入；transfer→转账），expense 保持默认；
+      // 仅在无法判断（confirm）时提示用户自行确认
+      if (pendingDirection === 'income') {
+        switchMode('income')
+      } else if (pendingDirection === 'transfer') {
+        switchMode('transfer')
+      }
+      captureHintVisible.value = pendingDirection === 'confirm'
+    }
+    // 账户预选：按账户线索（付款方式）或来源 APP 匹配记账账户（如"支付宝余额""微信零钱"）
+    const matchedAccountId = matchCaptureAccount(
+      typeof pendingAccountHint === 'string' ? pendingAccountHint : '',
+      typeof pendingSourcePackage === 'string' ? pendingSourcePackage : '',
+      activeAccounts.value,
+      captureDirection.value === 'income' || captureDirection.value === 'transfer',
+    ) ?? undefined
+    if (matchedAccountId) {
+      sourceAccountId.value = matchedAccountId
+    }
+    // P1：转账转入方预填（必须在 switchMode 之后——reset 会覆盖预填值）
+    const pendingTarget = route.query.targetAccountHint
+    if (typeof pendingTarget === 'string' && pendingTarget) {
+      const targetId = matchCaptureAccount(
+        pendingTarget,
+        typeof pendingSourcePackage === 'string' ? pendingSourcePackage : '',
+        activeAccounts.value,
+        true,
+      )
+      if (targetId) targetAccountId.value = targetId
+    }
+    // 分类预选：规则建议（如 expense:insurance）→ 按分类语义词典匹配用户实际分类
+    const suggestedCat = matchCaptureCategory(
+      typeof pendingSuggestedCategory === 'string' ? pendingSuggestedCategory : '',
+    )
+    if (suggestedCat) {
+      selectedCategoryId.value = suggestedCat.id
+      selectedCategoryName.value = suggestedCat.name
+    }
+    // 预填诊断日志（定位"某字段没生效"时看这里；console 桥到 logcat，adb 可直接抓取）
+    const prefillDebug = {
+      direction: captureDirection.value,
+      amount: amountDisplay.value,
+      merchant: merchant.value,
+      note: note.value,
+      occurredAt: occurredAt.value,
+      accountHintQuery: pendingAccountHint,
+      sourcePackageQuery: pendingSourcePackage,
+      suggestedCategoryQuery: pendingSuggestedCategory,
+      accountMatched: matchedAccountId || '(未命中)',
+      categoryMatched: suggestedCat ? `${suggestedCat.name}(${suggestedCat.id})` : '(未命中)',
+    }
+    log.info('记账页捕获预填', prefillDebug)
+    console.log('[capture-prefill]', JSON.stringify(prefillDebug))
   }
   if (typeof editId === 'string' && editId) {
     editTransactionId.value = editId
@@ -513,10 +730,22 @@ function pickQuickTag(tag: QuickTagDef): void {
     return
   }
   if (tag.action === 'note') {
-    const val = prompt('输入备注内容', note.value)
-    if (val !== null) note.value = val
+    editNote()
     return
   }
+  if (tag.action === 'fee') {
+    // 手续费行内输入（与优惠同构），替代原生 prompt
+    feeMode.value = !feeMode.value
+    if (feeMode.value) discountMode.value = false
+    if (!feeMode.value) feeAmount.value = ''
+    return
+  }
+}
+
+/** 编辑备注（捕获预填与快捷标签共用）。 */
+function editNote(): void {
+  const val = prompt('输入备注内容', note.value)
+  if (val !== null) note.value = val
 }
 
 async function handleImageSelect(event: Event): Promise<void> {
@@ -610,11 +839,39 @@ function setDiscountCandidate(value: string): void {
   if (errorMessage.value === '优惠金额必须小于原金额') errorMessage.value = ''
 }
 
-function appendAmount(char: string): void {
-  if (discountMode.value) {
-    appendDiscount(char)
+function setFeeCandidate(value: string): void {
+  const main = Number(amountDisplay.value) || 0
+  const fee = Number(value) || 0
+  if (fee >= main && main > 0) {
+    errorMessage.value = '手续费必须小于转出金额'
     return
   }
+  feeAmount.value = value
+  if (errorMessage.value === '手续费必须小于转出金额') errorMessage.value = ''
+}
+
+function appendFee(char: string): void {
+  if (char === 'backspace') {
+    setFeeCandidate(feeAmount.value.slice(0, -1))
+    return
+  }
+  if (char === 'clear') {
+    setFeeCandidate('')
+    return
+  }
+  if (char === '-' || char === '+') return
+  if (char === '00' && (feeAmount.value === '' || feeAmount.value === '0')) return
+  if (char === '.' && !feeAmount.value.includes('.')) {
+    setFeeCandidate(`${feeAmount.value}.`)
+    return
+  }
+  const dotIndex = feeAmount.value.indexOf('.')
+  if (dotIndex !== -1 && feeAmount.value.length - dotIndex >= 3) return
+  if (feeAmount.value.length >= 9) return
+  setFeeCandidate(`${feeAmount.value}${char}`)
+}
+
+function appendAmount(char: string): void {
   if (char === 'backspace') {
     amountDisplay.value = amountDisplay.value.slice(0, -1)
     if (amountDisplay.value === '') {
@@ -675,6 +932,11 @@ function goBack(): void {
 
 async function submit(): Promise<void> {
   if (!finance || !appStore.ledgerId || !canSubmit.value) return
+  // 捕获合并显示拆回：用户没改动输入框时，merchant 恢复为捕获商户名
+  // （note 已单独保存捕获备注；用户改过框则输入即商户，note 保留）
+  if (capturePresetCombined.value && merchant.value === capturePresetCombined.value) {
+    merchant.value = capturePresetMerchant.value
+  }
   saving.value = true
   errorMessage.value = ''
   try {
@@ -683,14 +945,18 @@ async function submit(): Promise<void> {
     const transferDiscount = mode.value === 'transfer' && hasDiscount.value
     const repaymentDiscount = mode.value === 'repayment' && hasDiscount.value
     const appliesAnyDiscount = appliesDiscount || transferDiscount
-    const originalAmountMinor = appliesAnyDiscount
+    const transferFee = mode.value === 'transfer' && feeMode.value && hasFee.value
+    const originalAmountMinor = appliesAnyDiscount || transferFee
       ? parseCnyInputToMinor(amountDisplay.value)
       : undefined
     const discountMinor = appliesAnyDiscount
       ? parseCnyInputToMinor(discountAmount.value)
       : undefined
+    const feeMinor = transferFee
+      ? parseCnyInputToMinor(feeAmount.value)
+      : undefined
     const amountMinor = parseCnyInputToMinor(
-      appliesAnyDiscount ? actualSpending.value : amountDisplay.value,
+      transferFee ? actualArrival.value : appliesAnyDiscount ? actualSpending.value : amountDisplay.value,
     )
     if (amountMinor <= 0) throw new Error('优惠后金额必须大于 0')
     if (isEditMode.value && editTransactionId.value) {
@@ -729,6 +995,13 @@ async function submit(): Promise<void> {
       await finance.editTransactionFull(input)
     } else {
       const occurredAtValue = occurredAt.value || new Date().toISOString()
+      // P1：捕获元数据透传（非空才写入，落库 capture_source/parser_version/confidence）
+      const captureMeta = {
+        captureSource: captureSource.value || undefined,
+        parserVersion: captureParserVersion.value || undefined,
+        confidence: captureConfidence.value,
+        fingerprint: captureFingerprint.value || undefined,
+      }
       if (mode.value === 'expense') {
         if (selectedSourceAccount.value?.normalBalance === 'credit') {
           await finance.createCreditPurchase({
@@ -739,6 +1012,7 @@ async function submit(): Promise<void> {
             occurredAt: occurredAtValue,
             merchant: merchant.value || undefined,
             note: note.value || undefined,
+            ...captureMeta,
             attachmentDataUris: attachmentDataUris.value,
             originalAmountMinor,
             discountMinor,
@@ -752,6 +1026,7 @@ async function submit(): Promise<void> {
             occurredAt: occurredAtValue,
             merchant: merchant.value || undefined,
             note: note.value || undefined,
+            ...captureMeta,
             attachmentDataUris: attachmentDataUris.value,
             originalAmountMinor,
             discountMinor,
@@ -766,6 +1041,7 @@ async function submit(): Promise<void> {
           occurredAt: occurredAtValue,
           merchant: merchant.value || undefined,
           note: note.value || undefined,
+          ...captureMeta,
           attachmentDataUris: attachmentDataUris.value,
         })
       } else if (mode.value === 'transfer') {
@@ -778,6 +1054,7 @@ async function submit(): Promise<void> {
             occurredAt: occurredAtValue,
             merchant: merchant.value || undefined,
             note: note.value || undefined,
+            ...captureMeta,
             attachmentDataUris: attachmentDataUris.value,
             ...(transferDiscount ? {
               originalAmountMinor,
@@ -786,6 +1063,15 @@ async function submit(): Promise<void> {
             } : {}),
           })
         } else {
+          // 手续费分类：费用 → "其他支出"
+          const feeCategory = transferFee
+            ? expenseCategories.value.find((c) => c.name.includes('其他支出') || c.name === '其它')
+            : undefined
+          if (transferFee && !feeCategory) {
+            errorMessage.value = '未找到「其他支出」分类，无法记录手续费'
+            saving.value = false
+            return
+          }
           await finance.createTransfer({
             ledgerId: appStore.ledgerId,
             amountMinor,
@@ -793,6 +1079,9 @@ async function submit(): Promise<void> {
             targetAccountId: targetAccountId.value,
             occurredAt: occurredAtValue,
             note: note.value || undefined,
+            feeMinor: transferFee ? feeMinor : undefined,
+            feeCategoryId: feeCategory?.id,
+            ...captureMeta,
             attachmentDataUris: attachmentDataUris.value,
             ...(transferDiscount ? {
               originalAmountMinor,
@@ -810,6 +1099,7 @@ async function submit(): Promise<void> {
           occurredAt: occurredAtValue,
           merchant: merchant.value || undefined,
           note: note.value || undefined,
+          ...captureMeta,
           attachmentDataUris: attachmentDataUris.value,
         })
       } else if (mode.value === 'repayment') {
@@ -821,6 +1111,7 @@ async function submit(): Promise<void> {
           occurredAt: occurredAtValue,
           merchant: merchant.value || undefined,
           note: note.value || undefined,
+          ...captureMeta,
           attachmentDataUris: attachmentDataUris.value,
           ...(repaymentDiscount ? {
             originalAmountMinor,
@@ -837,12 +1128,20 @@ async function submit(): Promise<void> {
           occurredAt: occurredAtValue,
           merchant: merchant.value || undefined,
           note: note.value || undefined,
+          ...captureMeta,
           originalTransactionId: originalRefundTransactionId.value,
           attachmentDataUris: attachmentDataUris.value,
         })
       }
     }
     ;(document.activeElement as HTMLElement | null)?.blur()
+    // P1：确认入账成功 → 指纹置 confirmed（永久拦截同一笔重复捕获；未保存则 30 分钟后自动允许重捕）
+    if (captureFingerprint.value) {
+      void PaymentCapture.markCaptureConfirmed({ fingerprint: captureFingerprint.value }).catch(() => {})
+    }
+    if (captureId.value > 0) {
+      void PaymentCapture.acknowledgeEvents({ ids: [captureId.value] }).catch(() => {})
+    }
     navigateBack(router, { name: 'home' })
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
@@ -950,7 +1249,7 @@ onUnmounted(() => {
         >
           <CategoryIcon
             :icon-key="cat.iconKey"
-            color="var(--color-primary-500)"
+            :color="selectedRootId === cat.id ? 'var(--color-primary-500)' : 'var(--color-text-tertiary)'"
             :size="32"
             :label="cat.name"
           />
@@ -1048,8 +1347,18 @@ onUnmounted(() => {
     </div>
 
     <section class="record-bottom">
+      <!-- 手续费模式：替换顶栏（转账提现等） -->
+      <div v-if="feeMode" class="note-row note-row--discount">
+        <div class="discount-left">
+          <span class="discount-title">手续费</span>
+          <span class="discount-sub">实际到账{{ actualArrival }}</span>
+        </div>
+        <span class="discount-value" :style="{ color: themeColor }">
+          {{ feeAmount || '0' }}
+        </span>
+      </div>
       <!-- 优惠模式：替换顶栏 -->
-      <div v-if="discountMode" class="note-row note-row--discount">
+      <div v-else-if="discountMode" class="note-row note-row--discount">
         <div class="discount-left">
           <span class="discount-title">优惠</span>
           <span class="discount-sub">实际支出{{ actualSpending }}</span>
@@ -1058,6 +1367,12 @@ onUnmounted(() => {
           {{ discountAmount || '0' }}
         </span>
       </div>
+      <!-- P1：正金额方向提示（外部打款/提现/红包等，用户确认方向，不强制切换） -->
+      <div v-if="captureHintVisible" class="capture-direction-hint">
+        <span class="capture-direction-hint__dot"></span>
+        检测到可能是{{ directionHintText }}——请在顶部切换到对应类型后再保存
+      </div>
+
       <!-- 正常模式：备注 + 金额 -->
       <div v-else class="note-row">
         <input
@@ -1065,7 +1380,7 @@ onUnmounted(() => {
           type="text"
           class="note-input"
           placeholder="点此输入备注…"
-          maxlength="40"
+          :maxlength="capturePresetCombined ? 80 : 40"
         />
         <div class="amount-display" :style="{ color: themeColor }">
           {{ amountDisplay }}
@@ -1420,6 +1735,26 @@ onUnmounted(() => {
   gap: var(--space-3);
   align-items: center;
   padding: var(--space-2) 0 var(--space-3);
+}
+
+.capture-direction-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning, #f59e0b) 12%, transparent);
+  color: var(--color-warning, #b45309);
+  font-size: var(--type-caption-size);
+}
+
+.capture-direction-hint__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
 }
 
 .note-input {

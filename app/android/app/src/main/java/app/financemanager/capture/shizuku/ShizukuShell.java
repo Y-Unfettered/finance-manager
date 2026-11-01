@@ -38,7 +38,25 @@ public class ShizukuShell {
 
     private final Object lock = new Object();
 
-    public ShizukuShell(String packageName) {
+    private static volatile ShizukuShell sInstance;
+
+    /**
+     * 全局单例：Shizuku 库内部为每次 bindUserService 创建 connection 对象，
+     * 多实例重复绑定会触发库内并发 bug（ConcurrentModificationException，已实测崩溃循环）。
+     * 全局只允许一个实例、一条 UserService 连接。
+     */
+    public static ShizukuShell getInstance(String packageName) {
+        if (sInstance == null) {
+            synchronized (ShizukuShell.class) {
+                if (sInstance == null) {
+                    sInstance = new ShizukuShell(packageName);
+                }
+            }
+        }
+        return sInstance;
+    }
+
+    private ShizukuShell(String packageName) {
         this.packageName = packageName;
     }
 

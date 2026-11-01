@@ -12,10 +12,14 @@ import type { IdGenerator } from '@/domain/identity'
 import type { SqliteExecutor, SqlStatement, SqlValue } from '../core/types'
 import { BaseRepository } from './base-repository'
 
-interface TransactionRow extends Omit<StoredTransaction, 'merchant' | 'counterparty' | 'note'> {
+interface TransactionRow extends Omit<StoredTransaction, 'merchant' | 'counterparty' | 'note' | 'captureSource' | 'parserVersion' | 'confidence' | 'fingerprint'> {
   merchant: string | null
   counterparty: string | null
   note: string | null
+  captureSource: string | null
+  parserVersion: string | null
+  confidence: number | null
+  fingerprint: string | null
 }
 
 interface EntryRow extends Omit<StoredEntry, 'accountId' | 'categoryId'> {
@@ -175,6 +179,10 @@ export class TransactionRepository extends BaseRepository {
       merchant: draft.merchant,
       counterparty: draft.counterparty,
       note: draft.note,
+      captureSource: draft.captureSource,
+      parserVersion: draft.parserVersion,
+      confidence: draft.confidence,
+      fingerprint: draft.fingerprint,
       createdAt,
       updatedAt: createdAt,
     }
@@ -185,8 +193,8 @@ export class TransactionRepository extends BaseRepository {
           INSERT INTO transactions (
             id, ledger_id, type, status, amount_minor, currency, occurred_at,
             merchant, counterparty, note, capture_source, parser_version,
-            confidence, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?)
+            confidence, fingerprint, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         values: [
           transaction.id,
@@ -199,6 +207,10 @@ export class TransactionRepository extends BaseRepository {
           transaction.merchant ?? null,
           transaction.counterparty ?? null,
           transaction.note ?? null,
+          transaction.captureSource ?? null,
+          transaction.parserVersion ?? null,
+          transaction.confidence ?? null,
+          transaction.fingerprint ?? null,
           transaction.createdAt,
           transaction.updatedAt,
         ],
@@ -587,6 +599,10 @@ const TRANSACTION_SELECT = `
     merchant,
     counterparty,
     note,
+    capture_source AS captureSource,
+    parser_version AS parserVersion,
+    confidence,
+    fingerprint,
     created_at AS createdAt,
     updated_at AS updatedAt
   FROM transactions
@@ -625,6 +641,10 @@ function mapTransaction(row: TransactionRow): StoredTransaction {
     merchant: row.merchant ?? undefined,
     counterparty: row.counterparty ?? undefined,
     note: row.note ?? undefined,
+    captureSource: row.captureSource ?? undefined,
+    parserVersion: row.parserVersion ?? undefined,
+    confidence: row.confidence ?? undefined,
+    fingerprint: row.fingerprint ?? undefined,
   }
 }
 

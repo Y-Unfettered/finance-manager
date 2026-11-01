@@ -49,12 +49,21 @@ export async function confirmEvent(input: ConfirmInput): Promise<{ transactionId
     categoryId: input.categoryId,
     occurredAt: input.event.occurredAt || new Date().toISOString(),
     merchant: input.event.merchant || undefined,
-    note: input.event.merchant
-      ? `自动记账-${input.event.captureMethod}-${input.event.merchant}`
-      : `自动记账-${input.event.captureMethod}`,
+    note: input.event.note
+      ? input.event.note
+      : input.event.merchant
+        ? `自动记账-${input.event.captureMethod}-${input.event.merchant}`
+        : `自动记账-${input.event.captureMethod}`,
+    captureSource: input.event.captureMethod || undefined,
+    parserVersion: input.event.parserVersion || undefined,
+    confidence: input.event.confidence || undefined,
   })
 
   await PaymentCapture.acknowledgeEvents({ ids: [input.event.id] })
+  // P1：确认入账 → 指纹置 confirmed（永久拦截重复捕获）
+  if (input.event.rawFingerprint) {
+    await PaymentCapture.markCaptureConfirmed({ fingerprint: input.event.rawFingerprint }).catch(() => {})
+  }
   return { transactionId }
 }
 
@@ -63,10 +72,24 @@ export async function dismissEvent(id: number): Promise<void> {
   await PaymentCapture.deleteCapturedEvent({ id })
 }
 
-/** 忽略全部。 */
+/** 重复交易拦截开关（设置页控制）。 */
+export function setDuplicateBlockEnabled(enabled: boolean): Promise<void> {
+  return PaymentCapture.setDuplicateBlockEnabled({ enabled })
+}
+
+export async function getDuplicateBlockEnabled(): Promise<boolean> {
+  try {
+    return (await PaymentCapture.getDuplicateBlockEnabled()).enabled
+  } catch {
+    return true
+  }
+}
+
+/** 忽略全部：待确认记录清空后，对应 pending 指纹一并清除（允许重新捕获；已入账的 confirmed 保留）。 */
 export async function dismissAll(): Promise<void> {
   const { events } = await listPendingEvents()
   await PaymentCapture.acknowledgeEvents({ ids: events.map((e) => e.id) })
+  await PaymentCapture.clearCaptureFingerprints({ pendingOnly: true }).catch(() => {})
 }
 
 /** 获取服务健康状态。 */
