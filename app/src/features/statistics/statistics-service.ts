@@ -232,9 +232,11 @@ function minPeriod(left: string, right: string): string {
 }
 
 export function yearRange(year: number): DateRange {
+  // 与月度口径保持一致：本地时区年界（原来用 Date.UTC，UTC+8 下元旦 0-8 点
+  // 的交易在年度视图归上一年、月度视图归新一年，两边对不上）
   return {
-    startUtc: new Date(Date.UTC(year, 0, 1)).toISOString(),
-    endUtc: new Date(Date.UTC(year + 1, 0, 1)).toISOString(),
+    startUtc: new Date(year, 0, 1).toISOString(),
+    endUtc: new Date(year + 1, 0, 1).toISOString(),
     label: `${year}年`,
   }
 }

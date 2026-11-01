@@ -12,7 +12,7 @@ import type { IdGenerator } from '@/domain/identity'
 import type { SqliteExecutor, SqlStatement, SqlValue } from '../core/types'
 import { BaseRepository } from './base-repository'
 
-interface TransactionRow extends Omit<StoredTransaction, 'merchant' | 'counterparty' | 'note' | 'captureSource' | 'parserVersion' | 'confidence' | 'fingerprint'> {
+interface TransactionRow extends Omit<StoredTransaction, 'merchant' | 'counterparty' | 'note' | 'captureSource' | 'parserVersion' | 'confidence' | 'fingerprint' | 'importBatchId'> {
   merchant: string | null
   counterparty: string | null
   note: string | null
@@ -20,6 +20,7 @@ interface TransactionRow extends Omit<StoredTransaction, 'merchant' | 'counterpa
   parserVersion: string | null
   confidence: number | null
   fingerprint: string | null
+  importBatchId: string | null
 }
 
 interface EntryRow extends Omit<StoredEntry, 'accountId' | 'categoryId'> {
@@ -183,6 +184,7 @@ export class TransactionRepository extends BaseRepository {
       parserVersion: draft.parserVersion,
       confidence: draft.confidence,
       fingerprint: draft.fingerprint,
+      importBatchId: draft.importBatchId,
       createdAt,
       updatedAt: createdAt,
     }
@@ -193,8 +195,8 @@ export class TransactionRepository extends BaseRepository {
           INSERT INTO transactions (
             id, ledger_id, type, status, amount_minor, currency, occurred_at,
             merchant, counterparty, note, capture_source, parser_version,
-            confidence, fingerprint, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            confidence, fingerprint, import_batch_id, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
         values: [
           transaction.id,
@@ -211,6 +213,7 @@ export class TransactionRepository extends BaseRepository {
           transaction.parserVersion ?? null,
           transaction.confidence ?? null,
           transaction.fingerprint ?? null,
+          transaction.importBatchId ?? null,
           transaction.createdAt,
           transaction.updatedAt,
         ],
@@ -603,6 +606,7 @@ const TRANSACTION_SELECT = `
     parser_version AS parserVersion,
     confidence,
     fingerprint,
+    import_batch_id AS importBatchId,
     created_at AS createdAt,
     updated_at AS updatedAt
   FROM transactions
@@ -645,6 +649,7 @@ function mapTransaction(row: TransactionRow): StoredTransaction {
     parserVersion: row.parserVersion ?? undefined,
     confidence: row.confidence ?? undefined,
     fingerprint: row.fingerprint ?? undefined,
+    importBatchId: row.importBatchId ?? undefined,
   }
 }
 

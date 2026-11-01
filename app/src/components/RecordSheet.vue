@@ -754,7 +754,12 @@ async function handleImageSelect(event: Event): Promise<void> {
       errorMessage.value = '单张图片不能超过 3 MB'
       continue
     }
-    attachmentDataUris.value.push(await readFileAsDataUri(file))
+    try {
+      attachmentDataUris.value.push(await readFileAsDataUri(file))
+    } catch {
+      // FileReader 失败必须捕获，否则 async 事件处理器产生 unhandled rejection 且用户无感知
+      errorMessage.value = '图片读取失败，请更换图片重试'
+    }
   }
 }
 

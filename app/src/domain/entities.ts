@@ -222,6 +222,8 @@ export interface StoredTransaction {
   confidence?: number
   /** 捕获指纹（自动记账防重，随账单数据持久化） */
   fingerprint?: string
+  /** 导入批次（导入链路溯源：批次撤销按它找到交易） */
+  importBatchId?: string
   createdAt: string
   updatedAt: string
 }

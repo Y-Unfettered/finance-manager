@@ -314,6 +314,11 @@ export class BackupRepository {
     const rows = await this.database.query<Record<string, SqlJsonValue>>(
       `SELECT ${columnList} FROM ${schema.name}`,
     )
+    // 应用锁凭据（PIN 哈希/盐）不进备份：备份 JSON 落公共目录，凭据随包导出
+    // 可被离线爆破。恢复后应用锁保持关闭，用户需重新设置 PIN。
+    if (schema.name === 'app_settings') {
+      return rows.filter((row) => !APP_LOCK_EXCLUDED_KEYS.has(String(row['key'] ?? '')))
+    }
     return rows
   }
 }
@@ -336,4 +341,7 @@ function normalizeValue(value: unknown): SqlValue {
 }
 
 export const BACKUP_TABLE_SCHEMAS = TABLE_SCHEMAS
+
+/** 备份时排除的应用锁凭据键（见 dumpTable 注释）。 */
+const APP_LOCK_EXCLUDED_KEYS = new Set(['app_lock_enabled', 'app_lock_pin_hash', 'app_lock_pin_salt'])
 export type { TableSchema }

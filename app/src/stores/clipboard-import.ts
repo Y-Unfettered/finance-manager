@@ -54,6 +54,11 @@ export const useClipboardImportStore = defineStore('clipboard-import', {
 
     /** 关闭弹窗并标记当前候选项为已忽略（调用原生 markConsumed）。 */
     async ignore() {
+      // 与 dismiss() 一致写入前端指纹缓存：否则 App 重启后同一内容会再次弹窗
+      const text = this.current?.text
+      if (text) {
+        setConsumedFingerprint(text)
+      }
       this.dialogVisible = false
       this.current = undefined
       try {

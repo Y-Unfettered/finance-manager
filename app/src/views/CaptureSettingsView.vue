@@ -14,7 +14,7 @@ import {
   RefreshCw,
   Code,
 } from '@lucide/vue'
-import { onActivated, onMounted, onUnmounted, ref } from 'vue'
+import { onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppTopBar from '@/components/AppTopBar.vue'
@@ -374,6 +374,12 @@ onActivated(async () => {
   // 每次进入设置页都尝试恢复一次
   void ensureShizukuRunning()
   void autoRecoverAccessibility()
+})
+
+// KeepAlive 缓存所有路由页：离开本页触发的是 onDeactivated 而非 onUnmounted，
+// 必须在这里停掉 2 秒诊断轮询，否则页面不可见时仍持续调原生诊断接口
+onDeactivated(() => {
+  stopPollDiagnostics()
 })
 
 onUnmounted(() => {

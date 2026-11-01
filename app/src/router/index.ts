@@ -168,6 +168,8 @@ const router = createRouter({
       name: 'app-lock',
       component: () => import('@/views/PinSetupView.vue'),
     },
+    // 404 兜底：history 模式下深链拼错/原生跳转失败时不至于白屏无出路
+    { path: '/:pathMatch(.*)*', redirect: { name: 'home' } },
   ],
 })
 

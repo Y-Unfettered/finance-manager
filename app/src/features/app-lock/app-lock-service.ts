@@ -17,7 +17,8 @@ export const appLockServiceKey: InjectionKey<AppLockService> = Symbol('appLockSe
 
 /**
  * 应用锁服务：管理 PIN 码的设置、验证与启用状态。
- * PIN 使用 SHA-256 + 随机盐哈希存储，不保存明文。
+ * PIN 使用 PBKDF2-SHA256（21 万轮）+ 随机盐哈希存储，不保存明文。
+ * 旧版本（单轮 SHA-256）哈希在验证成功后透明升级为 PBKDF2。
  */
 export class AppLockService {
   private readonly settings: AppSettingsRepository
@@ -44,25 +45,37 @@ export class AppLockService {
   /** 设置 PIN 码（同时启用应用锁） */
   async setupPin(pin: string): Promise<void> {
     assertPin(pin)
-    const salt = generateSalt()
-    const hash = await hashPin(pin, salt)
     const now = this.clock.nowIso()
+    const stored = await this.buildPbkdf2Storage(pin)
     await Promise.all([
-      this.settings.set(APP_LOCK_PIN_HASH_KEY, hash, now),
-      this.settings.set(APP_LOCK_PIN_SALT_KEY, salt, now),
+      this.settings.set(APP_LOCK_PIN_HASH_KEY, stored, now),
       this.settings.set(APP_LOCK_ENABLED_KEY, 'true', now),
     ])
   }
 
-  /** 验证 PIN 码 */
+  /** 验证 PIN 码。旧格式（单轮 SHA-256）验证成功后透明升级为 PBKDF2。 */
   async verifyPin(pin: string): Promise<boolean> {
-    const [storedHash, salt] = await Promise.all([
+    const [storedHash, legacySalt] = await Promise.all([
       this.settings.get(APP_LOCK_PIN_HASH_KEY),
       this.settings.get(APP_LOCK_PIN_SALT_KEY),
     ])
-    if (!storedHash || !salt) return false
-    const hash = await hashPin(pin, salt)
-    return constantTimeEqual(hash, storedHash)
+    if (!storedHash) return false
+
+    if (isPbkdf2Storage(storedHash)) {
+      const [, , salt, expected] = storedHash.split('$')
+      if (!salt || !expected) return false
+      const hash = await pbkdf2Hash(pin, salt)
+      return constantTimeEqual(hash, expected)
+    }
+
+    // 旧格式：单轮 SHA-256(salt:pin)
+    if (!legacySalt) return false
+    const legacy = await legacyHashPin(pin, legacySalt)
+    if (!constantTimeEqual(legacy, storedHash)) return false
+    // 验证通过 → 升级存储格式（旧 PIN 不变，仅加固）
+    const stored = await this.buildPbkdf2Storage(pin)
+    await this.settings.set(APP_LOCK_PIN_HASH_KEY, stored, this.clock.nowIso())
+    return true
   }
 
   /** 启用/禁用应用锁（需先设置 PIN） */
@@ -91,6 +104,13 @@ export class AppLockService {
     if (!ok) throw new Error('旧 PIN 码错误')
     await this.setupPin(newPin)
   }
+
+  /** 生成新的 PBKDF2 存储串（setupPin / 透明升级共用）。 */
+  private async buildPbkdf2Storage(pin: string): Promise<string> {
+    const salt = generateSalt()
+    const hash = await pbkdf2Hash(pin, salt)
+    return `pbkdf2$${PBKDF2_ITERATIONS}$${salt}$${hash}`
+  }
 }
 
 function assertPin(pin: string): void {
@@ -105,10 +125,40 @@ function generateSalt(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-async function hashPin(pin: string, salt: string): Promise<string> {
+/** PBKDF2 迭代次数：4-8 位纯数字 PIN 的离线爆破成本主要取决于它（OWASP 建议 ≥6e5，取 2.1e5 平衡移动端解锁延迟）。 */
+const PBKDF2_ITERATIONS = 210_000
+
+/** 旧版单轮 SHA-256 哈希（v1.1.0 及之前），仅用于验证并透明升级。 */
+async function legacyHashPin(pin: string, salt: string): Promise<string> {
   const data = new TextEncoder().encode(`${salt}:${pin}`)
   const digest = await crypto.subtle.digest('SHA-256', data)
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+async function pbkdf2Hash(pin: string, salt: string): Promise<string> {
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(pin),
+    'PBKDF2',
+    false,
+    ['deriveBits'],
+  )
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      hash: 'SHA-256',
+      salt: new TextEncoder().encode(salt),
+      iterations: PBKDF2_ITERATIONS,
+    },
+    keyMaterial,
+    256,
+  )
+  return Array.from(new Uint8Array(bits), (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/** 新存储格式：pbkdf2$<iterations>$<salt>$<hash>（自带参数，便于未来调轮次/换算法）。 */
+function isPbkdf2Storage(stored: string): boolean {
+  return stored.startsWith('pbkdf2$')
 }
 
 function constantTimeEqual(a: string, b: string): boolean {

@@ -1535,6 +1535,14 @@ export class FinanceService implements FinanceServicePort {
           break
         }
       }
+      // 编辑 = void 旧交易 + 插入新交易。新交易必须继承旧交易的捕获/导入溯源字段，
+      // 否则：导入批次撤销会漏掉已被编辑的交易；自动记账的防重指纹丢失后，
+      // 同一笔账单可被再次捕获成重复账单。
+      draft.captureSource = draft.captureSource ?? oldTransaction.captureSource
+      draft.parserVersion = draft.parserVersion ?? oldTransaction.parserVersion
+      draft.confidence = draft.confidence ?? oldTransaction.confidence
+      draft.fingerprint = draft.fingerprint ?? oldTransaction.fingerprint
+      draft.importBatchId = draft.importBatchId ?? oldTransaction.importBatchId
       const replacement = await this.transactions.replace(
         input.ledgerId,
         input.transactionId,

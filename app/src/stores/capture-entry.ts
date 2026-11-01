@@ -244,11 +244,15 @@ export const useCaptureEntryStore = defineStore('capture-entry', {
         this.confirming = false
         // 延迟隐藏，让用户看到成功提示
         if (this.message === '入账成功') {
+          const confirmed = this.current
           setTimeout(() => {
-            this.current = null
-            this.accountId = ''
-            this.categoryId = ''
-            this.message = ''
+            // 600ms 窗口内若已有新捕获进入（current 被覆盖为新对象），不能误清新记录
+            if (this.current === confirmed) {
+              this.current = null
+              this.accountId = ''
+              this.categoryId = ''
+              this.message = ''
+            }
           }, 600)
         }
       }

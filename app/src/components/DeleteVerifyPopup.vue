@@ -199,7 +199,4 @@ watch(() => props.show, (v) => {
   opacity: 0.4;
   cursor: not-allowed;
 }
-* {
-  box-shadow: none !important;
-}
 </style>
