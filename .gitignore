@@ -31,3 +31,11 @@ debug_check.db
 screen.png
 wx_ui.xml
 .zcode/
+.trae/
+*.log
+/sc*.png
+/screenshot_*.png
+/test-json/
+/UI参考图/
+/UI设计稿/
+/UI设计稿_v2/

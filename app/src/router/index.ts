@@ -168,11 +168,6 @@ const router = createRouter({
       name: 'app-lock',
       component: () => import('@/views/PinSetupView.vue'),
     },
-    {
-      path: '/foundation',
-      name: 'foundation',
-      component: () => import('@/views/FoundationView.vue'),
-    },
   ],
 })
 
