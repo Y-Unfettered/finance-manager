@@ -113,12 +113,6 @@ const router = createRouter({
       component: CaptureInboxView,
     },
     {
-      path: '/capture-quick',
-      name: 'capture-quick',
-      component: () => import('@/views/CaptureQuickView.vue'),
-      meta: { swipeBack: false },
-    },
-    {
       path: '/capture-settings',
       name: 'capture-settings',
       component: () => import('@/views/CaptureSettingsView.vue'),

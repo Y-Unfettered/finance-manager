@@ -39,9 +39,6 @@ public class MainActivity extends BridgeActivity {
 
         super.onCreate(savedInstanceState);
 
-        // 清理之前 overlay 测试数据
-        app.financemanager.capture.overlay.OverlayDbWriter.cleanupTestData(this);
-
         // 注册 Shizuku binder 接收器（sticky 模式：已授权则立即收到，未来授权也能收到）。
         // ShizukuProvider.onCreate() 已在此时调用 Shizuku.setContext()，所以现在可以注册接收器。
         // 同时主动请求 binder——因为 Shizuku manager 在扫描授权 app 时如果我们的进程不在，
@@ -105,40 +102,15 @@ public class MainActivity extends BridgeActivity {
         );
         privacyOverlay = overlay;
 
-        // 从无障碍捕获拉起：自动跳转到 /capture-quick?pendingId=X
-        final long pendingId = getIntent() != null ? getIntent().getLongExtra("pendingId", -1L) : -1L;
-        if (pendingId > 0) {
-            Log.d(TAG, "收到 pendingId=" + pendingId + "，准备跳转 capture-quick");
-            findViewById(android.R.id.content).postDelayed(() -> {
-                try {
-                    if (getBridge() != null && getBridge().getWebView() != null) {
-                        String js = "location.hash='#/capture-quick?pendingId=" + pendingId + "';";
-                        getBridge().getWebView().evaluateJavascript(js, null);
-                        Log.d(TAG, "已跳转 capture-quick pendingId=" + pendingId);
-                    }
-                } catch (Exception e) {
-                    Log.e(TAG, "跳转 capture-quick 失败", e);
-                }
-            }, 800);
-        }
+        // 从无障碍捕获拉起：checkPendingCaptureData() 在前端统一处理跳转记账页
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        final long pendingId = intent != null ? intent.getLongExtra("pendingId", -1L) : -1L;
-        if (pendingId > 0) {
-            Log.d(TAG, "onNewIntent pendingId=" + pendingId);
-            findViewById(android.R.id.content).postDelayed(() -> {
-                try {
-                    if (getBridge() != null && getBridge().getWebView() != null) {
-                        String js = "location.hash='#/capture-quick?pendingId=" + pendingId + "';";
-                        getBridge().getWebView().evaluateJavascript(js, null);
-                    }
-                } catch (Exception ignored) {}
-            }, 500);
-        }
+        // 捕获数据的跳转由前端 checkPendingCaptureData() 统一处理（原 /capture-quick
+        // hash 注入链路与 history 路由模式不匹配，从未生效，已删除）
     }
 
     @Override

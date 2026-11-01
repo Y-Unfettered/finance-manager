@@ -128,7 +128,7 @@ public class UserService extends IShell.Stub {
         return output.toString().trim();
     }
 
-    @Override
+    /** Shizuku 解绑时的生命周期回调（非 IShell 接口方法）。 */
     public void destroy() {
         running = false;
         if (watchdogThread != null) {

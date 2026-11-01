@@ -6,7 +6,7 @@ import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 
 import ClipboardImportDialog from '@/components/ClipboardImportDialog.vue'
-import CaptureQuickEntrySheet from '@/components/CaptureQuickEntrySheet.vue'
+
 import PinUnlockView from '@/views/PinUnlockView.vue'
 import RoutePageFrame from '@/components/RoutePageFrame.vue'
 import { appLockServiceKey } from '@/features/app-lock/app-lock-service'
@@ -16,7 +16,6 @@ import { getLogger } from '@/features/debug/app-logger'
 import { ClipboardReader } from '@/features/clipboard/clipboard-reader'
 import { isConsumedFingerprint } from '@/features/clipboard/clipboard-fingerprint-cache'
 import { useAppStore } from '@/stores/app'
-import { useCaptureEntryStore, parseSuggestedCategory } from '@/stores/capture-entry'
 import { useClipboardImportStore } from '@/stores/clipboard-import'
 import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
 import { autoRecoverAccessibility, ensureShizukuRunning } from '@/features/capture-inbox/capture-inbox-service'
@@ -33,7 +32,6 @@ const lockStore = useAppLockStore()
 const appLockService = inject(appLockServiceKey)
 const autoBackupService = inject(autoBackupServiceKey)
 const clipboardImportStore = useClipboardImportStore()
-const captureEntryStore = useCaptureEntryStore()
 const log = getLogger('clipboard')
 
 const privacyVeil = ref(false)
@@ -410,63 +408,8 @@ onMounted(async () => {
       log.error('App.vue: paymentCaptureCandidate 监听器注册失败', { msg })
     }
 
-    // 原生悬浮窗"记一笔"按钮：用户在微信/支付宝上层点了确认，前端用规则推荐直接入账
-    try {
-      await PaymentCapture.addListener('overlayCommitRequest', async (data) => {
-        log.info('收到 overlayCommitRequest 事件', { amountMinor: data.amountMinor, merchant: data.merchant })
-        try {
-          if (appStore.databaseStatus !== 'ready') {
-            await PaymentCapture.onOverlayCommitDone({ success: false, message: '数据库未就绪' })
-            return
-          }
-          // 加载账户与分类
-          await captureEntryStore.loadOptions()
-          if (!captureEntryStore.accounts.length || !captureEntryStore.categories.length) {
-            await PaymentCapture.onOverlayCommitDone({ success: false, message: '账户或分类为空' })
-            return
-          }
-          // 选账户
-          let accountId = ''
-          if (data.defaultAccountId && captureEntryStore.accounts.some((a) => a.id === data.defaultAccountId)) {
-            accountId = data.defaultAccountId
-          } else if (data.accountHint) {
-            const hint = data.accountHint.toLowerCase()
-            const m = captureEntryStore.accounts.find((a) => a.name.toLowerCase().includes(hint))
-            if (m) accountId = m.id
-          }
-          if (!accountId) accountId = captureEntryStore.accounts[0]!.id
-
-          // 选分类：优先规则建议
-          let categoryId = ''
-          const parsed = parseSuggestedCategory(data.suggestedCategory)
-          if (parsed && captureEntryStore.categories.some((c) => c.id === parsed.categoryId)) {
-            categoryId = parsed.categoryId
-          }
-          if (!categoryId) categoryId = captureEntryStore.categories[0]!.id
-
-          const { confirmEvent } = await import('@/features/capture-inbox/capture-inbox-service')
-          await confirmEvent({
-            event: { ...data },
-            accountId,
-            categoryId,
-          })
-          await PaymentCapture.onOverlayCommitDone({
-            success: true,
-            message: `¥${(data.amountMinor / 100).toFixed(2)} ${data.merchant || ''}`.trim(),
-          })
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err)
-          log.error('overlayCommitRequest 入账失败', { msg })
-          try {
-            await PaymentCapture.onOverlayCommitDone({ success: false, message: msg })
-          } catch { /* ignore */ }
-        }
-      })
-      log.info('App.vue: overlayCommitRequest 监听器注册完成')
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      log.error('App.vue: overlayCommitRequest 监听器注册失败', { msg })
-    }
+    // 原生悬浮窗"记一笔"整条链路已删除（OverlayEntryManager/OverlayQuickEntryActivity），
+    // overlayCommitRequest 不再有原生发送方，监听器一并移除。
 
     log.info('App.vue: 冷启动兜底检查', { databaseStatus: appStore.databaseStatus, nativePlatform: Capacitor.isNativePlatform() })
     if (appStore.databaseStatus === 'ready') {
@@ -555,7 +498,6 @@ watch(
   <ClipboardImportDialog />
 
   <!-- 当场弹窗记账：原生侧检测到支付完成后，底部弹出快速入账卡片 -->
-  <CaptureQuickEntrySheet />
 </template>
 
 <style>

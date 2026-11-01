@@ -19,9 +19,6 @@ public interface IShell extends IInterface {
     /** 执行 shell 命令 */
     String execCommand(String command) throws RemoteException;
 
-    /** Shizuku server 的 destroy 方法 */
-    void destroy() throws RemoteException;
-
     /**
      * Binder 代理，用于跨进程调用。
      */
@@ -52,20 +49,6 @@ public interface IShell extends IInterface {
                 reply.recycle();
             }
         }
-
-        @Override
-        public void destroy() throws RemoteException {
-            Parcel data = Parcel.obtain();
-            Parcel reply = Parcel.obtain();
-            try {
-                data.writeInterfaceToken(DESCRIPTOR);
-                mRemote.transact(TXN_DESTROY, data, reply, 0);
-                reply.readException();
-            } finally {
-                data.recycle();
-                reply.recycle();
-            }
-        }
     }
 
     /**
@@ -90,11 +73,6 @@ public interface IShell extends IInterface {
                     reply.writeString(result != null ? result : "");
                     return true;
                 }
-                case TXN_DESTROY: {
-                    destroy();
-                    reply.writeNoException();
-                    return true;
-                }
                 case IBinder.INTERFACE_TRANSACTION: {
                     reply.writeString(DESCRIPTOR);
                     return true;
@@ -113,5 +91,4 @@ public interface IShell extends IInterface {
     }
 
     static final int TXN_EXEC_COMMAND = IBinder.FIRST_CALL_TRANSACTION;
-    static final int TXN_DESTROY = IBinder.FIRST_CALL_TRANSACTION + 16777114;
 }

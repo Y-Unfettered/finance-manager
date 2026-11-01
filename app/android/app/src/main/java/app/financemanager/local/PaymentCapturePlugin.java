@@ -63,11 +63,6 @@ public class PaymentCapturePlugin extends Plugin {
     /** 事件名：捕获队列变化时推送到前端 */
     public static final String EVENT_CANDIDATE = "paymentCaptureCandidate";
     public static final String EVENT_SERVICE_HEALTH = "paymentCaptureServiceHealth";
-    public static final String EVENT_QUICK_ENTRY = "paymentCaptureQuickEntry";
-    /** 事件名：原生悬浮窗请求前端直接入账（用户在悬浮窗点了"记一笔"） */
-    public static final String EVENT_OVERLAY_COMMIT_REQUEST = "overlayCommitRequest";
-    /** 事件名：原生悬浮窗请求前端忽略该条（用户在悬浮窗点了"忽略"） */
-    public static final String EVENT_OVERLAY_DISMISS = "overlayDismiss";
 
     /** 测试事件版本号 */
     public static final String PARSER_VERSION = "0.1.0";
@@ -888,81 +883,6 @@ public class PaymentCapturePlugin extends Plugin {
     }
 
     /**
-     * 当场弹窗记账事件推送。
-     *
-     * 原生侧检测到支付成功，在写入捕获队列后调用此方法，
-     * 通知前端直接弹出 CaptureQuickEntrySheet。
-     * 线程安全：内部 post 到主线程执行。
-     */
-    public static void notifyQuickEntry(CaptureQueueEntity entity) {
-        final PaymentCapturePlugin instance = INSTANCE;
-        if (instance == null || instance.bridge == null) {
-            Log.d(TAG, "notifyQuickEntry: 插件未就绪，跳过推送");
-            return;
-        }
-        instance.mainThreadPost(() -> instance.notifyQuickEntryCandidate(entity));
-    }
-
-    public void notifyQuickEntryCandidate(CaptureQueueEntity entity) {
-        if (bridge == null) {
-            Log.d(TAG, "notifyQuickEntryCandidate: bridge 不可用");
-            return;
-        }
-        JSObject payload = entityToJS(entity);
-        notifyListeners(EVENT_QUICK_ENTRY, payload);
-    }
-
-    /**
-     * 原生悬浮窗点了"记一笔"：把事件抛给前端，让前端用规则推荐的账户/分类直接入账。
-     * 前端入账完成后会调 onOverlayCommitDone 回调。
-     */
-    public static void notifyOverlayCommitRequest(CaptureQueueEntity entity) {
-        final PaymentCapturePlugin instance = INSTANCE;
-        if (instance == null || instance.bridge == null) {
-            Log.d(TAG, "notifyOverlayCommitRequest: bridge 未就绪");
-            return;
-        }
-        instance.mainThreadPost(() -> {
-            JSObject payload = instance.entityToJS(entity);
-            instance.notifyListeners(EVENT_OVERLAY_COMMIT_REQUEST, payload);
-        });
-    }
-
-    /**
-     * 原生悬浮窗点了"记一笔"：带选中的分类和账户 ID 推给前端入账。
-     */
-    public static void notifyOverlayCommitWithSelection(CaptureQueueEntity entity,
-                                                         String categoryId, String accountId) {
-        final PaymentCapturePlugin instance = INSTANCE;
-        if (instance == null || instance.bridge == null) {
-            Log.d(TAG, "notifyOverlayCommitWithSelection: bridge 未就绪");
-            return;
-        }
-        instance.mainThreadPost(() -> {
-            JSObject payload = instance.entityToJS(entity);
-            if (categoryId != null) payload.put("selectedCategoryId", categoryId);
-            if (accountId != null) payload.put("selectedAccountId", accountId);
-            instance.notifyListeners(EVENT_OVERLAY_COMMIT_REQUEST, payload);
-        });
-    }
-
-    /**
-     * 原生悬浮窗点了"忽略"：从队列删除该记录。
-     */
-    public static void notifyOverlayDismiss(CaptureQueueEntity entity) {
-        try {
-            if (entity != null && entity.getId() > 0) {
-                CaptureQueueDao dao = getDaoStatic();
-                if (dao != null) {
-                    dao.delete(entity.getId());
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "notifyOverlayDismiss: 删除失败", e);
-        }
-    }
-
-    /**
      * 拉起 MainActivity 并携带捕获数据，前端 checkPendingCaptureData 会读取并跳转记账页。
      *
      * 无障碍 / 通知服务检测到支付后统一走这里：
@@ -1020,27 +940,28 @@ public class PaymentCapturePlugin extends Plugin {
         }
     }
 
-    /**
-     * 前端入账完成后回调原生：原生关闭悬浮窗并 Toast 提示。
-     */
+    /** 检查悬浮窗权限。 */
     @PluginMethod
-    public void onOverlayCommitDone(PluginCall call) {
-        boolean success = call.getBoolean("success", false);
-        String message = call.getString("message", "");
-        try {
-            app.financemanager.capture.overlay.OverlayEntryManager
-                    .getInstance(getContext())
-                    .onCommitDone(success, message);
-        } catch (Exception e) {
-            Log.w(TAG, "onOverlayCommitDone: 失败", e);
-        }
-        call.resolve();
+    public void canDrawOverlay(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("granted", android.provider.Settings.canDrawOverlays(getContext()));
+        call.resolve(ret);
     }
 
-    /**
-     * 前端把分类和账户列表同步给原生，供原生悬浮窗直接渲染选择。
-     * 前端 APP 启动时调用一次即可。
-     */
+    /** 跳转悬浮窗权限设置页。 */
+    @PluginMethod
+    public void openOverlaySettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:" + getContext().getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            call.resolve();
+        } catch (Exception e) {
+            call.reject("打开悬浮窗设置失败: " + e.getMessage());
+        }
+    }
+
     @PluginMethod
     public void log(PluginCall call) {
         String msg = call.getString("msg", "");
@@ -1180,32 +1101,6 @@ public class PaymentCapturePlugin extends Plugin {
     }
 
     @PluginMethod
-    public void getPendingOverlayCommit(PluginCall call) {
-        android.content.SharedPreferences sp = getContext().getSharedPreferences("overlay_cache", android.content.Context.MODE_PRIVATE);
-        long amount = sp.getLong("pending_amount_minor", 0);
-        if (amount <= 0) {
-            call.resolve();
-            return;
-        }
-        String merchant = sp.getString("pending_merchant", "");
-        String occurredAt = sp.getString("pending_occurred_at", "");
-        String categoryId = sp.getString("pending_category_id", "");
-        String accountId = sp.getString("pending_account_id", "");
-        // 读出来就清掉
-        sp.edit().remove("pending_amount_minor").remove("pending_merchant")
-                .remove("pending_occurred_at").remove("pending_category_id")
-                .remove("pending_account_id").apply();
-        JSObject ret = new JSObject();
-        ret.put("amountMinor", amount);
-        ret.put("merchant", merchant);
-        ret.put("occurredAt", occurredAt);
-        ret.put("categoryId", categoryId);
-        ret.put("accountId", accountId);
-        Log.d(TAG, "getPendingOverlayCommit: amount=" + amount + " merchant=" + merchant);
-        call.resolve(ret);
-    }
-
-    @PluginMethod
     public void setActiveLedgerId(PluginCall call) {
         String ledgerId = call.getString("ledgerId", "");
         getContext().getSharedPreferences("overlay_cache", android.content.Context.MODE_PRIVATE)
@@ -1214,46 +1109,6 @@ public class PaymentCapturePlugin extends Plugin {
         call.resolve();
     }
 
-    @PluginMethod
-    public void syncOverlayOptions(PluginCall call) {
-        try {
-            JSArray categories = call.getArray("categories", new JSArray());
-            JSArray accounts = call.getArray("accounts", new JSArray());
-            String ledgerId = call.getString("ledgerId", "");
-            android.content.SharedPreferences sp = getContext().getSharedPreferences("overlay_cache", android.content.Context.MODE_PRIVATE);
-            android.content.SharedPreferences.Editor ed = sp.edit();
-            ed.putString("categories", categories.toString());
-            ed.putString("accounts", accounts.toString());
-            ed.putString("ledger_id", ledgerId);
-            ed.apply();
-            Log.d(TAG, "syncOverlayOptions: ledger=" + ledgerId + " categories=" + categories.length() + " accounts=" + accounts.length());
-            call.resolve();
-        } catch (Exception e) {
-            Log.w(TAG, "syncOverlayOptions: 失败", e);
-            call.reject("同步失败: " + e.getMessage());
-        }
-    }
-
-    /** 检查悬浮窗权限。 */
-    @PluginMethod
-    public void canDrawOverlay(PluginCall call) {
-        JSObject ret = new JSObject();
-        ret.put("granted", app.financemanager.capture.overlay.OverlayEntryManager
-                .getInstance(getContext()).canDrawOverlay());
-        call.resolve(ret);
-    }
-
-    /** 跳转悬浮窗权限设置页。 */
-    @PluginMethod
-    public void openOverlaySettings(PluginCall call) {
-        try {
-            app.financemanager.capture.overlay.OverlayEntryManager
-                    .getInstance(getContext()).openOverlaySettings();
-            call.resolve();
-        } catch (Exception e) {
-            call.reject("打开悬浮窗设置失败: " + e.getMessage());
-        }
-    }
 
     private static CaptureQueueDao getDaoStatic() {
         try {
