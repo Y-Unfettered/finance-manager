@@ -28,6 +28,10 @@ public interface CaptureQueueDao {
     @Query("SELECT COUNT(*) FROM capture_queue WHERE status = 'pending'")
     int pendingCount();
 
+    /** 清理 7 天前已处理（acknowledged/dismissed/expired）的队列记录，防止表无界增长。 */
+    @Query("DELETE FROM capture_queue WHERE status != 'pending' AND createdAt < :beforeMs")
+    int deleteProcessedBefore(long beforeMs);
+
     // --- capture_fingerprint 表（持久去重） ---
 
     @Query("SELECT * FROM capture_fingerprint WHERE fingerprint = :fingerprint LIMIT 1")

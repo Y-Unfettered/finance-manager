@@ -55,7 +55,10 @@ public class ClipboardReaderPlugin extends Plugin {
         if (current != null) {
             consumedContent = current;
             lastSeenContent = current;
-            Log.d(TAG, "markConsumed() -> length=" + current.length() + " head=" + head(current, 60));
+            // 剪贴板内容可能是密码/验证码等敏感信息，只在 debug 构建输出内容摘要
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "markConsumed() -> length=" + current.length() + " head=" + head(current, 60));
+            }
         } else {
             Log.d(TAG, "markConsumed() -> 当前剪贴板为空");
         }
@@ -73,9 +76,12 @@ public class ClipboardReaderPlugin extends Plugin {
         JSObject result = readClipboard();
         String value = result.getString("value");
         boolean hasContent = result.getBoolean("hasContent", false);
-        Log.d(TAG, "handleOnResume: hasContent=" + hasContent
-                + " length=" + (value == null ? 0 : value.length())
-                + " head=" + head(value, 80));
+        // 剪贴板内容可能是密码/验证码等敏感信息，只在 debug 构建输出内容摘要
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "handleOnResume: hasContent=" + hasContent
+                    + " length=" + (value == null ? 0 : value.length())
+                    + " head=" + head(value, 80));
+        }
 
         if (!hasContent || TextUtils.isEmpty(value)) {
             Log.d(TAG, "handleOnResume: 剪贴板为空 -> 跳过");

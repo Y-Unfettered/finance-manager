@@ -147,6 +147,18 @@ public class PaymentAccessibilityService extends AccessibilityService {
             Log.w(TAG, "启动保活服务失败", e);
         }
 
+        // 清理 7 天前已处理的捕获队列记录（acknowledged/dismissed），防止表无界增长
+        DB_EXECUTOR.execute(() -> {
+            try {
+                int removed = CaptureQueueDatabase.getInstance(this.getApplicationContext())
+                        .captureQueueDao()
+                        .deleteProcessedBefore(System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000);
+                if (removed > 0) Log.d(TAG, "队列清理: 删除 " + removed + " 条过期记录");
+            } catch (Exception e) {
+                Log.w(TAG, "队列清理失败", e);
+            }
+        });
+
         // 注意：FLAG_REPORT_VIEW_IDS 在小米澎湃 OS / HarmonyOS 等定制 ROM 上会导致
         // setServiceInfo() 抛 SecurityException，进而使服务启用即崩溃、被系统移除。
         // 采用"完整 flags → 降级 flags"策略：先尝试包含重要节点 flag，失败则降级。

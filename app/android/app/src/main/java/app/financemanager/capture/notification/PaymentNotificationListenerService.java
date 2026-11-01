@@ -38,6 +38,16 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
         super.onListenerConnected();
         NotificationDiagnostics.listenerConnected(this.getApplicationContext());
         Log.d(TAG, "onListenerConnected: 通知监听服务已连接");
+        // 清理 7 天前已处理的捕获队列记录，防止表无界增长
+        DB_EXECUTOR.execute(() -> {
+            try {
+                CaptureQueueDatabase.getInstance(this.getApplicationContext())
+                        .captureQueueDao()
+                        .deleteProcessedBefore(System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000);
+            } catch (Exception e) {
+                Log.w(TAG, "队列清理失败", e);
+            }
+        });
     }
 
     @Override
@@ -75,7 +85,10 @@ public class PaymentNotificationListenerService extends NotificationListenerServ
                 text = textKeyChar.toString();
             }
 
-            Log.d(TAG, "通知 package=" + packageName + " title=" + title + " text=" + text.substring(0, Math.min(text.length(), 150)));
+            // 通知标题/正文含对方昵称与金额等敏感内容，只在 debug 构建输出
+            if (app.financemanager.local.BuildConfig.DEBUG) {
+                Log.d(TAG, "通知 package=" + packageName + " title=" + title + " text=" + text.substring(0, Math.min(text.length(), 150)));
+            }
 
             NotificationDiagnostics.notification(packageName, title, text);
 

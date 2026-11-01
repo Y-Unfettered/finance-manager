@@ -12,6 +12,7 @@ import app.financemanager.capture.accessibility.CapturedPaymentInfo;
 import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
+import app.financemanager.local.BuildConfig;
 import app.financemanager.local.PaymentCapturePlugin;
 
 import java.util.concurrent.ExecutorService;
@@ -65,7 +66,10 @@ public class PaymentShareActivity extends Activity {
             return;
         }
 
-        Log.d(TAG, "handleTextShare: " + text.substring(0, Math.min(text.length(), 100)));
+        // 分享文本/OCR 全文含账单细节，只在 debug 构建输出
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "handleTextShare: " + text.substring(0, Math.min(text.length(), 100)));
+        }
 
         CapturedPaymentInfo info = parseText(text);
         if (info == null) {
@@ -126,7 +130,9 @@ public class PaymentShareActivity extends Activity {
                     return;
                 }
 
-                Log.d(TAG, "OCR result: " + fullText.substring(0, Math.min(fullText.length(), 200)));
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "OCR result: " + fullText.substring(0, Math.min(fullText.length(), 200)));
+                }
 
                 CapturedPaymentInfo info = parseText(fullText);
                 if (info == null) {
@@ -160,7 +166,9 @@ public class PaymentShareActivity extends Activity {
     private CapturedPaymentInfo parseText(String text) {
         if (text == null || text.isEmpty()) return null;
 
-        Log.d(TAG, "parseText full: " + text.substring(0, Math.min(text.length(), 300)));
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "parseText full: " + text.substring(0, Math.min(text.length(), 300)));
+        }
 
         CapturedPaymentInfo info = new CapturedPaymentInfo();
         info.setConfidence("medium");

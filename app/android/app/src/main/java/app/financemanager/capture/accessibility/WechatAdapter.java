@@ -41,8 +41,11 @@ public class WechatAdapter implements PaymentParserAdapter {
     @Override
     public CapturedPaymentInfo parse(AccessibilityService service, AccessibilityNodeInfo root) {
         String text = PaymentParserAdapter.extractVisibleText(root);
-        Log.d(TAG, "页面文本长度=" + (text == null ? 0 : text.length())
-                + " 前300字: " + (text == null ? "(null)" : text.substring(0, Math.min(text.length(), 300))));
+        // 页面文本含对方昵称/备注等敏感内容，只在 debug 构建输出（release 会剥离）
+        if (app.financemanager.local.BuildConfig.DEBUG) {
+            Log.d(TAG, "页面文本长度=" + (text == null ? 0 : text.length())
+                    + " 前300字: " + (text == null ? "(null)" : text.substring(0, Math.min(text.length(), 300))));
+        }
         if (text == null || text.isEmpty()) {
             AccessibilityDiagnostics.textEmpty(getPackageName());
             return null;

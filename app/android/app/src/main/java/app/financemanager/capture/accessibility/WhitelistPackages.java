@@ -15,7 +15,8 @@ public final class WhitelistPackages {
     public static final String JD = "com.jingdong.app.mall";
     public static final String MEITUAN = "com.sankuai.meituan";
     public static final String DOUYIN = "com.ss.android.ugc.aweme";
-    public static final String PDD = "com.xunmeng.pinduoduo";
+    // 拼多多不在列表中：两个 Parser Registry 均无 PDD 适配器，留在白名单只会让
+    // 心跳对 PDD 前台做全量解析后 noAdapter 白耗主线程。适配器落地后再加回。
 
     public static final String[] ALL = {
             ALIPAY,
@@ -23,7 +24,6 @@ public final class WhitelistPackages {
             JD,
             MEITUAN,
             DOUYIN,
-            PDD,
     };
 
     public static final String[] NAMES = {
@@ -32,7 +32,6 @@ public final class WhitelistPackages {
             "京东",
             "美团",
             "抖音",
-            "拼多多",
     };
 
     /** 检查包名是否在白名单中。 */

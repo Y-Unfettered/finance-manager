@@ -58,8 +58,14 @@ public class AccessibilityEnabler {
             ShizukuShell shell = ShizukuShell.getInstance(context.getPackageName());
 
             // 获取当前已启用的无障碍服务列表
+            // ⚠️ exec 失败返回 null（如 UserService 尚未绑定完成），必须判空
             String cmdGet = "settings get secure enabled_accessibility_services";
-            String current = shell.exec(cmdGet).trim();
+            String raw = shell.exec(cmdGet);
+            if (raw == null) {
+                Log.w(TAG, "读取无障碍服务列表失败（Shizuku 未就绪）");
+                return false;
+            }
+            String current = raw.trim();
             if (current.equals("null") || current.isEmpty()) {
                 current = "";
             }
@@ -69,7 +75,6 @@ public class AccessibilityEnabler {
             // 如果已经启用，返回成功
             if (current.contains(componentName)) {
                 Log.d(TAG, "无障碍服务已启用");
-                shell.release();
                 return true;
             }
 
@@ -78,11 +83,16 @@ public class AccessibilityEnabler {
 
             String result1 = shell.exec("settings put secure enabled_accessibility_services " + newList);
             String result2 = shell.exec("settings put secure accessibility_enabled 1");
+            if (result1 == null || result2 == null) {
+                Log.w(TAG, "启用命令执行失败（Shizuku 未就绪或命令异常）");
+                return false;
+            }
 
-            boolean success = result1 != null && result2 != null;
+            // 复核：回读确认真实生效（此前只判非 null，put 失败也会误报成功）
+            String verify = shell.exec(cmdGet);
+            boolean success = verify != null && verify.contains(componentName);
             Log.d(TAG, "启用无障碍服务: " + (success ? "成功" : "失败"));
 
-            shell.release();
             return success;
 
         } catch (Exception e) {

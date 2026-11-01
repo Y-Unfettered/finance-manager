@@ -80,7 +80,12 @@
     <service
         android:name="app.financemanager.capture.keepalive.CaptureKeepAliveService"
         android:foregroundServiceType="specialUse"
-        android:exported="false" />
+        android:exported="false">
+        <!-- targetSdk 34+ 要求 specialUse 类型声明用途说明，否则部分 ROM 启动前台服务会失败 -->
+        <property
+            android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+            android:value="保持主进程存活以维持无障碍服务连接（自动记账捕获依赖）" />
+    </service>
 
     <!-- 自动记账通知监听服务：监听支付 APP 通知栏消息 -->
     <service

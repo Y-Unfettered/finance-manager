@@ -26,6 +26,10 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
+    // AGP 8 默认不生成 BuildConfig；敏感日志的 debug 门控（BuildConfig.DEBUG）依赖它
+    buildFeatures {
+        buildConfig true
+    }
     // AIDL: Shizuku UserService 通过 AIDL 跨进程通信
     sourceSets {
         main {

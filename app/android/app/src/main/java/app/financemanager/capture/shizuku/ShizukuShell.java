@@ -184,30 +184,32 @@ public class ShizukuShell {
      * 执行 shell 命令。
      *
      * @param command 要执行的 shell 命令
-     * @return 命令输出，失败时返回空字符串
+     * @return 命令输出；Shizuku 不可用 / UserService 未绑定 / 执行异常时返回 null。
+     *          ⚠️ 必须判 null——冷启动时 UserService 异步绑定尚未完成，此前的实现
+     *          失败返回 ""，被调用方 `result != null` 判成"成功"，造成恢复成功假象。
      */
     public String exec(String command) {
         Log.d(TAG, "exec: " + command);
 
         if (!isAvailable()) {
             Log.w(TAG, "Shizuku 不可用，无法执行命令");
-            return "";
+            return null;
         }
 
         IShell service = bindUserService();
         if (service == null) {
-            Log.e(TAG, "UserService 不可用");
-            return "";
+            Log.e(TAG, "UserService 不可用（可能绑定尚未完成，稍后重试）");
+            return null;
         }
 
         try {
             String result = service.execCommand(command);
             String preview = result != null ? result.substring(0, Math.min(result.length(), 200)) : "null";
             Log.d(TAG, "exec result: " + preview);
-            return result != null ? result : "";
+            return result;
         } catch (Exception e) {
             Log.e(TAG, "命令执行失败", e);
-            return "";
+            return null;
         }
     }
 
