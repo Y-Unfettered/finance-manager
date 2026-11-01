@@ -8,8 +8,11 @@
  * 4. 去重检测
  */
 import { PaymentCapture, type CapturedPayment } from '@/features/payment-capture/payment-capture-reader'
-import { useFinanceService } from '@/features/finance/finance-service'
+import type { FinanceServicePort } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
+import { getLogger } from '@/features/debug/app-logger'
+
+const logger = getLogger('captureInboxService')
 
 export type { CapturedPayment, ServiceHealth, AccessibilityDiagnosticsResult, NotificationDiagnosticsResult } from '@/features/payment-capture/payment-capture-reader'
 export type { AutoRecoverStatus, AutoRecoverResult } from '@/features/payment-capture/payment-capture-reader'
@@ -34,32 +37,72 @@ export async function listPendingEvents(): Promise<CaptureInboxResult> {
   return PaymentCapture.listPendingEvents()
 }
 
-/** 确认入账：创建支出记录 + 从捕获队列删除。 */
+/** 确认入账：按捕获方向入账（income→收入，其余→支出）+ 从捕获队列删除。 */
 export async function confirmEvent(input: ConfirmInput): Promise<{ transactionId: string }> {
   const appStore = useAppStore()
-  const finance = useFinanceService()
+  // ⚠️ 本函数运行在异步上下文（事件回调/store action），Vue 的 inject() 在这里拿不到
+  // setup 之外注入的服务（恒 undefined）。必须用 main.ts 启动时挂在 window/appStore 上的全局实例。
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- window 逃生舱，由 main.ts 写入
+  const finance = ((window as any).__financeService ?? appStore.financeService) as
+    | FinanceServicePort
+    | undefined
   const ledgerId = appStore.ledgerId
   if (!ledgerId) throw new Error('请先选择账本')
   if (!finance) throw new Error('账务服务不可用')
+  if (input.event.direction === 'transfer') {
+    // 转账需要选择转入账户，由确认页跳转完整记账页处理，不走一键确认
+    throw new Error('转账请在记账页确认')
+  }
 
-  const transactionId = await finance.createExpense({
-    ledgerId,
-    amountMinor: input.event.amountMinor,
-    accountId: input.accountId,
-    categoryId: input.categoryId,
-    occurredAt: input.event.occurredAt || new Date().toISOString(),
-    merchant: input.event.merchant || undefined,
-    note: input.event.note
-      ? input.event.note
-      : input.event.merchant
-        ? `自动记账-${input.event.captureMethod}-${input.event.merchant}`
-        : `自动记账-${input.event.captureMethod}`,
+  const captureMeta = {
     captureSource: input.event.captureMethod || undefined,
     parserVersion: input.event.parserVersion || undefined,
     confidence: input.event.confidence || undefined,
-  })
+    fingerprint: input.event.rawFingerprint || undefined,
+  }
+  const occurredAt = input.event.occurredAt || new Date().toISOString()
+  const note = input.event.note
+    ? input.event.note
+    : input.event.merchant
+      ? `自动记账-${input.event.captureMethod}-${input.event.merchant}`
+      : `自动记账-${input.event.captureMethod}`
 
-  await PaymentCapture.acknowledgeEvents({ ids: [input.event.id] })
+  let transactionId: string
+  if (input.event.direction === 'income') {
+    transactionId = await finance.createIncome({
+      ledgerId,
+      amountMinor: input.event.amountMinor,
+      accountId: input.accountId,
+      categoryId: input.categoryId,
+      occurredAt,
+      merchant: input.event.merchant || undefined,
+      note,
+      ...captureMeta,
+    })
+  } else {
+    transactionId = await finance.createExpense({
+      ledgerId,
+      amountMinor: input.event.amountMinor,
+      accountId: input.accountId,
+      categoryId: input.categoryId,
+      occurredAt,
+      merchant: input.event.merchant || undefined,
+      note,
+      ...captureMeta,
+    })
+  }
+
+  // ⚠️ 走到这里说明账已入成功。队列清理失败只影响去重与列表刷新，
+  // 绝不能向上抛——否则 UI 会把"已入账"当成"入账失败"，诱导用户再点一次确认，
+  // 造成同一笔账重复入账（指纹标记也在这之后，一旦中断同样执行不到）。
+  try {
+    await PaymentCapture.acknowledgeEvents({ ids: [input.event.id] })
+  } catch (e) {
+    logger.warn('入账成功但清理捕获队列失败（不影响入账结果）', {
+      id: input.event.id,
+      msg: e instanceof Error ? e.message : String(e),
+    })
+  }
   // P1：确认入账 → 指纹置 confirmed（永久拦截重复捕获）
   if (input.event.rawFingerprint) {
     await PaymentCapture.markCaptureConfirmed({ fingerprint: input.event.rawFingerprint }).catch(() => {})

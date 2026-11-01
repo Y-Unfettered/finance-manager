@@ -10,7 +10,7 @@ import {
   Image as ImageIcon,
   Clock,
 } from '@lucide/vue'
-import { onActivated, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
@@ -21,7 +21,11 @@ import CategoryIcon from '@/components/CategoryIcon.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import { findAccountCatalogItem } from '@/features/finance/account-catalog'
 import { formatMinorToCny } from '@/domain/money'
-import { useFinanceService, type ExpenseCategoryOption } from '@/features/finance/finance-service'
+import {
+  useFinanceService,
+  type ExpenseCategoryOption,
+  type IncomeCategoryOption,
+} from '@/features/finance/finance-service'
 import { getLogger } from '@/features/debug/app-logger'
 import type { AccountBalanceRecord } from '@/domain/entities'
 
@@ -49,9 +53,18 @@ const confirming = ref(false)
 const message = ref('')
 
 const categories = ref<ExpenseCategoryOption[]>([])
+const incomeCategories = ref<IncomeCategoryOption[]>([])
 const accounts = ref<AccountBalanceRecord[]>([])
 const selectedAccountId = ref('')
 const selectedCategoryId = ref('')
+
+/** 当前确认事件的捕获方向（expense/income/transfer/refund/confirm）。 */
+const isIncomeEvent = computed(() => selected.value?.direction === 'income')
+const isTransferEvent = computed(() => selected.value?.direction === 'transfer')
+/** 确认弹窗的分类池：收入捕获用收入分类，其余用支出分类。 */
+const confirmCategories = computed(() =>
+  isIncomeEvent.value ? incomeCategories.value : categories.value,
+)
 
 const health = ref<{
   accessibility: { enabled: boolean }
@@ -99,11 +112,13 @@ async function loadOptions(): Promise<void> {
     return
   }
   try {
-    const [cats, accts] = await Promise.all([
+    const [cats, incomeCats, accts] = await Promise.all([
       finance.listExpenseCategories(appStore.ledgerId),
+      finance.listIncomeCategories(appStore.ledgerId),
       finance.listAccounts(appStore.ledgerId),
     ])
     categories.value = cats.filter((c) => !c.parentId)
+    incomeCategories.value = incomeCats.filter((c) => !c.parentId)
     accounts.value = accts.filter(
       (a) => !a.archivedAt && a.visibleInEntry !== false && a.normalBalance === 'debit',
     )
@@ -120,6 +135,32 @@ async function openConfirm(event: CapturedPayment): Promise<void> {
   message.value = ''
   await loadOptions()
   showConfirmSheet.value = true
+}
+
+/** 转账类捕获：跳完整记账页（需选转入账户），事件保持 pending 由用户处理。 */
+function goRecordPage(): void {
+  const ev = selected.value
+  if (!ev) return
+  showConfirmSheet.value = false
+  router.push({
+    path: '/transactions/new',
+    query: {
+      mode: 'transfer',
+      direction: 'transfer',
+      amount: String(ev.amountMinor),
+      merchant: ev.merchant ?? '',
+      occurredAt: ev.occurredAt ?? '',
+      note: ev.note ?? '',
+      accountHint: ev.accountHint ?? '',
+      targetAccountHint: ev.targetAccountHint ?? '',
+      captureSource: ev.captureMethod ?? '',
+      parserVersion: ev.parserVersion ?? '',
+      confidence: ev.confidence != null ? String(ev.confidence) : '',
+      fingerprint: ev.rawFingerprint ?? '',
+      captureId: String(ev.id),
+      fee: ev.feeMinor != null ? String(ev.feeMinor) : '',
+    },
+  })
 }
 
 async function doConfirm(): Promise<void> {
@@ -307,55 +348,62 @@ onActivated(async () => {
           <span class="confirm-sheet__merchant">{{ selected.merchant || '—' }}</span>
         </div>
 
-        <section class="entry-section">
-          <span class="entry-section__label">支出分类</span>
-          <div class="entry-categories">
-            <button
-              v-for="cat in categories.slice(0, 12)"
-              :key="cat.id"
-              type="button"
-              :class="['entry-cat', { active: selectedCategoryId === cat.id }]"
-              @click="selectedCategoryId = cat.id"
-            >
-              <CategoryIcon
-                :icon-key="cat.iconKey"
-                color="var(--color-primary-500)"
-                :size="28"
-                :label="cat.name"
-              />
-              <span class="entry-cat__label">{{ cat.name }}</span>
-            </button>
-          </div>
-          <div v-if="categories.length === 0" class="entry-empty">暂无支出分类，请先在「设置」中添加</div>
-        </section>
+        <div v-if="isTransferEvent" class="entry-empty">
+          转账类捕获需要选择转入账户，请点击「去记账」在完整记账页确认。
+        </div>
+        <template v-else>
+          <section class="entry-section">
+            <span class="entry-section__label">{{ isIncomeEvent ? '收入分类' : '支出分类' }}</span>
+            <div class="entry-categories">
+              <button
+                v-for="cat in confirmCategories.slice(0, 12)"
+                :key="cat.id"
+                type="button"
+                :class="['entry-cat', { active: selectedCategoryId === cat.id }]"
+                @click="selectedCategoryId = cat.id"
+              >
+                <CategoryIcon
+                  :icon-key="cat.iconKey"
+                  color="var(--color-primary-500)"
+                  :size="28"
+                  :label="cat.name"
+                />
+                <span class="entry-cat__label">{{ cat.name }}</span>
+              </button>
+            </div>
+            <div v-if="confirmCategories.length === 0" class="entry-empty">
+              {{ isIncomeEvent ? '暂无收入分类，请先在「设置」中添加' : '暂无支出分类，请先在「设置」中添加' }}
+            </div>
+          </section>
 
-        <section class="entry-section">
-          <span class="entry-section__label">付款账户</span>
-          <div class="entry-accounts">
-            <button
-              v-for="acc in accounts.slice(0, 8)"
-              :key="acc.id"
-              type="button"
-              :class="['entry-account', { active: selectedAccountId === acc.id }]"
-              @click="selectedAccountId = acc.id"
-            >
-              <AccountBrandIcon
-                :label="acc.name"
-                :brand-key="acc.brandKey ?? appearance(acc).id"
-                :symbol="acc.iconKey ?? appearance(acc).symbol"
-                :color="acc.color ?? appearance(acc).color"
-                :size="'small'"
-              />
-              <div class="entry-account__info">
-                <span class="entry-account__name">{{ acc.name }}</span>
-                <span class="entry-account__balance">
-                  {{ formatMinorToCny(acc.balanceMinor) }}
-                </span>
-              </div>
-            </button>
-          </div>
-          <div v-if="accounts.length === 0" class="entry-empty">暂无付款账户，请先在「账户」中添加</div>
-        </section>
+          <section class="entry-section">
+            <span class="entry-section__label">{{ isIncomeEvent ? '入账账户' : '付款账户' }}</span>
+            <div class="entry-accounts">
+              <button
+                v-for="acc in accounts.slice(0, 8)"
+                :key="acc.id"
+                type="button"
+                :class="['entry-account', { active: selectedAccountId === acc.id }]"
+                @click="selectedAccountId = acc.id"
+              >
+                <AccountBrandIcon
+                  :label="acc.name"
+                  :brand-key="acc.brandKey ?? appearance(acc).id"
+                  :symbol="acc.iconKey ?? appearance(acc).symbol"
+                  :color="acc.color ?? appearance(acc).color"
+                  :size="'small'"
+                />
+                <div class="entry-account__info">
+                  <span class="entry-account__name">{{ acc.name }}</span>
+                  <span class="entry-account__balance">
+                    {{ formatMinorToCny(acc.balanceMinor) }}
+                  </span>
+                </div>
+              </button>
+            </div>
+            <div v-if="accounts.length === 0" class="entry-empty">暂无付款账户，请先在「账户」中添加</div>
+          </section>
+        </template>
 
         <div class="confirm-sheet__actions">
           <button
@@ -366,6 +414,14 @@ onActivated(async () => {
             忽略
           </button>
           <button
+            v-if="isTransferEvent"
+            class="entry-btn entry-btn--confirm"
+            @click="goRecordPage"
+          >
+            去记账
+          </button>
+          <button
+            v-else
             class="entry-btn entry-btn--confirm"
             :disabled="!selectedAccountId || !selectedCategoryId || confirming"
             @click="doConfirm"
