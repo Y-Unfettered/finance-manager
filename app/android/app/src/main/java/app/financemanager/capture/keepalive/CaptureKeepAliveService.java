@@ -95,7 +95,7 @@ public class CaptureKeepAliveService extends Service {
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("自动记账运行中")
                 .setContentText("无障碍服务正在监听支付通知")
-                .setSmallIcon(android.R.drawable.ic_menu_manage)
+                .setSmallIcon(app.financemanager.local.R.drawable.ic_capture_notification)
                 .setContentIntent(pendingIntent)
                 .setOngoing(true)
                 .setSilent(true)

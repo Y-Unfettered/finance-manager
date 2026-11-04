@@ -9,7 +9,9 @@
         <item name="colorAccent">@color/colorAccent</item>
     </style>
 
-    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <!-- 前端锁定浅色（index.html color-scheme: light），DayNight 会让系统深色模式下
+         的原生弹窗（日期选择/确认框）翻成深色挂在浅色页面上，故锁 Light -->
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="windowActionBar">false</item>
         <item name="windowNoTitle">true</item>
         <item name="android:background">@null</item>
@@ -20,8 +22,8 @@
         <item name="android:background">@drawable/splash</item>
     </style>
 
-    <!-- 悬浮窗记账 Activity：透明背景，浮在微信/支付宝上层 -->
-    <style name="Theme.OverlayTransparent" parent="Theme.AppCompat.DayNight.NoActionBar">
+    <!-- 透明背景，浮在其他应用上层（备用，当前无使用方） -->
+    <style name="Theme.OverlayTransparent" parent="Theme.AppCompat.Light.NoActionBar">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowNoTitle">true</item>

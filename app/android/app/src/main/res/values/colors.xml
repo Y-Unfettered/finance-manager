@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <!-- 品牌色，与前端 design-system/tokens.css 对齐。
+         此前未定义，styles.xml 引用的 @color/colorPrimary 等落在 Capacitor 库默认靛蓝上，
+         原生弹窗（日期选择/确认框）强调色与 App 品牌脱节。 -->
+    <color name="colorPrimary">#176B5D</color>
+    <color name="colorPrimaryDark">#12574E</color>
+    <color name="colorAccent">#D8A248</color>
+    <color name="background">#F4F6F3</color>
+</resources>

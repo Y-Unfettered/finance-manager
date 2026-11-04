@@ -82,16 +82,16 @@ public class MainActivity extends BridgeActivity {
             ViewCompat.requestApplyInsets(contentView);
         }
 
-        // 创建原生遮罩 View：白色背景 + 居中文字"财务经理"
+        // 创建原生遮罩 View：品牌背景色 + 居中应用名
         // 在窗口失去焦点时立即显示，先于系统截图。
         // 用户上滑进入任务中心时，窗口会先触发 onWindowFocusChanged(false)，
         // 系统**之后**才截图。比 onPause 早一个时序，确保截图前已遮罩。
         TextView overlay = new TextView(this);
-        overlay.setText("财务经理");
-        overlay.setTextColor(Color.parseColor("#9E9E9E"));
+        overlay.setText("私人记账");
+        overlay.setTextColor(Color.parseColor("#98A19E"));
         overlay.setTextSize(20);
         overlay.setGravity(Gravity.CENTER);
-        overlay.setBackgroundColor(Color.WHITE);
+        overlay.setBackgroundColor(Color.parseColor("#F4F6F3"));
         overlay.setVisibility(View.GONE);
         addContentView(
             overlay,
