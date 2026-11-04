@@ -588,7 +588,7 @@ public class PaymentCapturePlugin extends Plugin {
             String fingerprint = "self_test_" + randomToken();
             CaptureQueueEntity test = new CaptureQueueEntity();
             test.setSourcePackage("com.financemanager.test");
-            test.setSourceName("财务经理-自检");
+            test.setSourceName("私人记账-自检");
             test.setCaptureMethod("self_test");
             test.setOccurredAt(String.valueOf(System.currentTimeMillis()));
             test.setAmountMinor(999L);
@@ -1140,6 +1140,16 @@ public class PaymentCapturePlugin extends Plugin {
             a11y.put("perPkg", a11yPkg);
             diag.put("accessibilityDiagnostics", a11y);
 
+            // 前端运行日志（app-logger：剪贴板/导入/记账等流程）——统一日志导出时合并进来，
+            // 避免用户在"诊断日志"和"自动记账导出"两个入口间不知道该分享哪个
+            try {
+                String frontendLogs = call.getString("frontendLogs");
+                if (frontendLogs != null && !frontendLogs.isEmpty()) {
+                    diag.put("frontendLogs", new org.json.JSONArray(frontendLogs));
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "exportDiagnosticLog: 解析 frontendLogs 失败", e);
+            }
 
             // 写入文件
             File dir = new File(getContext().getExternalFilesDir(null), "diagnostics");
@@ -1224,6 +1234,15 @@ public class PaymentCapturePlugin extends Plugin {
             a11y.put("ring", a11yRing);
             diag.put("accessibilityDiagnostics", a11y);
 
+            // 前端运行日志合并（与 exportDiagnosticLog 一致，统一日志导出）
+            try {
+                String frontendLogs = call.getString("frontendLogs");
+                if (frontendLogs != null && !frontendLogs.isEmpty()) {
+                    diag.put("frontendLogs", new org.json.JSONArray(frontendLogs));
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "shareDiagnosticLog: 解析 frontendLogs 失败", e);
+            }
 
             File dir = new File(getContext().getExternalFilesDir(null), "diagnostics");
             if (!dir.exists()) {
@@ -1246,7 +1265,7 @@ public class PaymentCapturePlugin extends Plugin {
 
             Intent shareIntent = new Intent(Intent.ACTION_SEND);
             shareIntent.setType("application/json");
-            shareIntent.putExtra(Intent.EXTRA_SUBJECT, "财务经理 诊断日志");
+            shareIntent.putExtra(Intent.EXTRA_SUBJECT, "私人记账 诊断日志");
             shareIntent.putExtra(Intent.EXTRA_TEXT, "诊断日志: " + file.getName());
             shareIntent.putExtra(Intent.EXTRA_STREAM, fileUri);
             shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);

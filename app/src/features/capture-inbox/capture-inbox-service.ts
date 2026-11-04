@@ -10,7 +10,7 @@
 import { PaymentCapture, type CapturedPayment } from '@/features/payment-capture/payment-capture-reader'
 import type { FinanceServicePort } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
-import { getLogger } from '@/features/debug/app-logger'
+import { getLogger, useAppLogStore, type LogEntry } from '@/features/debug/app-logger'
 
 const logger = getLogger('captureInboxService')
 
@@ -180,14 +180,35 @@ export function resetDiagnostics() {
   return PaymentCapture.resetDiagnostics()
 }
 
-/** 导出诊断日志为 JSON 文件。 */
-export function exportDiagnosticLog() {
-  return PaymentCapture.exportDiagnosticLog()
+/**
+ * 收集前端运行日志（app-logger：剪贴板/导入/记账/导航等），
+ * 序列化后交给原生合并进同一个诊断文件，实现"统一日志导出"。
+ * 取不到 store（如非 Pinia 上下文）时返回 undefined，原生侧降级为仅原生诊断。
+ */
+function collectFrontendLogs(): string | undefined {
+  try {
+    const store = useAppLogStore()
+    const entries: LogEntry[] = store.entries
+    if (!entries.length) return undefined
+    return JSON.stringify({
+      exportedAt: new Date().toISOString(),
+      total: entries.length,
+      entries,
+    })
+  } catch (e) {
+    logger.warn('collectFrontendLogs 失败', { msg: e instanceof Error ? e.message : String(e) })
+    return undefined
+  }
 }
 
-/** 通过分享面板分享诊断日志。 */
+/** 导出诊断日志为 JSON 文件（含前端运行日志，统一导出）。 */
+export function exportDiagnosticLog() {
+  return PaymentCapture.exportDiagnosticLog({ frontendLogs: collectFrontendLogs() })
+}
+
+/** 通过分享面板分享诊断日志（含前端运行日志，统一导出）。 */
 export function shareDiagnosticLog() {
-  return PaymentCapture.shareDiagnosticLog()
+  return PaymentCapture.shareDiagnosticLog({ frontendLogs: collectFrontendLogs() })
 }
 
 /** 启动自动恢复：检查无障碍是否存活，不存活则通过 Shizuku 恢复。 */

@@ -157,7 +157,7 @@ export interface PaymentCapturePlugin {
     direction?: string
   }): Promise<CapturedPayment>
 
-  exportDiagnosticLog(): Promise<{
+  exportDiagnosticLog(options?: { frontendLogs?: string }): Promise<{
     success: boolean
     filePath?: string
     fileName?: string
@@ -165,7 +165,7 @@ export interface PaymentCapturePlugin {
     message: string
   }>
 
-  shareDiagnosticLog(): Promise<{
+  shareDiagnosticLog(options?: { frontendLogs?: string }): Promise<{
     success: boolean
     filePath?: string
     message: string
@@ -312,7 +312,7 @@ class WebPaymentCapture implements PaymentCapturePlugin {
     throw new Error('Web 平台不支持 addCapturedEvent')
   }
 
-  async exportDiagnosticLog(): Promise<{
+  async exportDiagnosticLog(_options?: { frontendLogs?: string }): Promise<{
     success: boolean
     filePath?: string
     fileName?: string
@@ -322,7 +322,7 @@ class WebPaymentCapture implements PaymentCapturePlugin {
     return { success: false, message: '仅原生平台可用' }
   }
 
-  async shareDiagnosticLog(): Promise<{
+  async shareDiagnosticLog(_options?: { frontendLogs?: string }): Promise<{
     success: boolean
     filePath?: string
     message: string
