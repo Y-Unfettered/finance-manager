@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 
-const props = defineProps<{
-  show: boolean
-  expectedNumber: string
-  countLabel?: string
-  deleting?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    show: boolean
+    expectedNumber: string
+    countLabel?: string
+    deleting?: boolean
+    /** 删除失败等信息：非空时在弹窗内红字显示（B2） */
+    error?: string
+    /** 默认 true=确认后立即自行关闭（旧行为，其他调用方不受影响）；
+     *  设为 false 时由父组件在异步删除成功后显式关闭，失败则保持弹窗并显示 error */
+    autoClose?: boolean
+  }>(),
+  { autoClose: true },
+)
 
 const emit = defineEmits<{
   'update:show': [value: boolean]
@@ -24,7 +32,7 @@ function close(): void {
 function confirm(): void {
   if (!canConfirm.value) return
   emit('confirm')
-  close()
+  if (props.autoClose) close()
 }
 
 function onBlur(): void {
@@ -58,6 +66,8 @@ watch(() => props.show, (v) => {
           <template v-else>删除后账目会回退，此操作不可恢复。</template>
         </p>
         <p class="dv-desc">请核对并输入下方的 4 位数字：</p>
+
+        <div v-if="error" class="dv-error" role="alert">{{ error }}</div>
 
         <div class="dv-number">
           <span v-for="(ch, i) in expectedNumber" :key="i" class="dv-digit">{{ ch }}</span>
@@ -130,6 +140,17 @@ watch(() => props.show, (v) => {
   font-size: var(--type-body-size);
   line-height: var(--type-body-line);
   text-align: center;
+}
+.dv-error {
+  align-self: stretch;
+  margin: 0 0 var(--space-2, 8px);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-danger-soft, #fdecec);
+  color: var(--color-danger, #c0392b);
+  font-size: var(--type-body-size, 14px);
+  line-height: 1.4;
+  text-align: left;
 }
 .dv-number {
   display: flex;

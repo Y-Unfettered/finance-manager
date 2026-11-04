@@ -24,6 +24,8 @@ const finance = useFinanceService()
 const loading = ref(false)
 const deleting = ref(false)
 const errorMessage = ref('')
+/** 删除第二步弹窗内的错误提示（B2：此前错误显示在弹窗外，被遮住导致"点了没反应"） */
+const deleteError = ref('')
 const tx = ref<TransactionMetadata>()
 
 // 删除三步确认
@@ -157,12 +159,21 @@ async function confirmDelete(): Promise<void> {
   if (!tx.value || !finance || deleting.value) return
   deleting.value = true
   errorMessage.value = ''
+  deleteError.value = ''
   try {
     await finance.voidTransaction(tx.value.ledgerId, tx.value.id)
     emit('updated')
+    deleteStep.value = 'none'
     close()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    const raw = error instanceof Error ? error.message : String(error)
+    // 数据保护规则（如"该支出已有退款"）此前只在弹窗外显示，被数字校验弹窗遮挡，
+    // 用户点确认后看不到任何反馈，误以为"点了没反应"。现改在弹窗内红字提示并保留弹窗。
+    if (raw.includes('已有退款')) {
+      deleteError.value = '这笔支出已有退款，需先删除关联的退款记录，才能删除原支出。'
+    } else {
+      deleteError.value = `删除失败：${raw}`
+    }
   } finally {
     deleting.value = false
   }
@@ -345,6 +356,8 @@ function goCategory(categoryId?: string): void {
     :show="deleteStep === 'confirm2'"
     :expected-number="expectedNumber"
     :deleting="deleting"
+    :error="deleteError"
+    :auto-close="false"
     @update:show="cancelDelete"
     @confirm="confirmDelete"
   />
