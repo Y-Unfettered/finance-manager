@@ -62,9 +62,11 @@ export class AppLockService {
     if (!storedHash) return false
 
     if (isPbkdf2Storage(storedHash)) {
-      const [, , salt, expected] = storedHash.split('$')
-      if (!salt || !expected) return false
-      const hash = await pbkdf2Hash(pin, salt)
+      const [, iterStr, salt, expected] = storedHash.split('$')
+      const iterations = Number(iterStr)
+      if (!salt || !expected || !Number.isSafeInteger(iterations) || iterations < 1) return false
+      // 迭代次数读存储串自带值：未来调高 PBKDF2_ITERATIONS 时存量哈希仍可验证
+      const hash = await pbkdf2Hash(pin, salt, iterations)
       return constantTimeEqual(hash, expected)
     }
 
@@ -72,9 +74,12 @@ export class AppLockService {
     if (!legacySalt) return false
     const legacy = await legacyHashPin(pin, legacySalt)
     if (!constantTimeEqual(legacy, storedHash)) return false
-    // 验证通过 → 升级存储格式（旧 PIN 不变，仅加固）
+    // 验证通过 → 升级存储格式（旧 PIN 不变，仅加固），顺带清掉不再需要的旧盐
     const stored = await this.buildPbkdf2Storage(pin)
-    await this.settings.set(APP_LOCK_PIN_HASH_KEY, stored, this.clock.nowIso())
+    await Promise.all([
+      this.settings.set(APP_LOCK_PIN_HASH_KEY, stored, this.clock.nowIso()),
+      this.settings.remove(APP_LOCK_PIN_SALT_KEY),
+    ])
     return true
   }
 
@@ -135,7 +140,7 @@ async function legacyHashPin(pin: string, salt: string): Promise<string> {
   return Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('')
 }
 
-async function pbkdf2Hash(pin: string, salt: string): Promise<string> {
+async function pbkdf2Hash(pin: string, salt: string, iterations: number = PBKDF2_ITERATIONS): Promise<string> {
   const keyMaterial = await crypto.subtle.importKey(
     'raw',
     new TextEncoder().encode(pin),
@@ -148,7 +153,7 @@ async function pbkdf2Hash(pin: string, salt: string): Promise<string> {
       name: 'PBKDF2',
       hash: 'SHA-256',
       salt: new TextEncoder().encode(salt),
-      iterations: PBKDF2_ITERATIONS,
+      iterations,
     },
     keyMaterial,
     256,
