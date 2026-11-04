@@ -79,7 +79,9 @@ export async function verifyBackupJson(json: string): Promise<RestoreResult> {
     return { ok: false, reason: 'checksum_mismatch', message: '备份校验值不匹配，文件可能已损坏。' }
   }
 
-  const totalRecords = BACKUP_TABLES.reduce(
+  // 与 replaceAll 的恢复范围一致：schema_migrations 不参与恢复，
+  // 否则新装机的"空备份"（仅 15 条迁移记录）能通过校验，恢复会清空当前库且不写入数据
+  const totalRecords = BACKUP_TABLES.filter((table) => table !== 'schema_migrations').reduce(
     (sum, table) => sum + (payload.recordCounts[table] ?? 0),
     0,
   )
