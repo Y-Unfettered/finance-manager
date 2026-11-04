@@ -145,7 +145,7 @@ public class PaymentShareActivity extends Activity {
 
                 writeCaptured(info, "share_ocr", "分享图片-OCR");
                 runOnUiThread(() -> {
-                    Toast.makeText(this, "OCR 识别成功，即将打开财务经理", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(this, "OCR 识别成功，即将打开私人记账", Toast.LENGTH_SHORT).show();
                     finish();
                 });
 
@@ -266,6 +266,9 @@ public class PaymentShareActivity extends Activity {
             // （原实现先标记后写库，失败后 2 分钟内重试也会被拦）
             CaptureDedup.markSeen(info.getSourcePackage(), info.getAmountMinor());
             PaymentCapturePlugin.notifyCandidate(entity);
+            // 与无障碍/通知链路对齐：拉起 APP 直接进入预填好的记账页
+            // （此前只推事件不拉起，Toast 却承诺"即将打开私人记账"，用户停留在微信里等空）
+            PaymentCapturePlugin.launchRecordForCapture(this.getApplicationContext(), entity);
             Log.d(TAG, "share written: " + info.getAmount());
             return true;
         } catch (Exception e) {
