@@ -260,8 +260,13 @@ const selectedTargetAccount = computed(() =>
 
 const canSubmit = computed(() => {
   if (loading.value || saving.value) return false
-  if (amountDisplay.value === '' || amountDisplay.value === '0' || amountDisplay.value === '0.0')
+  // 用解析器本身判定（>0 且最多两位小数），替代枚举 '0'/'0.0' 黑名单——
+  // '0.00' 等形态此前会漏过白名单、到 submit 才报错
+  try {
+    parseCnyInputToMinor(amountDisplay.value)
+  } catch {
     return false
+  }
   if (hasDiscount.value && Number(discountAmount.value) >= Number(amountDisplay.value))
     return false
   if (mode.value === 'refund' && originalRefundTransactionId.value === '') return false
@@ -422,6 +427,16 @@ async function initializeFormState(): Promise<void> {
   originalRefundTransactionId.value = ''
   capturePresetCombined.value = ''
   capturePresetMerchant.value = ''
+  // 捕获元数据必须一并重置：KeepAlive 复用同一实例，残留的 captureFingerprint/
+  // captureId 会让"放弃捕获预填后的手动记账"在保存时误标指纹/误删待确认事件；
+  // captureHintVisible 残留会把备注+金额输入行永久替换成方向提示
+  captureSource.value = ''
+  captureParserVersion.value = ''
+  captureConfidence.value = undefined
+  captureDirection.value = ''
+  captureHintVisible.value = false
+  captureFingerprint.value = ''
+  captureId.value = -1
   errorMessage.value = ''
   accountPickerShow.value = false
   datePickerShow.value = false
@@ -503,6 +518,16 @@ async function initializeFormState(): Promise<void> {
       feeAmount.value = (feeMinor / 100).toFixed(2)
       feeMode.value = true
       discountMode.value = false
+      // Android 端捕获语义：amountMinor 是"实到金额"，originalAmount = 实到 + fee（申请额）。
+      // 金额框必须抬到申请额，否则保存时"申请额 - fee"会把手续费双重扣减。
+      if (amountStarted.value) {
+        try {
+          const netMinor = parseCnyInputToMinor(amountDisplay.value)
+          amountDisplay.value = ((netMinor + feeMinor) / 100).toFixed(2)
+        } catch {
+          // 金额框不是合法数额时不动，保持捕获原值
+        }
+      }
     }
   }
   // P1：捕获元数据（非编辑/复制/退款模式才透传，避免编辑时误带来源）
