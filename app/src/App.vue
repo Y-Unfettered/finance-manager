@@ -496,8 +496,6 @@ watch(
 
   <!-- 全局剪贴板导入确认弹窗：app 切回前台时若剪贴板有待导入 JSON 则显示 -->
   <ClipboardImportDialog />
-
-  <!-- 当场弹窗记账：原生侧检测到支付完成后，底部弹出快速入账卡片 -->
 </template>
 
 <style>

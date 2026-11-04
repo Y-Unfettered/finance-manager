@@ -59,7 +59,9 @@ const selectedAccountId = ref('')
 const selectedCategoryId = ref('')
 
 /** 当前确认事件的捕获方向（expense/income/transfer/refund/confirm）。 */
-const isIncomeEvent = computed(() => selected.value?.direction === 'income')
+const isIncomeEvent = computed(
+  () => selected.value?.direction === 'income' || selected.value?.direction === 'refund',
+)
 const isTransferEvent = computed(() => selected.value?.direction === 'transfer')
 /** 确认弹窗的分类池：收入捕获用收入分类，其余用支出分类。 */
 const confirmCategories = computed(() =>
@@ -67,7 +69,7 @@ const confirmCategories = computed(() =>
 )
 
 const health = ref<{
-  accessibility: { enabled: boolean }
+  accessibility: { enabled: boolean; connected?: boolean }
   notification: { enabled: boolean }
   pendingCount: number
 }>({
@@ -149,7 +151,7 @@ function goRecordPage(): void {
       direction: 'transfer',
       amount: String(ev.amountMinor),
       merchant: ev.merchant ?? '',
-      occurredAt: ev.occurredAt ?? '',
+      occurredAt: normalizeOccurredAt(ev.occurredAt),
       note: ev.note ?? '',
       accountHint: ev.accountHint ?? '',
       targetAccountHint: ev.targetAccountHint ?? '',
@@ -190,15 +192,37 @@ function onDismissConfirm(): void {
 }
 
 async function doDismiss(id: number): Promise<void> {
-  await dismissEvent(id)
+  try {
+    await dismissEvent(id)
+  } catch (e) {
+    message.value = '忽略失败，请重试'
+    log.warn('doDismiss 失败', { msg: e instanceof Error ? e.message : String(e) })
+    return
+  }
   await loadEvents()
   await loadHealth()
 }
 
 async function doDismissAll(): Promise<void> {
-  await dismissAll()
+  try {
+    await dismissAll()
+  } catch (e) {
+    message.value = '批量忽略失败，请重试'
+    log.warn('doDismissAll 失败', { msg: e instanceof Error ? e.message : String(e) })
+    return
+  }
   await loadEvents()
   await loadHealth()
+}
+
+/** 队列里可能残留旧版毫秒时间串，统一归一为 ISO（非法值返回空串，由记账页回退当前时间）。 */
+function normalizeOccurredAt(value?: string): string {
+  if (!value) return ''
+  if (/^\d+$/.test(value)) {
+    const ms = Number(value)
+    return Number.isSafeInteger(ms) && ms > 0 ? new Date(ms).toISOString() : ''
+  }
+  return value
 }
 
 function captureLabel(method: string): string {
@@ -259,7 +283,7 @@ onActivated(async () => {
 
     <div class="capture-inbox__body">
       <section class="health-bar">
-        <div class="health-item" :class="{ 'health-item--on': health.accessibility.enabled }">
+        <div class="health-item" :class="{ 'health-item--on': health.accessibility.connected ?? health.accessibility.enabled }">
           <ShieldCheck :size="18" />
           <span>无障碍</span>
         </div>

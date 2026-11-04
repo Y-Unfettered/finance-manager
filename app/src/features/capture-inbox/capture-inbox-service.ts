@@ -68,7 +68,10 @@ export async function confirmEvent(input: ConfirmInput): Promise<{ transactionId
       : `自动记账-${input.event.captureMethod}`
 
   let transactionId: string
-  if (input.event.direction === 'income') {
+  if (input.event.direction === 'income' || input.event.direction === 'refund') {
+    // refund = 退款到账（规则里 refundFields 命中"退款"），钱进来了，按收入入账；
+    // 走 createExpense 会把退款记成支出（方向反转）。退款关联原单的场景
+    // 需要用户在完整记账页用退款流程处理，一键确认没有这个上下文。
     transactionId = await finance.createIncome({
       ledgerId,
       amountMinor: input.event.amountMinor,
