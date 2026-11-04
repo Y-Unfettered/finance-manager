@@ -822,36 +822,54 @@ function handleDateSelect(date: string, label: string): void {
   dateLabel.value = label
 }
 
+/**
+ * 当前数字键盘正在编辑的目标字段。
+ * 此前键盘永远只写主金额 amountDisplay，导致「优惠」「手续费」模式下
+ * 用户敲键盘改的还是主金额、优惠/手续费额无法输入（B1）。
+ */
+const activeAmountTarget = computed(() => {
+  if (feeMode.value) return 'fee'
+  if (discountMode.value) return 'discount'
+  return 'amount'
+})
+
 function appendAmount(char: string): void {
+  const target =
+    activeAmountTarget.value === 'fee'
+      ? feeAmount
+      : activeAmountTarget.value === 'discount'
+        ? discountAmount
+        : amountDisplay
+  // 主金额需要 amountStarted 语义（首位不叠加、'00'/'0.0' 归一），
+  // 优惠/手续费是独立的辅助金额，直接按字符追加即可。
+  const isPrimary = target === amountDisplay
+
   if (char === 'backspace') {
-    amountDisplay.value = amountDisplay.value.slice(0, -1)
-    if (amountDisplay.value === '') {
-      amountDisplay.value = '0'
+    target.value = target.value.slice(0, -1)
+    if (isPrimary && target.value === '') {
+      target.value = '0'
       amountStarted.value = false
     }
     return
   }
   if (char === 'clear') {
-    amountDisplay.value = '0'
-    amountStarted.value = false
+    target.value = '0'
+    if (isPrimary) amountStarted.value = false
     return
   }
-  if (!amountStarted.value) {
+  if (isPrimary && !amountStarted.value) {
     amountStarted.value = true
-    if (char === '00' && (amountDisplay.value === '0' || amountDisplay.value === '0.0')) return
-    if (amountDisplay.value === '0' || amountDisplay.value === '0.0') {
-      amountDisplay.value = char === '.' ? '0.' : char
+    if (char === '00' && (target.value === '0' || target.value === '0.0')) return
+    if (target.value === '0' || target.value === '0.0') {
+      target.value = char === '.' ? '0.' : char
       return
     }
   }
-  if (char === '.' && !amountDisplay.value.includes('.')) {
-    amountDisplay.value += '.'
-    return
-  }
-  const dotIndex = amountDisplay.value.indexOf('.')
-  if (dotIndex !== -1 && amountDisplay.value.length - dotIndex >= 3) return
-  if (amountDisplay.value.length >= 9) return
-  amountDisplay.value += char
+  if (char === '.' && target.value.includes('.')) return
+  const dotIndex = target.value.indexOf('.')
+  if (dotIndex !== -1 && target.value.length - dotIndex >= 3) return
+  if (target.value.length >= 9) return
+  target.value += char
 }
 
 function deleteKeyboardValue(): void {
