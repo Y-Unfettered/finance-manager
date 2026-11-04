@@ -21,7 +21,6 @@ import app.financemanager.capture.shizuku.AccessibilityAutoRecover;
 import app.financemanager.capture.shizuku.AccessibilityEnabler;
 import app.financemanager.capture.shizuku.ShizukuShell;
 import app.financemanager.capture.accessibility.AccessibilityDiagnostics;
-import app.financemanager.capture.notification.NotificationDiagnostics;
 import app.financemanager.local.capture.CaptureQueueDao;
 import app.financemanager.local.capture.CaptureQueueDatabase;
 import app.financemanager.local.capture.CaptureQueueEntity;
@@ -44,7 +43,6 @@ import java.util.TimeZone;
  * - acknowledgeEvents(): 标记已确认，从队列中删除
  * - deleteCapturedEvent(): 单条删除
  * - openAccessibilitySettings(): 跳转无障碍设置
- * - openNotificationAccessSettings(): 跳转通知权限设置
  * - runSelfTest(): 注入一条测试记录验证队列写入
  *
  * 架构复用 ClipboardReaderPlugin 模式：原生插件 → Capacitor 桥接 → Vue 前端。
@@ -91,40 +89,6 @@ public class PaymentCapturePlugin extends Plugin {
         ret.put("pluginLoaded", true);
         ret.put("message", "PaymentCapturePlugin 已加载，正常工作");
 
-        // 检查 PP-OCR 引擎（通过反射加载，避免在类加载阶段因 native 库问题导致插件无法注册）
-        JSObject ocrInfo = new JSObject();
-        try {
-            Class<?> ocrClass = Class.forName("app.financemanager.capture.share.OfflineOCR");
-            java.lang.reflect.Method createMethod = ocrClass.getMethod("create", android.content.Context.class);
-            Object ocr = createMethod.invoke(null, getContext());
-            if (ocr != null) {
-                ocrInfo.put("loaded", true);
-                ocrInfo.put("engine", "pp-ocr");
-                java.lang.reflect.Method releaseMethod = ocrClass.getMethod("release");
-                releaseMethod.invoke(ocr);
-            } else {
-                ocrInfo.put("loaded", false);
-                ocrInfo.put("engine", "pp-ocr");
-                ocrInfo.put("error", "PP-OCR 模型初始化返回 null（可能 native 库不兼容）");
-            }
-        } catch (UnsatisfiedLinkError e) {
-            ocrInfo.put("loaded", false);
-            ocrInfo.put("engine", "pp-ocr");
-            ocrInfo.put("error", "native 库加载失败: " + e.getMessage());
-        } catch (ClassNotFoundException e) {
-            ocrInfo.put("loaded", false);
-            ocrInfo.put("engine", "pp-ocr");
-            ocrInfo.put("error", "OfflineOCR 类未找到");
-        } catch (java.lang.reflect.InvocationTargetException e) {
-            ocrInfo.put("loaded", false);
-            ocrInfo.put("engine", "pp-ocr");
-            ocrInfo.put("error", "反射调用失败: " + (e.getCause() != null ? e.getCause().getMessage() : e.getMessage()));
-        } catch (Exception e) {
-            ocrInfo.put("loaded", false);
-            ocrInfo.put("engine", "pp-ocr");
-            ocrInfo.put("error", e.getMessage());
-        }
-        ret.put("ocr", ocrInfo);
 
         // 检查 Shizuku
         JSObject shizukuInfo = new JSObject();
@@ -162,46 +126,7 @@ public class PaymentCapturePlugin extends Plugin {
         }
         ret.put("accessibility", accessibility);
 
-        // NotificationListener 状态：查询系统设置
-        JSObject notification = new JSObject();
-        try {
-            boolean enabled = isNotificationListenerEnabled();
-            notification.put("enabled", enabled);
-            notification.put("status", enabled ? "enabled" : "disabled");
-        } catch (Exception e) {
-            Log.w(TAG, "getServiceHealth: notification 查询失败", e);
-            notification.put("enabled", false);
-            notification.put("status", "error");
-        }
-        ret.put("notification", notification);
 
-        // OCR 状态：检查 PP-OCR 模型文件是否存在
-        // 注意：不在这里加载 OCR 类——PP-OCR 的 OCR 类有 static { System.loadLibrary() } 加载 native 库，
-        // 在部分设备上可能抛出 NoClassDefFoundError（Error 而非 Exception），会导致整个 getServiceHealth 崩溃。
-        // 实际 OCR 调用在 PaymentShareActivity 中，那里已做好异常处理。
-        JSObject ocr = new JSObject();
-        try {
-            boolean detParam = fileExists("PP_OCRv5_mobile_det.ncnn.param");
-            boolean detBin = fileExists("PP_OCRv5_mobile_det.ncnn.bin");
-            boolean recParam = fileExists("PP_OCRv5_mobile_rec.ncnn.param");
-            boolean recBin = fileExists("PP_OCRv5_mobile_rec.ncnn.bin");
-
-            if (detParam && detBin && recParam && recBin) {
-                ocr.put("enabled", true);
-                ocr.put("status", "available");
-                ocr.put("engine", "pp-ocr");
-            } else {
-                ocr.put("enabled", false);
-                ocr.put("status", "error");
-                ocr.put("errorMessage", "PP-OCR 模型文件缺失: det=" + (detParam && detBin) + " rec=" + (recParam && recBin));
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "getServiceHealth: OCR 状态查询失败", e);
-            ocr.put("enabled", false);
-            ocr.put("status", "error");
-            ocr.put("errorMessage", e.getMessage());
-        }
-        ret.put("ocr", ocr);
 
         // Shizuku 状态
         JSObject shizuku = new JSObject();
@@ -290,38 +215,6 @@ public class PaymentCapturePlugin extends Plugin {
     /**
      * 通知监听服务诊断信息导出。
      */
-    @PluginMethod
-    public void getNotificationDiagnostics(PluginCall call) {
-        JSObject ret = new JSObject();
-        JSObject counts = new JSObject();
-        counts.put("connected", NotificationDiagnostics.getConnected());
-        counts.put("disconnected", NotificationDiagnostics.getDisconnected());
-        counts.put("notifTotal", NotificationDiagnostics.getNotifTotal());
-        counts.put("noKeyword", NotificationDiagnostics.getNoKeyword());
-        counts.put("noAmount", NotificationDiagnostics.getNoAmount());
-        counts.put("parsed", NotificationDiagnostics.getParsed());
-        counts.put("dedup", NotificationDiagnostics.getDedup());
-        counts.put("queueInsert", NotificationDiagnostics.getQueueInsert());
-        counts.put("queueFail", NotificationDiagnostics.getQueueFail());
-        ret.put("counts", counts);
-
-        try {
-            JSObject persisted = new JSObject();
-            persisted.put("lastConnectedAt", NotificationDiagnostics.getLastConnectedAt(getContext()));
-            persisted.put("lastDisconnectedAt", NotificationDiagnostics.getLastDisconnectedAt(getContext()));
-            ret.put("persisted", persisted);
-        } catch (Exception e) {
-            Log.w(TAG, "getNotificationDiagnostics: persisted 查询失败", e);
-        }
-
-        JSArray ringArr = new JSArray();
-        for (String entry : NotificationDiagnostics.getRing()) {
-            ringArr.put(entry);
-        }
-        ret.put("ring", ringArr);
-
-        call.resolve(ret);
-    }
 
     /**
      * 重置诊断数据（前端"清空诊断"按钮）。
@@ -330,7 +223,6 @@ public class PaymentCapturePlugin extends Plugin {
     public void resetDiagnostics(PluginCall call) {
         try {
             AccessibilityDiagnostics.reset(getContext());
-            NotificationDiagnostics.reset(getContext());
         } catch (Exception e) {
             Log.w(TAG, "resetDiagnostics: 失败", e);
         }
@@ -398,48 +290,6 @@ public class PaymentCapturePlugin extends Plugin {
         return false;
     }
 
-    /**
-     * 检查通知监听权限是否已授予。
-     *
-     * 通过 Settings.Secure 查询 "enabled_notification_listeners"。
-     * 注意：此 API 在部分 ROM 上可能受权限限制，但这是唯一可靠的通知监听检测方式。
-     */
-    private boolean isNotificationListenerEnabled() {
-        String packageName = getContext().getPackageName();
-
-        // 方式1：通过 ComponentName 检查（最精确）
-        try {
-            ComponentName cn = new ComponentName(packageName,
-                    "app.financemanager.capture.notification.PaymentNotificationListenerService");
-            String cnStr = cn.flattenToString();
-            Log.d(TAG, "通知监听期望的 ComponentName: " + cnStr);
-
-            String enabledPackages = Settings.Secure.getString(
-                    getContext().getContentResolver(),
-                    "enabled_notification_listeners");
-            if (enabledPackages != null && !enabledPackages.isEmpty()) {
-                Log.d(TAG, "Settings.Secure enabled_notification_listeners = " + enabledPackages);
-                if (enabledPackages.contains(cnStr)) {
-                    Log.d(TAG, "通知监听已启用 (ComponentName 精确匹配)");
-                    return true;
-                }
-                if (enabledPackages.contains(packageName)) {
-                    Log.d(TAG, "通知监听疑似已启用 (包名匹配)");
-                    return true;
-                }
-                // 小米 ROM 可能用短 ID，检查是否包含我们的服务名
-                if (enabledPackages.contains("PaymentNotificationListenerService")) {
-                    Log.d(TAG, "通知监听已启用 (服务名匹配)");
-                    return true;
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "通知监听查询失败", e);
-        }
-
-        Log.d(TAG, "通知监听未启用");
-        return false;
-    }
 
     @PluginMethod
     public void listPendingEvents(PluginCall call) {
@@ -532,18 +382,6 @@ public class PaymentCapturePlugin extends Plugin {
         call.resolve();
     }
 
-    @PluginMethod
-    public void openNotificationAccessSettings(PluginCall call) {
-        try {
-            Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-        } catch (Exception e) {
-            call.reject("无法打开通知权限设置: " + e.getMessage());
-            return;
-        }
-        call.resolve();
-    }
 
     /**
      * 通过 Shizuku 自动启用无障碍服务。
@@ -1302,26 +1140,6 @@ public class PaymentCapturePlugin extends Plugin {
             a11y.put("perPkg", a11yPkg);
             diag.put("accessibilityDiagnostics", a11y);
 
-            // 通知诊断
-            org.json.JSONObject notif = new org.json.JSONObject();
-            notif.put("connected", NotificationDiagnostics.getConnected());
-            notif.put("disconnected", NotificationDiagnostics.getDisconnected());
-            notif.put("notifTotal", NotificationDiagnostics.getNotifTotal());
-            notif.put("noKeyword", NotificationDiagnostics.getNoKeyword());
-            notif.put("noAmount", NotificationDiagnostics.getNoAmount());
-            notif.put("parsed", NotificationDiagnostics.getParsed());
-            notif.put("dedup", NotificationDiagnostics.getDedup());
-            notif.put("queueInsert", NotificationDiagnostics.getQueueInsert());
-            notif.put("queueFail", NotificationDiagnostics.getQueueFail());
-            notif.put("lastConnectedAt", NotificationDiagnostics.getLastConnectedAt(getContext()));
-            notif.put("lastDisconnectedAt", NotificationDiagnostics.getLastDisconnectedAt(getContext()));
-
-            org.json.JSONArray notifRing = new org.json.JSONArray();
-            for (String entry : NotificationDiagnostics.getRing()) {
-                notifRing.put(entry);
-            }
-            notif.put("ring", notifRing);
-            diag.put("notificationDiagnostics", notif);
 
             // 写入文件
             File dir = new File(getContext().getExternalFilesDir(null), "diagnostics");
@@ -1406,20 +1224,6 @@ public class PaymentCapturePlugin extends Plugin {
             a11y.put("ring", a11yRing);
             diag.put("accessibilityDiagnostics", a11y);
 
-            // 通知诊断
-            org.json.JSONObject notif = new org.json.JSONObject();
-            notif.put("connected", NotificationDiagnostics.getConnected());
-            notif.put("disconnected", NotificationDiagnostics.getDisconnected());
-            notif.put("notifTotal", NotificationDiagnostics.getNotifTotal());
-            notif.put("parsed", NotificationDiagnostics.getParsed());
-            notif.put("dedup", NotificationDiagnostics.getDedup());
-            notif.put("queueInsert", NotificationDiagnostics.getQueueInsert());
-            org.json.JSONArray notifRing = new org.json.JSONArray();
-            for (String entry : NotificationDiagnostics.getRing()) {
-                notifRing.put(entry);
-            }
-            notif.put("ring", notifRing);
-            diag.put("notificationDiagnostics", notif);
 
             File dir = new File(getContext().getExternalFilesDir(null), "diagnostics");
             if (!dir.exists()) {

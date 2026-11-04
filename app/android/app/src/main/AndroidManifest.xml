@@ -27,29 +27,6 @@
 
         </activity>
 
-    <!-- 分享接收 Activity：接收系统分享菜单发来的文本或支付截图 -->
-    <activity
-        android:name="app.financemanager.capture.share.PaymentShareActivity"
-        android:exported="true"
-        android:theme="@style/AppTheme.NoActionBarLaunch"
-        android:label="@string/share_activity_label"
-        android:launchMode="singleTask">
-        <intent-filter>
-            <action android:name="android.intent.action.SEND" />
-            <category android:name="android.intent.category.DEFAULT" />
-            <data android:mimeType="text/plain" />
-        </intent-filter>
-        <intent-filter>
-            <action android:name="android.intent.action.SEND" />
-            <category android:name="android.intent.category.DEFAULT" />
-            <data android:mimeType="image/*" />
-        </intent-filter>
-        <intent-filter>
-            <action android:name="android.intent.action.SEND_MULTIPLE" />
-            <category android:name="android.intent.category.DEFAULT" />
-            <data android:mimeType="image/*" />
-        </intent-filter>
-    </activity>
 
     <!-- 自动记账无障碍服务：伪装成系统 SelectToSpeak 绕过微信节点混淆 -->
     <service
@@ -75,15 +52,6 @@
             android:value="保持主进程存活以维持无障碍服务连接（自动记账捕获依赖）" />
     </service>
 
-    <!-- 自动记账通知监听服务：监听支付 APP 通知栏消息 -->
-    <service
-        android:name="app.financemanager.capture.notification.PaymentNotificationListenerService"
-        android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
-        android:exported="false">
-        <intent-filter>
-            <action android:name="android.service.notification.NotificationListenerService" />
-        </intent-filter>
-    </service>
 
     <!-- 开机自启接收器：设备重启后恢复自动记账保活 -->
     <receiver

@@ -22,7 +22,6 @@ import BaseCard from '@/components/BaseCard.vue'
 import {
   getServiceHealth,
   openAccessibilitySettings,
-  openNotificationAccessSettings,
   runSelfTest,
   enableAccessibilityViaShizuku,
   requestShizukuPermission,
@@ -30,7 +29,6 @@ import {
   exportDiagnosticLog,
   shareDiagnosticLog,
   getAccessibilityDiagnostics,
-  getNotificationDiagnostics,
   resetDiagnostics,
   autoRecoverAccessibility,
   setAutoRecoverEnabled,
@@ -42,7 +40,6 @@ import { getDuplicateBlockEnabled, setDuplicateBlockEnabled } from '@/features/c
 import type {
   ServiceHealth,
   AccessibilityDiagnosticsResult,
-  NotificationDiagnosticsResult,
   AutoRecoverStatus,
   AutoRecoverResult,
 } from '@/features/payment-capture/payment-capture-reader'
@@ -84,9 +81,7 @@ const recoverMsg = ref<string | null>(null)
 
 // 诊断面板状态
 const a11yDiag = ref<AccessibilityDiagnosticsResult | null>(null)
-const notifDiag = ref<NotificationDiagnosticsResult | null>(null)
 const showA11yRing = ref(false)
-const showNotifRing = ref(false)
 const diagLoading = ref(false)
 let pollingTimer: number | null = null
 
@@ -118,7 +113,6 @@ async function doResetDiag(): Promise<void> {
     await resetDiagnostics()
     await load()
     await loadA11yDiagnostics()
-    await loadNotifDiagnostics()
     selfTestResult.value = '诊断数据已重置'
   } catch (e) {
     selfTestResult.value = `重置失败: ${e instanceof Error ? e.message : String(e)}`
@@ -133,19 +127,10 @@ async function loadA11yDiagnostics(): Promise<void> {
   }
 }
 
-async function loadNotifDiagnostics(): Promise<void> {
-  try {
-    notifDiag.value = await getNotificationDiagnostics()
-  } catch {
-    notifDiag.value = null
-  }
-}
-
 function startPollDiagnostics(): void {
   stopPollDiagnostics()
-  void Promise.all([loadA11yDiagnostics(), loadNotifDiagnostics()])
   pollingTimer = window.setInterval(() => {
-    void Promise.all([loadA11yDiagnostics(), loadNotifDiagnostics()])
+    void loadA11yDiagnostics()
   }, 2000)
 }
 
@@ -168,10 +153,6 @@ function a11yRingEntries(): string[] {
   return a11yDiag.value.ring.slice().reverse()
 }
 
-function notifRingEntries(): string[] {
-  if (!notifDiag.value) return []
-  return notifDiag.value.ring.slice().reverse()
-}
 
 async function load(): Promise<void> {
   loadError.value = null
@@ -568,50 +549,6 @@ onUnmounted(() => {
             </button>
           </BaseCard>
 
-          <BaseCard class="channel-card">
-            <div class="channel-row">
-              <span class="channel-icon channel-icon--notification">
-                <Bell :size="22" />
-              </span>
-              <div class="channel-info">
-                <strong>通知监听</strong>
-                <small>
-                  兜底方案，从通知栏捕获支付成功消息
-                </small>
-              </div>
-              <span
-                class="channel-status"
-                :class="health.notification.enabled ? 'channel-status--on' : 'channel-status--off'"
-              >
-                <CheckCircle v-if="health.notification.enabled" :size="18" />
-                <XCircle v-else :size="18" />
-                {{ statusLabel(health.notification.status) }}
-              </span>
-            </div>
-            <button class="channel-action" @click="openNotificationAccessSettings">
-              <SettingsIcon :size="16" />
-              前往系统设置授权
-              <ChevronRight :size="18" />
-            </button>
-          </BaseCard>
-
-          <BaseCard class="channel-card">
-            <div class="channel-row">
-              <span class="channel-icon channel-icon--ocr">
-                <ImageIcon :size="22" />
-              </span>
-              <div class="channel-info">
-                <strong>分享 OCR</strong>
-                <small>
-                  从其他 APP 分享支付截图，本地 OCR 识别金额
-                </small>
-              </div>
-              <span class="channel-status channel-status--on">
-                <CheckCircle :size="18" />
-                {{ statusLabel(health.ocr.status) }}
-              </span>
-            </div>
-          </BaseCard>
         </section>
 
         <!-- 无障碍诊断面板 -->
@@ -722,84 +659,6 @@ onUnmounted(() => {
               <span v-for="p in a11yDiag.perPkg" :key="p" class="diag-pkg__chip">
                 {{ p }}
               </span>
-            </div>
-          </BaseCard>
-        </section>
-
-        <!-- 通知诊断面板 -->
-        <section>
-          <div class="diag-section-header">
-            <h2>通知诊断</h2>
-            <span class="diag-section-hint">
-              <Activity :size="13" />
-              实时显示通知监听每一步
-            </span>
-          </div>
-          <BaseCard class="diag-card">
-            <div class="diag-grid">
-              <div class="diag-cell">
-                <span class="diag-cell__k">已连接</span>
-                <span class="diag-cell__v">{{ notifDiag?.counts.connected ?? 0 }}</span>
-              </div>
-              <div class="diag-cell">
-                <span class="diag-cell__k">已断开</span>
-                <span class="diag-cell__v">{{ notifDiag?.counts.disconnected ?? 0 }}</span>
-              </div>
-              <div class="diag-cell">
-                <span class="diag-cell__k">收到通知</span>
-                <span class="diag-cell__v">{{ notifDiag?.counts.notifTotal ?? 0 }}</span>
-              </div>
-              <div class="diag-cell">
-                <span class="diag-cell__k">无关键词</span>
-                <span class="diag-cell__v warn">{{ notifDiag?.counts.noKeyword ?? 0 }}</span>
-              </div>
-              <div class="diag-cell">
-                <span class="diag-cell__k">无金额</span>
-                <span class="diag-cell__v warn">{{ notifDiag?.counts.noAmount ?? 0 }}</span>
-              </div>
-              <div class="diag-cell">
-                <span class="diag-cell__k">解析成功</span>
-                <span class="diag-cell__v ok">{{ notifDiag?.counts.parsed ?? 0 }}</span>
-              </div>
-              <div class="diag-cell">
-                <span class="diag-cell__k">去重</span>
-                <span class="diag-cell__v">{{ notifDiag?.counts.dedup ?? 0 }}</span>
-              </div>
-              <div class="diag-cell">
-                <span class="diag-cell__k">写入队列</span>
-                <span class="diag-cell__v ok">{{ notifDiag?.counts.queueInsert ?? 0 }}</span>
-              </div>
-              <div class="diag-cell">
-                <span class="diag-cell__k">写入失败</span>
-                <span class="diag-cell__v warn">{{ notifDiag?.counts.queueFail ?? 0 }}</span>
-              </div>
-            </div>
-
-            <div class="diag-persist">
-              <div class="diag-persist__row">
-                <span>最后连接</span>
-                <span class="diag-persist__v">{{ fmtTs(notifDiag?.persisted.lastConnectedAt ?? 0) }}</span>
-              </div>
-              <div class="diag-persist__row">
-                <span>最后断开</span>
-                <span class="diag-persist__v">{{ fmtTs(notifDiag?.persisted.lastDisconnectedAt ?? 0) }}</span>
-              </div>
-            </div>
-
-            <button class="diag-toggle" @click="showNotifRing = !showNotifRing">
-              <Code :size="13" />
-              事件日志
-              <span class="diag-toggle__tip">{{ showNotifRing ? '收起' : `展开（${notifDiag?.ring.length ?? 0} 条）` }}</span>
-            </button>
-            <div v-if="showNotifRing" class="diag-ring">
-              <div v-if="notifRingEntries().length === 0" class="diag-ring__empty">
-                暂无日志——触发一条支付通知后这里会出现记录
-              </div>
-              <div v-else class="diag-ring__entries">
-                <div v-for="(e, i) in notifRingEntries().slice(0, 20)" :key="i" class="diag-ring__entry">
-                  <code>{{ e }}</code>
-                </div>
-              </div>
             </div>
           </BaseCard>
         </section>

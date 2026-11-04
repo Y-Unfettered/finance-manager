@@ -48,15 +48,6 @@ export interface ServiceHealth {
     configured: boolean
     status: string
   }
-  notification: {
-    enabled: boolean
-    status: string
-  }
-  ocr: {
-    enabled: boolean
-    status: string
-    engine?: string
-  }
   shizuku?: {
     available: boolean
     running: boolean
@@ -107,26 +98,6 @@ export interface AccessibilityDiagnosticsResult {
   perPkg: string[]
 }
 
-/** 通知监听服务诊断结果。 */
-export interface NotificationDiagnosticsResult {
-  counts: {
-    connected: number
-    disconnected: number
-    notifTotal: number
-    noKeyword: number
-    noAmount: number
-    parsed: number
-    dedup: number
-    queueInsert: number
-    queueFail: number
-  }
-  persisted: {
-    lastConnectedAt: number
-    lastDisconnectedAt: number
-  }
-  ring: string[]
-}
-
 /** 自动恢复状态。 */
 export interface AutoRecoverStatus {
   enabled: boolean
@@ -150,18 +121,15 @@ export interface PaymentCapturePlugin {
   diagnose(): Promise<{
     pluginLoaded: boolean
     message: string
-    ocr: { loaded: boolean; engine: string; error?: string }
     shizuku: { running: boolean; supported: boolean; available: boolean; version?: number }
   }>
   getServiceHealth(): Promise<ServiceHealth>
   getAccessibilityDiagnostics(): Promise<AccessibilityDiagnosticsResult>
-  getNotificationDiagnostics(): Promise<NotificationDiagnosticsResult>
   resetDiagnostics(): Promise<void>
   listPendingEvents(): Promise<PendingEventsResult>
   acknowledgeEvents(options: { ids: number[] }): Promise<void>
   deleteCapturedEvent(options: { id: number }): Promise<void>
   openAccessibilitySettings(): Promise<void>
-  openNotificationAccessSettings(): Promise<void>
   runSelfTest(): Promise<SelfTestResult>
   enableAccessibilityViaShizuku(): Promise<{ success: boolean; message: string }>
   requestShizukuPermission(): Promise<{ success: boolean; message: string }>
@@ -272,13 +240,11 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   async diagnose(): Promise<{
     pluginLoaded: boolean
     message: string
-    ocr: { loaded: boolean; engine: string }
     shizuku: { running: boolean; supported: boolean; available: boolean }
   }> {
     return {
       pluginLoaded: false,
       message: '仅原生平台可用',
-      ocr: { loaded: false, engine: 'unknown' },
       shizuku: { running: false, supported: false, available: false },
     }
   }
@@ -286,8 +252,6 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   async getServiceHealth(): Promise<ServiceHealth> {
     return {
       accessibility: { enabled: false, connected: false, configured: false, status: 'not_available' },
-      notification: { enabled: false, status: 'not_available' },
-      ocr: { enabled: false, status: 'not_available' },
       pendingCount: 0,
     }
   }
@@ -306,19 +270,6 @@ class WebPaymentCapture implements PaymentCapturePlugin {
       perPkg: [],
     }
   }
-
-  async getNotificationDiagnostics(): Promise<NotificationDiagnosticsResult> {
-    return {
-      counts: {
-        connected: 0, disconnected: 0, notifTotal: 0,
-        noKeyword: 0, noAmount: 0, parsed: 0, dedup: 0,
-        queueInsert: 0, queueFail: 0,
-      },
-      persisted: { lastConnectedAt: 0, lastDisconnectedAt: 0 },
-      ring: [],
-    }
-  }
-
   async resetDiagnostics(): Promise<void> {}
 
   async listPendingEvents(): Promise<PendingEventsResult> {
@@ -328,7 +279,6 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   async acknowledgeEvents(): Promise<void> {}
   async deleteCapturedEvent(): Promise<void> {}
   async openAccessibilitySettings(): Promise<void> {}
-  async openNotificationAccessSettings(): Promise<void> {}
 
   async enableAccessibilityViaShizuku(): Promise<{ success: boolean; message: string }> {
     return { success: false, message: '仅原生平台可用' }

@@ -14,7 +14,7 @@ import { getLogger } from '@/features/debug/app-logger'
 
 const logger = getLogger('captureInboxService')
 
-export type { CapturedPayment, ServiceHealth, AccessibilityDiagnosticsResult, NotificationDiagnosticsResult } from '@/features/payment-capture/payment-capture-reader'
+export type { CapturedPayment, ServiceHealth, AccessibilityDiagnosticsResult } from '@/features/payment-capture/payment-capture-reader'
 export type { AutoRecoverStatus, AutoRecoverResult } from '@/features/payment-capture/payment-capture-reader'
 
 export interface ConfirmInput {
@@ -148,10 +148,6 @@ export function openAccessibilitySettings() {
   return PaymentCapture.openAccessibilitySettings()
 }
 
-/** 打开通知权限设置。 */
-export function openNotificationAccessSettings() {
-  return PaymentCapture.openNotificationAccessSettings()
-}
 
 /** 运行自检。 */
 export function runSelfTest() {
@@ -178,10 +174,6 @@ export function getAccessibilityDiagnostics() {
   return PaymentCapture.getAccessibilityDiagnostics()
 }
 
-/** 通知监听服务诊断信息。 */
-export function getNotificationDiagnostics() {
-  return PaymentCapture.getNotificationDiagnostics()
-}
 
 /** 重置诊断数据。 */
 export function resetDiagnostics() {

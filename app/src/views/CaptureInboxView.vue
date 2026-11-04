@@ -6,8 +6,6 @@ import {
   Loader2,
   AlertCircle,
   ShieldCheck,
-  Bell,
-  Image as ImageIcon,
   Clock,
 } from '@lucide/vue'
 import { computed, onActivated, onMounted, ref } from 'vue'
@@ -70,11 +68,9 @@ const confirmCategories = computed(() =>
 
 const health = ref<{
   accessibility: { enabled: boolean; connected?: boolean }
-  notification: { enabled: boolean }
   pendingCount: number
 }>({
   accessibility: { enabled: false },
-  notification: { enabled: false },
   pendingCount: 0,
 })
 
@@ -228,9 +224,6 @@ function normalizeOccurredAt(value?: string): string {
 function captureLabel(method: string): string {
   const map: Record<string, string> = {
     accessibility: '无障碍',
-    notification: '通知',
-    share_text: '分享文本',
-    share_ocr: '分享图片',
     self_test: '自检',
   }
   return map[method] || method
@@ -251,9 +244,7 @@ function directionLabel(direction: string): string {
 function captureIcon(method: string) {
   switch (method) {
     case 'accessibility': return ShieldCheck
-    case 'notification': return Bell
-    case 'share_ocr': return ImageIcon
-    default: return Bell
+    default: return ShieldCheck
   }
 }
 
@@ -286,14 +277,6 @@ onActivated(async () => {
         <div class="health-item" :class="{ 'health-item--on': health.accessibility.connected ?? health.accessibility.enabled }">
           <ShieldCheck :size="18" />
           <span>无障碍</span>
-        </div>
-        <div class="health-item" :class="{ 'health-item--on': health.notification.enabled }">
-          <Bell :size="18" />
-          <span>通知</span>
-        </div>
-        <div class="health-item health-item--on">
-          <ImageIcon :size="18" />
-          <span>OCR</span>
         </div>
       </section>
 
@@ -355,9 +338,9 @@ onActivated(async () => {
         </BaseCard>
       </div>
 
-      <div v-if="!health.accessibility.enabled && !health.notification.enabled" class="setup-hint">
+      <div v-if="!health.accessibility.enabled" class="setup-hint">
         <AlertCircle :size="16" />
-        <span>无障碍服务和通知监听均未开启，自动捕获功能暂不可用。</span>
+        <span>无障碍服务未开启，自动捕获功能暂不可用。</span>
         <button class="setup-hint__btn" @click="router.push({ name: 'capture-settings' })">
           前往设置
         </button>
