@@ -2,69 +2,32 @@
 import {
   Check,
   X,
-  CheckCheck,
   Loader2,
   AlertCircle,
   ShieldCheck,
   Clock,
 } from '@lucide/vue'
-import { computed, onActivated, onMounted, ref } from 'vue'
+import { onActivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
-import AccountBrandIcon from '@/components/AccountBrandIcon.vue'
 import BaseCard from '@/components/BaseCard.vue'
-import CategoryIcon from '@/components/CategoryIcon.vue'
 import MoneyText from '@/components/MoneyText.vue'
-import { findAccountCatalogItem } from '@/features/finance/account-catalog'
-import { formatMinorToCny } from '@/domain/money'
-import {
-  useFinanceService,
-  type ExpenseCategoryOption,
-  type IncomeCategoryOption,
-} from '@/features/finance/finance-service'
 import { getLogger } from '@/features/debug/app-logger'
-import type { AccountBalanceRecord } from '@/domain/entities'
-
-const log = getLogger('capture-inbox')
-import { useAppStore } from '@/stores/app'
+import type { CapturedPayment } from '@/features/capture-inbox/capture-inbox-service'
 import {
-  confirmEvent,
   dismissEvent,
   dismissAll,
   listPendingEvents,
   getServiceHealth,
-  type CapturedPayment,
 } from '@/features/capture-inbox/capture-inbox-service'
 
-const appStore = useAppStore()
+const log = getLogger('capture-inbox')
 const router = useRouter()
-// 必须在 setup 同步期间调 inject，异步函数里调拿不到
-const finance = useFinanceService()
 
 const events = ref<CapturedPayment[]>([])
 const loading = ref(false)
-const selected = ref<CapturedPayment | null>(null)
-const showConfirmSheet = ref(false)
-const confirming = ref(false)
 const message = ref('')
-
-const categories = ref<ExpenseCategoryOption[]>([])
-const incomeCategories = ref<IncomeCategoryOption[]>([])
-const accounts = ref<AccountBalanceRecord[]>([])
-const selectedAccountId = ref('')
-const selectedCategoryId = ref('')
-
-/** 当前确认事件的捕获方向（expense/income/transfer/refund/confirm）。 */
-const isIncomeEvent = computed(
-  () => selected.value?.direction === 'income' || selected.value?.direction === 'refund',
-)
-const isTransferEvent = computed(() => selected.value?.direction === 'transfer')
-/** 确认弹窗的分类池：收入捕获用收入分类，其余用支出分类。 */
-const confirmCategories = computed(() =>
-  isIncomeEvent.value ? incomeCategories.value : categories.value,
-)
 
 const health = ref<{
   accessibility: { enabled: boolean; connected?: boolean }
@@ -73,10 +36,6 @@ const health = ref<{
   accessibility: { enabled: false },
   pendingCount: 0,
 })
-
-function appearance(acc: { name: string; institution?: string }) {
-  return findAccountCatalogItem(acc.name, acc.institution)
-}
 
 async function loadEvents(): Promise<void> {
   try {
@@ -99,92 +58,35 @@ async function loadHealth(): Promise<void> {
   }
 }
 
-async function loadOptions(): Promise<void> {
-  log.info('loadOptions: 开始', { ledgerId: appStore.ledgerId, hasFinance: !!finance })
-  if (!appStore.ledgerId) {
-    log.warn('loadOptions: 失败, ledgerId 为空')
-    return
-  }
-  if (!finance) {
-    log.warn('loadOptions: 失败, finance 为 undefined')
-    return
-  }
-  try {
-    const [cats, incomeCats, accts] = await Promise.all([
-      finance.listExpenseCategories(appStore.ledgerId),
-      finance.listIncomeCategories(appStore.ledgerId),
-      finance.listAccounts(appStore.ledgerId),
-    ])
-    categories.value = cats.filter((c) => !c.parentId)
-    incomeCategories.value = incomeCats.filter((c) => !c.parentId)
-    accounts.value = accts.filter(
-      (a) => !a.archivedAt && a.visibleInEntry !== false && a.normalBalance === 'debit',
-    )
-    log.info('loadOptions: 成功', { categories: categories.value.length, accounts: accounts.value.length })
-  } catch (e) {
-    log.error('loadOptions: 异常', { msg: e instanceof Error ? e.message : String(e) })
-  }
-}
-
-async function openConfirm(event: CapturedPayment): Promise<void> {
-  selected.value = event
-  selectedAccountId.value = ''
-  selectedCategoryId.value = ''
-  message.value = ''
-  await loadOptions()
-  showConfirmSheet.value = true
-}
-
-/** 转账类捕获：跳完整记账页（需选转入账户），事件保持 pending 由用户处理。 */
-function goRecordPage(): void {
-  const ev = selected.value
-  if (!ev) return
-  showConfirmSheet.value = false
+/**
+ * 点「确认」→ 跳完整记账页预填（与支付宝账单详情自动跳转同一条链路），
+ * 记账页保存时会自动确认队列事件并置指纹 confirmed。
+ * 转账类额外带 mode=transfer（需选转入账户）。
+ */
+function goRecordPage(event: CapturedPayment): void {
+  const isTransfer = event.direction === 'transfer'
   router.push({
     path: '/transactions/new',
     query: {
-      mode: 'transfer',
-      direction: 'transfer',
-      amount: String(ev.amountMinor),
-      merchant: ev.merchant ?? '',
-      occurredAt: normalizeOccurredAt(ev.occurredAt),
-      note: ev.note ?? '',
-      accountHint: ev.accountHint ?? '',
-      targetAccountHint: ev.targetAccountHint ?? '',
-      captureSource: ev.captureMethod ?? '',
-      parserVersion: ev.parserVersion ?? '',
-      confidence: ev.confidence != null ? String(ev.confidence) : '',
-      fingerprint: ev.rawFingerprint ?? '',
-      captureId: String(ev.id),
-      fee: ev.feeMinor != null ? String(ev.feeMinor) : '',
+      ...(isTransfer ? { mode: 'transfer', direction: 'transfer' } : {}),
+      direction: event.direction ?? '',
+      amount: String(event.amountMinor),
+      merchant: event.merchant ?? '',
+      occurredAt: normalizeOccurredAt(event.occurredAt),
+      note: event.note ?? '',
+      accountHint: event.accountHint ?? '',
+      targetAccountHint: event.targetAccountHint ?? '',
+      captureSource: event.captureMethod ?? '',
+      parserVersion: event.parserVersion ?? '',
+      confidence: event.confidence != null ? String(event.confidence) : '',
+      fingerprint: event.rawFingerprint ?? '',
+      captureId: String(event.id),
+      fee: event.feeMinor != null ? String(event.feeMinor) : '',
+      originalAmount: event.originalAmountMinor != null ? String(event.originalAmountMinor) : '',
+      discount: event.discountMinor != null ? String(event.discountMinor) : '',
+      suggestedCategory: event.suggestedCategory ?? '',
     },
   })
-}
-
-async function doConfirm(): Promise<void> {
-  if (!selected.value || !selectedAccountId.value || !selectedCategoryId.value) return
-  try {
-    confirming.value = true
-    message.value = ''
-    await confirmEvent({
-      event: selected.value,
-      accountId: selectedAccountId.value,
-      categoryId: selectedCategoryId.value,
-    })
-    message.value = '入账成功'
-    showConfirmSheet.value = false
-    await loadEvents()
-    await loadHealth()
-  } catch (e) {
-    message.value = e instanceof Error ? e.message : '入账失败'
-  } finally {
-    confirming.value = false
-  }
-}
-
-function onDismissConfirm(): void {
-  if (confirming.value) return
-  showConfirmSheet.value = false
 }
 
 async function doDismiss(id: number): Promise<void> {
@@ -266,11 +168,13 @@ onActivated(async () => {
 
 <template>
   <main class="capture-inbox">
-    <AppTopBar
-      title="待确认账单"
-      :show-back="true"
-      @on-back="router.back()"
-    />
+    <div class="safe-top">
+      <AppTopBar
+        title="待确认账单"
+        :show-back="true"
+        @on-back="router.back()"
+      />
+    </div>
 
     <div class="capture-inbox__body">
       <section class="health-bar">
@@ -301,6 +205,8 @@ onActivated(async () => {
           <button class="events-list__dismiss-all" @click="doDismissAll">全部忽略</button>
         </div>
 
+        <p v-if="message" class="events-list__message">{{ message }}</p>
+
         <BaseCard v-for="event in events" :key="event.id" class="event-item">
           <div class="event-item__row">
             <component :is="captureIcon(event.captureMethod)" class="event-item__icon" :size="22" />
@@ -330,7 +236,7 @@ onActivated(async () => {
               <X :size="16" />
               忽略
             </button>
-            <button class="event-item__btn event-item__btn--confirm" @click="openConfirm(event)">
+            <button class="event-item__btn event-item__btn--confirm" @click="goRecordPage(event)">
               <Check :size="16" />
               确认
             </button>
@@ -347,103 +253,6 @@ onActivated(async () => {
       </div>
     </div>
 
-    <!-- 确认入账底部弹窗 -->
-    <AppBottomSheet v-model:show="showConfirmSheet" title="确认入账">
-      <div v-if="selected" class="confirm-sheet">
-        <div class="confirm-sheet__amount">
-          <MoneyText :amount-minor="selected.amountMinor" />
-          <span class="confirm-sheet__merchant">{{ selected.merchant || '—' }}</span>
-        </div>
-
-        <div v-if="isTransferEvent" class="entry-empty">
-          转账类捕获需要选择转入账户，请点击「去记账」在完整记账页确认。
-        </div>
-        <template v-else>
-          <section class="entry-section">
-            <span class="entry-section__label">{{ isIncomeEvent ? '收入分类' : '支出分类' }}</span>
-            <div class="entry-categories">
-              <button
-                v-for="cat in confirmCategories.slice(0, 12)"
-                :key="cat.id"
-                type="button"
-                :class="['entry-cat', { active: selectedCategoryId === cat.id }]"
-                @click="selectedCategoryId = cat.id"
-              >
-                <CategoryIcon
-                  :icon-key="cat.iconKey"
-                  color="var(--color-primary-500)"
-                  :size="28"
-                  :label="cat.name"
-                />
-                <span class="entry-cat__label">{{ cat.name }}</span>
-              </button>
-            </div>
-            <div v-if="confirmCategories.length === 0" class="entry-empty">
-              {{ isIncomeEvent ? '暂无收入分类，请先在「设置」中添加' : '暂无支出分类，请先在「设置」中添加' }}
-            </div>
-          </section>
-
-          <section class="entry-section">
-            <span class="entry-section__label">{{ isIncomeEvent ? '入账账户' : '付款账户' }}</span>
-            <div class="entry-accounts">
-              <button
-                v-for="acc in accounts.slice(0, 8)"
-                :key="acc.id"
-                type="button"
-                :class="['entry-account', { active: selectedAccountId === acc.id }]"
-                @click="selectedAccountId = acc.id"
-              >
-                <AccountBrandIcon
-                  :label="acc.name"
-                  :brand-key="acc.brandKey ?? appearance(acc).id"
-                  :symbol="acc.iconKey ?? appearance(acc).symbol"
-                  :color="acc.color ?? appearance(acc).color"
-                  :size="'small'"
-                />
-                <div class="entry-account__info">
-                  <span class="entry-account__name">{{ acc.name }}</span>
-                  <span class="entry-account__balance">
-                    {{ formatMinorToCny(acc.balanceMinor) }}
-                  </span>
-                </div>
-              </button>
-            </div>
-            <div v-if="accounts.length === 0" class="entry-empty">暂无付款账户，请先在「账户」中添加</div>
-          </section>
-        </template>
-
-        <div class="confirm-sheet__actions">
-          <button
-            class="entry-btn entry-btn--dismiss"
-            :disabled="confirming"
-            @click="onDismissConfirm"
-          >
-            忽略
-          </button>
-          <button
-            v-if="isTransferEvent"
-            class="entry-btn entry-btn--confirm"
-            @click="goRecordPage"
-          >
-            去记账
-          </button>
-          <button
-            v-else
-            class="entry-btn entry-btn--confirm"
-            :disabled="!selectedAccountId || !selectedCategoryId || confirming"
-            @click="doConfirm"
-          >
-            <CheckCheck v-if="!confirming" :size="16" />
-            <Loader2 v-else :size="16" class="spinner" />
-            {{ confirming ? '入账中…' : '确认入账' }}
-          </button>
-        </div>
-
-        <p v-if="message" class="confirm-sheet__message" :class="message === '入账成功' ? 'confirm-sheet__message--success' : 'confirm-sheet__message--error'">
-          {{ message }}
-        </p>
-      </div>
-    </AppBottomSheet>
   </main>
 </template>
 
@@ -453,6 +262,16 @@ onActivated(async () => {
   flex-direction: column;
   height: 100%;
   background: var(--color-background);
+}
+
+/* 状态栏安全区：顶栏从摄像头/状态栏下方开始（其余页面同款） */
+.capture-inbox .safe-top {
+  position: sticky;
+  z-index: 40;
+  top: 0;
+  padding-top: env(safe-area-inset-top);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-divider);
 }
 
 .capture-inbox__body {
@@ -705,203 +524,15 @@ onActivated(async () => {
   cursor: pointer;
 }
 
-.confirm-sheet {
-  padding: 8px 0 16px;
-  max-height: 80vh;
-  overflow-y: auto;
-}
 
-.confirm-sheet__amount {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--color-divider);
-  margin-bottom: 16px;
-}
-
-.confirm-sheet__merchant {
-  font-size: 14px;
-  color: var(--color-text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-
-.entry-section {
-  margin-bottom: var(--space-4);
-}
-
-.entry-section__label {
-  display: block;
-  margin-bottom: var(--space-2);
-  color: var(--color-text-tertiary);
-  font-size: 13px;
-  font-weight: 500;
-  padding-left: 2px;
-}
-
-.entry-categories {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px var(--space-2);
-}
-
-.entry-cat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: var(--space-1) 2px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.entry-cat.active {
-  border-color: var(--color-primary-500);
-  background: var(--color-primary-50);
-}
-
-.entry-cat:active {
-  transform: scale(0.95);
-}
-
-.entry-cat__label {
-  color: var(--color-text-secondary);
-  font-size: 11px;
-  text-align: center;
-  line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-
-.entry-cat.active .entry-cat__label {
-  color: var(--color-primary-700);
-  font-weight: 600;
-}
-
-.entry-accounts {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.entry-account {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  padding: var(--space-2) 2px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-
-.entry-account.active {
-  border-color: var(--color-primary-500);
-  background: var(--color-primary-50);
-}
-
-.entry-account:active {
-  transform: scale(0.95);
-}
-
-.entry-account__info {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  width: 100%;
-}
-
-.entry-account__name {
-  color: var(--color-text-primary);
-  font-size: 11px;
-  font-weight: 500;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-
-.entry-account__balance {
-  color: var(--color-text-tertiary);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.entry-empty {
-  padding: 16px 0;
-  text-align: center;
-  color: var(--color-text-tertiary);
-  font-size: 13px;
-}
-
-.confirm-sheet__actions {
-  display: grid;
-  grid-template-columns: 1fr 1.4fr;
-  gap: var(--space-3);
-  margin-top: var(--space-4);
-}
-
-.entry-btn {
-  height: 46px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-size: 15px;
-  font-weight: 600;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: opacity 0.15s;
-}
-
-.entry-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.entry-btn--dismiss {
-  color: var(--color-text-primary);
-  background: var(--color-background);
-  border: 1px solid var(--color-divider);
-}
-
-.entry-btn--confirm {
-  color: white;
-  background: var(--color-primary-600);
-  border: 0;
-}
-
-.confirm-sheet__message {
-  margin: var(--space-2) 0 0;
-  font-size: var(--type-caption-size);
-  text-align: center;
-  line-height: 1.4;
-}
-
-.confirm-sheet__message--success {
-  color: var(--color-success);
-}
-
-.confirm-sheet__message--error {
+/* 忽略失败等操作提示 */
+.events-list__message {
+  margin: 0;
+  padding: 6px 12px;
   color: var(--color-danger);
-}
-
-.spinner {
-  animation: spin 1s linear infinite;
+  font-size: var(--type-caption-size);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
 }
 </style>
