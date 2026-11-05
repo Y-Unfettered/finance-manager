@@ -47,6 +47,7 @@ const period = ref(
 const mode = useUiPreference<ReportMode>('monthly-report:mode', 'month', ['month', 'year'])
 const loading = ref(true)
 const showMonthPicker = ref(false)
+const showYearPicker = ref(false)
 const points = ref<FlowPoint[]>([])
 const incomeMinor = ref(0)
 const expenseMinor = ref(0)
@@ -75,12 +76,19 @@ const savingRate = computed(() =>
   incomeMinor.value > 0 ? Math.round((balanceMinor.value / incomeMinor.value) * 100) : 0,
 )
 
-function deltaLabel(current: number, prev: number | undefined): string {
-  if (prev === undefined || prev === 0) return '—'
+function deltaLabel(
+  current: number,
+  prev: number | undefined,
+  kind: 'income' | 'expense' | 'balance',
+): { text: string; cls: string } {
+  if (prev === undefined || prev === 0) return { text: '—', cls: '' }
   const diff = current - prev
-  if (diff === 0) return '持平'
+  if (diff === 0) return { text: '持平', cls: '' }
   const pct = Math.round((Math.abs(diff) / prev) * 100)
-  return `${diff > 0 ? '+' : '−'}${pct}%`
+  const up = diff > 0
+  // 收入/结余上升为好（绿），支出上升为坏（红）
+  const good = kind === 'expense' ? !up : up
+  return { text: `${diff > 0 ? '+' : '−'}${pct}%`, cls: good ? 'delta-good' : 'delta-bad' }
 }
 
 interface CategoryAgg {
@@ -398,9 +406,8 @@ function setTotals(snapshots: readonly HomeSnapshot[]): void {
   expenseMinor.value = snapshots.reduce((sum, item) => sum + item.summary.expenseMinor, 0)
 }
 
-function changeYear(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value)
-  if (Number.isInteger(value) && value >= 1970 && value <= 2200) period.value = `${value}-01`
+function pickYear(year: string): void {
+  period.value = `${year}-01`
 }
 
 function pickMonth(next: string): void {
@@ -455,15 +462,15 @@ onMounted(load)
         >
           {{ period.replace('-', '.') }} <span aria-hidden="true">▾</span>
         </button>
-        <input
+        <button
           v-else
-          :value="year"
-          type="text"
-          inputmode="numeric"
-          aria-label="选择年份"
+          type="button"
           class="report-period"
-          @change="changeYear"
-        />
+          aria-label="选择年份"
+          @click="showYearPicker = true"
+        >
+          {{ year }} <span aria-hidden="true">▾</span>
+        </button>
       </div>
 
       <BaseCard class="report-trend">
@@ -480,17 +487,45 @@ onMounted(load)
         <div>
           <span>收入</span>
           <MoneyText :amount-minor="incomeMinor" tone="income" />
-          <small v-if="mode === 'month'" class="kpi-delta">{{ deltaLabel(incomeMinor, prevSummary?.incomeMinor) }}</small>
+          <small
+            v-if="mode === 'month'"
+            :class="['kpi-delta', deltaLabel(incomeMinor, prevSummary?.incomeMinor, 'income').cls]"
+          >
+            {{ deltaLabel(incomeMinor, prevSummary?.incomeMinor, 'income').text }}
+          </small>
         </div>
         <div>
           <span>支出</span>
           <MoneyText :amount-minor="expenseMinor" tone="expense" />
-          <small v-if="mode === 'month'" class="kpi-delta">{{ deltaLabel(expenseMinor, prevSummary?.expenseMinor) }}</small>
+          <small
+            v-if="mode === 'month'"
+            :class="['kpi-delta', deltaLabel(expenseMinor, prevSummary?.expenseMinor, 'expense').cls]"
+          >
+            {{ deltaLabel(expenseMinor, prevSummary?.expenseMinor, 'expense').text }}
+          </small>
         </div>
         <div>
           <span>结余</span>
           <MoneyText :amount-minor="balanceMinor" />
-          <small v-if="mode === 'month'" class="kpi-delta">{{ deltaLabel(balanceMinor, prevSummary ? prevSummary.incomeMinor - prevSummary.expenseMinor : undefined) }}</small>
+          <small
+            v-if="mode === 'month'"
+            :class="[
+              'kpi-delta',
+              deltaLabel(
+                balanceMinor,
+                prevSummary ? prevSummary.incomeMinor - prevSummary.expenseMinor : undefined,
+                'balance',
+              ).cls,
+            ]"
+          >
+            {{
+              deltaLabel(
+                balanceMinor,
+                prevSummary ? prevSummary.incomeMinor - prevSummary.expenseMinor : undefined,
+                'balance',
+              ).text
+            }}
+          </small>
         </div>
       </BaseCard>
 
@@ -710,6 +745,13 @@ onMounted(load)
       title="选择月份"
       @select="pickMonth"
     />
+    <MonthPickerSheet
+      v-model:show="showYearPicker"
+      :period="period"
+      year-only
+      title="选择年份"
+      @select="pickYear"
+    />
   </main>
 </template>
 
@@ -885,8 +927,23 @@ onMounted(load)
   font-size: 12px;
 }
 .report-kpis :deep(.money-text) {
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.kpi-delta {
+  display: block;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.delta-good {
+  color: var(--color-income);
+}
+
+.delta-bad {
+  color: var(--color-expense);
 }
 
 /* ============ 报告板块 ============ */

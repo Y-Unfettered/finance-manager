@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { DatePicker, type DatePickerColumnType } from 'vant'
 import 'vant/es/date-picker/style'
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import AppBottomSheet from './AppBottomSheet.vue'
 
@@ -9,6 +9,8 @@ const props = defineProps<{
   show: boolean
   period: string
   title?: string
+  /** 仅选年份（年报等场景）：确认返回 "yyyy" 而非 "yyyy-MM" */
+  yearOnly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -17,7 +19,9 @@ const emit = defineEmits<{
 }>()
 
 const selected = ref<string[]>([])
-const columnTypes: DatePickerColumnType[] = ['year', 'month']
+const columnTypes = computed<DatePickerColumnType[]>(() =>
+  props.yearOnly ? ['year'] : ['year', 'month'],
+)
 const minDate = new Date(1970, 0, 1)
 const maxDate = new Date(2200, 11, 1)
 
@@ -33,8 +37,8 @@ watch(
 
 function confirm(): void {
   const [year, month] = selected.value
-  if (!year || !month) return
-  emit('select', `${year}-${month.padStart(2, '0')}`)
+  if (!year) return
+  emit('select', props.yearOnly ? year : `${year}-${(month ?? '01').padStart(2, '0')}`)
   emit('update:show', false)
 }
 </script>
@@ -42,7 +46,7 @@ function confirm(): void {
 <template>
   <AppBottomSheet
     :show="show"
-    :title="title ?? '选择月份'"
+    :title="title ?? (props.yearOnly ? '选择年份' : '选择月份')"
     @update:show="$emit('update:show', $event)"
   >
     <DatePicker

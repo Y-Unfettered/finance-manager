@@ -56,8 +56,9 @@ h2 {
 }
 .kpis :deep(.money-text),
 .kpis strong {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
 }
 .distribution {
   display: grid;
@@ -112,4 +113,46 @@ h2 {
 .tx-list small {
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
+}
+
+/* 月度流入流出明细表（账户统计） */
+.monthly-table {
+  width: 100%;
+  margin-top: var(--space-2);
+  border-collapse: collapse;
+  font-size: var(--type-caption-size);
+}
+
+.monthly-table th {
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  text-align: right;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.monthly-table th:first-child {
+  text-align: left;
+}
+
+.monthly-table td {
+  padding: var(--space-2);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.monthly-table td:first-child {
+  color: var(--color-text-primary);
+  text-align: left;
+}
+
+.monthly-table .num--in {
+  color: var(--color-income);
+}
+
+.monthly-table .num--out {
+  color: var(--color-expense);
 }

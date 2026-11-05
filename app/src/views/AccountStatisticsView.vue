@@ -107,6 +107,24 @@ useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
           <p v-if="selectedMonth" class="chart-hint">
             已筛选 {{ selectedMonth }}，再次点击柱状图取消
           </p>
+          <table class="monthly-table">
+            <thead>
+              <tr>
+                <th>月份</th>
+                <th>流入</th>
+                <th>流出</th>
+                <th>净额</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in [...data.monthly].reverse()" :key="m.periodKey">
+                <td>{{ m.periodKey }}</td>
+                <td class="num num--in">{{ (m.inflowMinor / 100).toFixed(2) }}</td>
+                <td class="num num--out">{{ (m.outflowMinor / 100).toFixed(2) }}</td>
+                <td class="num">{{ ((m.inflowMinor - m.outflowMinor) / 100).toFixed(2) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </BaseCard>
         <BaseCard>
           <h2>支出分类</h2>

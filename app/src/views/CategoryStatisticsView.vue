@@ -180,7 +180,8 @@ useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
             已筛选 {{ selectedMonth }}，再次点击柱状图取消
           </p>
         </BaseCard>
-        <BaseCard>
+        <!-- 无二级分类时构成只有自身一条，没有信息量，不显示 -->
+        <BaseCard v-if="data.distribution.length > 1">
           <h2>分类构成</h2>
           <DistributionDonut :points="data.distribution" />
           <DistributionBars :items="data.distribution" />

@@ -65,7 +65,7 @@ function buildOption() {
         type: 'bar',
         data: incomeData,
         itemStyle: { color: incomeColor, borderRadius: [4, 4, 0, 0] },
-        barMaxWidth: 7,
+        barMaxWidth: 20,
         barGap: '20%',
       },
       {
@@ -73,7 +73,7 @@ function buildOption() {
         type: 'bar',
         data: expenseData,
         itemStyle: { color: expenseColor, borderRadius: [4, 4, 0, 0] },
-        barMaxWidth: 7,
+        barMaxWidth: 20,
       },
     ],
   }
