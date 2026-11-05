@@ -77,6 +77,13 @@ public class AccessibilityEnabler {
 
             Log.d(TAG, "当前已启用无障碍服务: " + current);
 
+            // 移除历史 bug 写入的错误类名条目（只加不清会让它随每次恢复永远残留）
+            String cleaned = removeBrokenEntry(current);
+            if (!cleaned.equals(current)) {
+                Log.i(TAG, "已从无障碍列表移除存量错误条目: " + current + " -> " + cleaned);
+                current = cleaned;
+            }
+
             // 如果已经启用，返回成功
             if (current.contains(componentName)) {
                 Log.d(TAG, "无障碍服务已启用");
@@ -133,5 +140,82 @@ public class AccessibilityEnabler {
             return true;
         }
         return false;
+    }
+
+    /** 历史 bug 遗留的错误类名（未在 Manifest 注册，系统无法启动，见 REAL_SERVICE_CLASS 注释）。 */
+    private static final String LEGACY_BROKEN_ENTRY =
+            "app.financemanager.capture.accessibility.PaymentAccessibilityService";
+
+    /** 从启用串中移除错误类名条目（其余条目原样保留，顺序不变）。 */
+    private static String removeBrokenEntry(String setting) {
+        StringBuilder out = new StringBuilder();
+        for (String entry : setting.split(":")) {
+            String t = entry.trim();
+            if (t.isEmpty()) continue;
+            if (t.equals(LEGACY_BROKEN_ENTRY) || t.endsWith("/" + LEGACY_BROKEN_ENTRY)) {
+                continue;
+            }
+            if (out.length() > 0) out.append(':');
+            out.append(t);
+        }
+        return out.toString();
+    }
+
+    /**
+     * 修复存量错误配置：enabled_accessibility_services 中若含历史 bug 写入的错误类名条目，
+     * 替换为正确的组件名（保留 GKD 等其他 APP 的条目）。
+     *
+     * 背景：旧版自动启用逻辑误用父类名写系统设置——该条目系统无法启动，服务一旦被杀
+     * 就再也重绑不上（表现为健康条"未连接"、日志无无障碍记录）。写入需要 Shizuku；
+     * 不可用时仅记录诊断日志，不做任何变更。
+     *
+     * @return true=无需修复或修复成功；false=检测到问题但未能修复（如 Shizuku 不可用）
+     */
+    public boolean fixLegacyConfig() {
+        try {
+            String setting = Settings.Secure.getString(
+                    context.getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+            if (setting == null || setting.isEmpty()) {
+                return true;
+            }
+            if (!setting.contains(LEGACY_BROKEN_ENTRY)) {
+                return true; // 无错误条目
+            }
+
+            String correct = getComponentName();
+            String cleanedCurrent = removeBrokenEntry(setting);
+            String newList = cleanedCurrent.isEmpty()
+                    ? correct
+                    : (cleanedCurrent + ":" + correct);
+            Log.w(TAG, "修正无障碍存量配置: " + setting + " -> " + newList);
+
+            // 启动竞态：load() 触发时 Shizuku UserService 可能尚未绑定完成，
+            // 等待其就绪（最多 ~12s）再写，否则会像首次启动那样静默失败
+            boolean shizukuReady = false;
+            for (int attempt = 0; attempt < 8; attempt++) {
+                if (ShizukuShell.isAvailable()) {
+                    shizukuReady = true;
+                    break;
+                }
+                Thread.sleep(1500);
+            }
+            if (!shizukuReady) {
+                Log.w(TAG, "Shizuku 不可用，无法自动修正无障碍存量配置（需用户手动重开一次无障碍）");
+                return false;
+            }
+            ShizukuShell shell = ShizukuShell.getInstance(context.getPackageName());
+            String r1 = shell.exec("settings put secure enabled_accessibility_services " + newList);
+            String r2 = shell.exec("settings put secure accessibility_enabled 1");
+            String verify = shell.exec("settings get secure enabled_accessibility_services");
+            boolean ok = r1 != null && r2 != null && verify != null
+                    && verify.contains(correct)
+                    && !verify.contains(LEGACY_BROKEN_ENTRY);
+            Log.i(TAG, "修正无障碍存量配置: " + (ok ? "成功" : "失败"));
+            return ok;
+        } catch (Exception e) {
+            Log.w(TAG, "修正无障碍存量配置异常", e);
+            return false;
+        }
     }
 }

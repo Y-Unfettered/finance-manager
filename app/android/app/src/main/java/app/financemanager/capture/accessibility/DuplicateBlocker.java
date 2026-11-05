@@ -50,7 +50,7 @@ public final class DuplicateBlocker {
      * @return true = 已存在相同交易，应拦截
      */
     public static boolean isDuplicateOfStored(Context context, long amountMinor,
-                                              String merchant, String occurredAtIso,
+                                              String merchant, String note, String occurredAtIso,
                                               long occurredAtEpochMs, String fingerprint) {
         if (!isEnabled(context)) return false;
         if (amountMinor <= 0) return false;
@@ -68,6 +68,12 @@ public final class DuplicateBlocker {
         }
         if (center <= 0) return false;
 
+        // 时间窗 ±60s（ISO UTC 字符串比较），同金额候选取回后在 Java 里做商户/备注比对
+        SimpleDateFormat utc = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US);
+        utc.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        String fromIso = utc.format(new java.util.Date(center - WINDOW_MS));
+        String toIso = utc.format(new java.util.Date(center + WINDOW_MS));
+
         SQLiteDatabase db = null;
         Cursor cursor = null;
         try {
@@ -75,14 +81,18 @@ public final class DuplicateBlocker {
                     context.getDatabasePath("finance_managerSQLite.db").getAbsolutePath(),
                     null, SQLiteDatabase.OPEN_READONLY);
             cursor = db.rawQuery(
-                    "SELECT occurred_at FROM transactions "
-                            + "WHERE amount_minor = ? AND status = 'posted' AND merchant = ? LIMIT 20",
-                    new String[]{String.valueOf(amountMinor), merchant == null ? "" : merchant.trim()});
+                    "SELECT occurred_at, merchant, note FROM transactions "
+                            + "WHERE amount_minor = ? AND status = 'posted' "
+                            + "AND occurred_at BETWEEN ? AND ? LIMIT 50",
+                    new String[]{String.valueOf(amountMinor), fromIso, toIso});
             while (cursor != null && cursor.moveToNext()) {
                 String storedIso = cursor.getString(0);
+                String storedMerchant = cursor.getString(1);
+                String storedNote = cursor.getString(2);
                 long storedMs = parseEpochMs(storedIso);
                 if (storedMs <= 0) continue;
-                if (Math.abs(storedMs - center) <= TIME_TOLERANCE_MS) {
+                if (Math.abs(storedMs - center) > TIME_TOLERANCE_MS) continue;
+                if (matchesEvidence(merchant, storedMerchant, note, storedNote)) {
                     Log.i(TAG, "命中已存交易：amount=" + amountMinor
                             + " merchant=" + merchant + " occurred=" + storedIso);
                     return true;
@@ -95,6 +105,28 @@ public final class DuplicateBlocker {
             if (db != null) db.close();
         }
         return false;
+    }
+
+    /** 时间匹配窗：保存的 occurred_at 透传自捕获，正常秒级一致；±60s 容忍手动补录。 */
+    private static final long WINDOW_MS = 60 * 1000;
+
+    /**
+     * 重复证据判定：商户相等或双向包含（"美团" ⊂ "美团外卖"），
+     * 或备注双向包含（实测 2026-11-06：保存时商户为空、重捕解析出"天猫"，
+     * 仅商户比对拦不住 → 用备注"黄桃罐头…"兜底）。
+     */
+    private static boolean matchesEvidence(String capMerchant, String storedMerchant,
+                                           String capNote, String storedNote) {
+        String cm = capMerchant == null ? "" : capMerchant.trim();
+        String sm = storedMerchant == null ? "" : storedMerchant.trim();
+        if (!cm.isEmpty() && !sm.isEmpty()
+                && (cm.equals(sm) || sm.contains(cm) || cm.contains(sm))) {
+            return true;
+        }
+        String cn = capNote == null ? "" : capNote.trim();
+        String sn = storedNote == null ? "" : storedNote.trim();
+        return !cn.isEmpty() && !sn.isEmpty()
+                && (sn.contains(cn) || cn.contains(sn));
     }
 
     /** 库内时间字符串（UTC ISO）→ epoch 毫秒；失败 -1。 */

@@ -76,7 +76,7 @@ public final class CaptureRuleDefaults {
         aliases.put("occurredAtLabel", new JSONArray().put("创建时间").put("支付时间").put("交易时间").put("转账时间"));
         aliases.put("accountLabel", new JSONArray().put("付款方式").put("支付方式").put("收款方式"));
         aliases.put("merchantLabel", new JSONArray().put("对方账户").put("收款方").put("商户").put("商家"));
-        aliases.put("noteLabel", new JSONArray().put("缴费说明").put("交易详情").put("理由").put("转账备注").put("商品"));
+        aliases.put("noteLabel", new JSONArray().put("缴费说明").put("交易详情").put("理由").put("转账备注").put("商品说明").put("商品"));
         aliases.put("orderIdLabel", new JSONArray().put("订单号").put("商户单号").put("交易单号").put("户号"));
         rule.put("fieldAliases", aliases);
 
@@ -90,9 +90,12 @@ public final class CaptureRuleDefaults {
         rule.put("layoutExtract", layoutExtract);
 
         JSONObject noteRule = new JSONObject();
-        noteRule.put("preferFields", new JSONArray().put("缴费说明").put("交易详情").put("转账备注").put("商品").put("理由"));
+        noteRule.put("preferFields", new JSONArray().put("缴费说明").put("交易详情").put("理由").put("转账备注").put("商品说明").put("商品"));
         noteRule.put("maxLength", 50);
-        noteRule.put("cleanPatterns", new JSONArray().put("[-–]\\*+[^-–]*$"));
+        // 订单号尾缀清洗（与微信规则对齐）：实测美团商品说明尾缀"-2611051110030000…"
+        noteRule.put("cleanPatterns", new JSONArray()
+                .put("订单编号\\d+$").put("App-\\d+$")
+                .put("[-–]\\*+[^-–]*$").put("[-–]\\d{6,}$"));
         noteRule.put("fallbackToMerchant", true);
         rule.put("noteRule", noteRule);
 

@@ -53,6 +53,23 @@ public class PaymentAccessibilityService extends AccessibilityService {
     /** 服务当前是否已连接（活信号：设置开关开着 ≠ 服务活着，MIUI 杀后台后设置仍是 on）。 */
     public static volatile boolean sServiceConnected = false;
 
+    /** 当前服务实例（读屏测试等诊断工具用它抓取活动窗口节点树；未连接时为 null）。 */
+    private static volatile PaymentAccessibilityService sInstance;
+
+    /** 自动记账总开关 prefs（true=默认开；关闭后完全不识别/不入队/不跳转）。 */
+    private static final String CAPTURE_PREFS_NAME = "capture_prefs";
+    private static final String KEY_AUTO_CAPTURE_ENABLED = "auto_capture_enabled";
+
+    /** 查询自动记账总开关（默认开）。 */
+    public static boolean isAutoCaptureEnabled(android.content.Context context) {
+        try {
+            return context.getSharedPreferences(CAPTURE_PREFS_NAME, Context.MODE_PRIVATE)
+                    .getBoolean(KEY_AUTO_CAPTURE_ENABLED, true);
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
     /** 后台线程池：Room 数据库操作必须脱离主线程执行 */
     private static final ExecutorService DB_EXECUTOR = Executors.newSingleThreadExecutor();
 
@@ -131,11 +148,12 @@ public class PaymentAccessibilityService extends AccessibilityService {
                     Log.d(TAG, "指纹DB去重跳过（重启后内存已清）: " + fp);
                     return;
                 }
-                // 层 2 重复拦截：与已存交易（金额+商户+时间秒级）一致 → 已记录过，静默拦截
+                // 层 2 重复拦截：与已存交易（金额+商户/备注+时间）一致 → 已记录过，静默拦截
                 long occurredEpoch = parseOccurredEpoch(pendingConfirm.getOccurredAt());
                 if (DuplicateBlocker.isDuplicateOfStored(getApplicationContext(),
                         pendingConfirm.getAmountMinor() != null ? pendingConfirm.getAmountMinor() : 0,
-                        pendingConfirm.getMerchant(), pendingConfirm.getOccurredAt(), occurredEpoch, fp)) {
+                        pendingConfirm.getMerchant(), pendingConfirm.getNote(),
+                        pendingConfirm.getOccurredAt(), occurredEpoch, fp)) {
                     AccessibilityDiagnostics.dedup(pkg);
                     Log.d(TAG, "重复交易拦截（已存于 transactions）: amount=" + pendingConfirm.getAmount()
                             + " merchant=" + pendingConfirm.getMerchant());
@@ -152,6 +170,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         super.onServiceConnected();
         sServiceConnected = true;
+        sInstance = this;
         AccessibilityDiagnostics.serviceConnected(this.getApplicationContext());
         Log.d(TAG, "onServiceConnected: 无障碍服务已启动");
 
@@ -383,6 +402,21 @@ public class PaymentAccessibilityService extends AccessibilityService {
     }
 
     private void processWindow(String packageName, AccessibilityNodeInfo root, boolean quiet) {
+        // 自动记账总开关：关闭时完全不识别/不入队/不跳转（读屏测试等诊断场景用）
+        if (!isAutoCaptureEnabled(this)) {
+            return;
+        }
+
+        // 窗口归属校验：事件包名必须与窗口内容包名一致。此前遍历窗口列表时会拿
+        // 事件包名解析任意窗口（实测：在本 APP 首页产生"剩余：143.35"等垃圾捕获，
+        // 来源却记成支付宝），这里从入口堵死。
+        CharSequence rootPkgCs = root != null ? root.getPackageName() : null;
+        String rootPkg = rootPkgCs != null ? rootPkgCs.toString() : "";
+        if (root == null || !rootPkg.equals(packageName)) {
+            Log.d(TAG, "窗口归属不符，跳过: event=" + packageName + " root=" + rootPkg);
+            return;
+        }
+
         // 节点树全量 dump 日志量巨大（会挤爆 logcat buffer），默认关闭；排障时置 true
         if (DEBUG_DUMP_NODE_TREE) {
             StringBuilder sb = new StringBuilder();
@@ -640,6 +674,39 @@ public class PaymentAccessibilityService extends AccessibilityService {
         }
     }
 
+    /**
+     * 「读屏测试」一次性抓取：返回当前活动窗口的节点树缩进文本（同 logcat dumpNode 格式）。
+     * activeRoot 不可用时遍历窗口列表兜底；服务未连接或读不到任何窗口返回 null。
+     * 任意线程可调用（getRootInActiveWindow 线程安全）。
+     */
+    public static String captureActiveWindowTree() {
+        PaymentAccessibilityService service = sInstance;
+        if (service == null || !sServiceConnected) return null;
+        try {
+            AccessibilityNodeInfo root = service.getRootInActiveWindow();
+            if (root == null) {
+                try {
+                    for (android.view.accessibility.AccessibilityWindowInfo w : service.getWindows()) {
+                        AccessibilityNodeInfo r = w != null ? w.getRoot() : null;
+                        if (r != null) {
+                            root = r;
+                            break;
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            if (root == null) return null;
+            StringBuilder sb = new StringBuilder();
+            service.dumpNode(root, 0, sb);
+            root.recycle();
+            return sb.toString();
+        } catch (Exception e) {
+            Log.w(TAG, "读屏测试抓取失败", e);
+            return null;
+        }
+    }
+
     @Override
     public void onInterrupt() {
         Log.w(TAG, "onInterrupt: 无障碍服务被系统中断");
@@ -648,6 +715,7 @@ public class PaymentAccessibilityService extends AccessibilityService {
     @Override
     public void onDestroy() {
         sServiceConnected = false;
+        sInstance = null;
         mainHandler.removeCallbacks(heartbeatRunnable);
         AccessibilityDiagnostics.serviceDestroyed(this.getApplicationContext());
         // 停止前台保活服务（无障碍禁用时不再保活）

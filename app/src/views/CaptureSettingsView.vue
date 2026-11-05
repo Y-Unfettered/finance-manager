@@ -18,6 +18,7 @@ import { onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppTopBar from '@/components/AppTopBar.vue'
+import AppSwitch from '@/components/AppSwitch.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import {
   getServiceHealth,
@@ -339,8 +340,31 @@ function statusLabel(status: string): string {
   }
 }
 
+// 自动记账总开关（关闭后服务完全不识别/不入队/不跳转，读屏测试等诊断场景用）
+const autoCaptureEnabled = ref(true)
+
+async function loadAutoCaptureEnabled(): Promise<void> {
+  try {
+    const r = await PaymentCapture.getAutoCaptureEnabled()
+    autoCaptureEnabled.value = !!r?.enabled
+  } catch {
+    // 原生不可用保持默认开
+  }
+}
+
+async function doToggleAutoCapture(): Promise<void> {
+  const next = !autoCaptureEnabled.value
+  try {
+    const r = await PaymentCapture.setAutoCaptureEnabled({ enabled: next })
+    autoCaptureEnabled.value = !!r?.enabled
+  } catch {
+    // 失败保持原状态
+  }
+}
+
 onMounted(async () => {
   await load()
+  void loadAutoCaptureEnabled()
   startPollDiagnostics()
   void loadRecoverStatus()
   void refreshOverlayPermission()
@@ -351,6 +375,7 @@ onMounted(async () => {
 
 onActivated(async () => {
   await load()
+  void loadAutoCaptureEnabled()
   startPollDiagnostics()
   void loadRecoverStatus()
   void refreshOverlayPermission()
@@ -378,32 +403,46 @@ onUnmounted(() => {
 
     <div class="capture-settings__body">
       <p class="capture-settings__intro">
-        开启后，支付宝/微信支付完成后会自动识别并弹窗确认入账。
+        开启后，支付宝/微信支付完成后会自动识别并跳转记账页预填入账。
       </p>
+
+      <!-- 自动记账总开关 -->
+      <section class="recover-section">
+        <h2>自动记账</h2>
+        <BaseCard class="settings-card">
+          <AppSwitch
+            :model-value="autoCaptureEnabled"
+            label="自动记账总开关"
+            description="关闭后不识别、不入队、不跳转（读屏测试等诊断场景建议先关闭）"
+            @change="doToggleAutoCapture"
+          />
+        </BaseCard>
+        <BaseCard class="entry-card">
+          <button type="button" class="entry-link" @click="router.push({ name: 'capture-rules' })">
+            <span class="entry-link__text">
+              <strong>匹配规则</strong>
+              <small>查看各应用的页面识别模板</small>
+            </span>
+            <ChevronRight :size="19" />
+          </button>
+        </BaseCard>
+      </section>
 
       <!-- 自动恢复面板 -->
       <section v-if="health" class="recover-section">
-        <div class="recover-header">
-          <h2>
-            <RefreshCw :size="18" />
-            自动恢复
-          </h2>
-          <label class="recover-toggle">
-            <span class="recover-toggle__label">
-              无障碍被杀后自动恢复
-            </span>
-            <button
-              type="button"
-              class="recover-toggle__switch"
-              :class="{ 'recover-toggle__switch--on': recoverStatus?.enabled }"
-              :disabled="recoverSaving"
-              :aria-pressed="recoverStatus?.enabled"
-              @click="doToggleAutoRecover"
-            >
-              <span class="recover-toggle__knob"></span>
-            </button>
-          </label>
-        </div>
+        <h2>
+          <RefreshCw :size="18" />
+          自动恢复
+        </h2>
+        <BaseCard class="settings-card">
+          <AppSwitch
+            :model-value="recoverStatus?.enabled ?? false"
+            :disabled="recoverSaving"
+            label="无障碍被杀后自动恢复"
+            description="每次打开 APP 自动检查，服务被系统杀掉时通过 Shizuku 恢复"
+            @change="doToggleAutoRecover"
+          />
+        </BaseCard>
 
         <BaseCard class="recover-card">
           <div class="recover-row">
@@ -857,12 +896,12 @@ section {
 
 /* 通道卡片 */
 .channel-card {
-  padding: 0 var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-2);
 }
 
 .channel-row {
   display: grid;
-  grid-template-columns: 40px 1fr auto;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
   min-height: 68px;
@@ -905,6 +944,12 @@ section {
   border-radius: 999px;
   font-size: 12px;
   font-weight: 500;
+  /* 长状态文案（如"已启用但服务未运行…"）限宽换行，防止把标题列挤成 0 宽竖排
+     （实测 2026-11-06：auto 列被 270px 长文本撑爆，1fr 标题列变 0px） */
+  max-width: 140px;
+  white-space: normal;
+  line-height: 1.35;
+  justify-self: end;
 }
 
 .channel-status--on {
@@ -1402,55 +1447,41 @@ section {
   font-size: var(--type-section-title-size);
 }
 
-.recover-toggle {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.recover-toggle__label {
-  font-size: 13px;
-  color: var(--color-text-secondary);
-}
-
-.recover-toggle__switch {
-  position: relative;
-  display: inline-flex;
-  width: 44px;
-  height: 24px;
-  padding: 0;
-  border-radius: 12px;
-  background: var(--color-divider);
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.recover-toggle__switch--on {
-  background: var(--color-primary);
-}
-
-.recover-toggle__knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: white;
-  transition: transform 0.2s;
-}
-
-.recover-toggle__switch--on .recover-toggle__knob {
-  transform: translateX(20px);
-}
-
-.recover-toggle__switch:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 .recover-card {
   padding: 14px 16px;
+}
+
+.entry-link {
+  display: grid;
+  width: 100%;
+  min-height: 56px;
+  grid-template-columns: 1fr 20px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.entry-link__text {
+  display: grid;
+  gap: 2px;
+}
+
+.entry-link__text strong {
+  font-size: var(--type-list-primary-size);
+  font-weight: 500;
+}
+
+.entry-link__text small {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.entry-link > svg {
+  color: var(--color-text-tertiary);
 }
 
 .recover-row {

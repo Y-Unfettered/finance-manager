@@ -10,6 +10,8 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
 
+import java.util.concurrent.Executors;
+
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -68,6 +70,50 @@ public class PaymentCapturePlugin extends Plugin {
     /** 用于日志辅助的构造器（Capacitor 走 no-arg 构造）。 */
     protected PaymentCapturePlugin() {
         INSTANCE = this;
+    }
+
+    @Override
+    public void load() {
+        super.load();
+        // 恢复「读屏测试」悬浮按钮（开关状态持久化在原生 prefs）
+        try {
+            app.financemanager.capture.overlay.ReaderDebugOverlay
+                    .restoreIfNeeded(getContext().getApplicationContext());
+        } catch (Exception e) {
+            Log.w(TAG, "恢复读屏测试按钮失败", e);
+        }
+        // 修正无障碍存量错误配置（历史 bug 写入的错误类名条目；IO 操作放后台线程）
+        Executors.newSingleThreadExecutor().execute(() -> {
+            try {
+                new app.financemanager.capture.shizuku.AccessibilityEnabler(
+                        getContext().getApplicationContext()).fixLegacyConfig();
+            } catch (Exception e) {
+                Log.w(TAG, "修正无障碍存量配置失败", e);
+            }
+        });
+    }
+
+    // ============ 自动记账总开关 ============
+
+    /** 查询自动记账总开关（默认开；关闭后服务完全不识别/不入队/不跳转）。 */
+    @PluginMethod
+    public void getAutoCaptureEnabled(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("enabled", app.financemanager.capture.accessibility.PaymentAccessibilityService
+                .isAutoCaptureEnabled(getContext().getApplicationContext()));
+        call.resolve(ret);
+    }
+
+    /** 设置自动记账总开关。 */
+    @PluginMethod
+    public void setAutoCaptureEnabled(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", true));
+        getContext().getApplicationContext()
+                .getSharedPreferences("capture_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("auto_capture_enabled", enabled).apply();
+        JSObject ret = new JSObject();
+        ret.put("enabled", enabled);
+        call.resolve(ret);
     }
 
     /**
@@ -787,6 +833,57 @@ public class PaymentCapturePlugin extends Plugin {
     public void canDrawOverlay(PluginCall call) {
         JSObject ret = new JSObject();
         ret.put("granted", android.provider.Settings.canDrawOverlays(getContext()));
+        call.resolve(ret);
+    }
+
+    // ============ 读屏测试（诊断工具）============
+
+    /** 读屏测试抓取结果暂存（一次一条，读后清）。 */
+    private static volatile String pendingScreenDump = null;
+
+    /** 由 ReaderDebugOverlay 在点击时调用：暂存抓取的节点树文本。 */
+    public static void setPendingScreenDump(String text) {
+        pendingScreenDump = text;
+    }
+
+    /** 开关「读屏测试」悬浮按钮。未授予悬浮窗权限时返回 granted=false 且不显示。 */
+    @PluginMethod
+    public void setReaderDebugEnabled(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        boolean granted = android.provider.Settings.canDrawOverlays(getContext());
+        boolean showing = app.financemanager.capture.overlay.ReaderDebugOverlay.apply(
+                getContext().getApplicationContext(), enabled);
+        JSObject ret = new JSObject();
+        ret.put("granted", granted);
+        ret.put("showing", showing);
+        ret.put("enabled", enabled);
+        call.resolve(ret);
+    }
+
+    /** 查询读屏测试开关状态（前端同步开关 UI 用）。 */
+    @PluginMethod
+    public void getReaderDebugEnabled(PluginCall call) {
+        JSObject ret = new JSObject();
+        ret.put("enabled", app.financemanager.capture.overlay.ReaderDebugOverlay
+                .isEnabled(getContext().getApplicationContext()));
+        ret.put("overlayGranted", android.provider.Settings.canDrawOverlays(getContext()));
+        ret.put("accessibilityConnected",
+                app.financemanager.capture.accessibility.PaymentAccessibilityService.sServiceConnected);
+        call.resolve(ret);
+    }
+
+    /**
+     * 取读屏测试抓取结果。默认读后清；peek=true 只查询不清除（供跳转判断）。
+     */
+    @PluginMethod
+    public void getPendingScreenDump(PluginCall call) {
+        boolean peek = Boolean.TRUE.equals(call.getBoolean("peek", false));
+        String dump = pendingScreenDump;
+        if (!peek) pendingScreenDump = null;
+        JSObject ret = new JSObject();
+        ret.put("hasData", dump != null && !dump.isEmpty());
+        ret.put("text", dump != null ? dump : "");
+        ret.put("capturedAt", System.currentTimeMillis());
         call.resolve(ret);
     }
 

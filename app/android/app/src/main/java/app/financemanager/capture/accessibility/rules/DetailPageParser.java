@@ -58,6 +58,22 @@ public class DetailPageParser {
     private static final Pattern ISO_TIME_PATTERN =
             Pattern.compile("(\\d{4})[-/](\\d{1,2})[-/](\\d{1,2})[T ](\\d{1,2}):(\\d{2}):(\\d{2})");
 
+    /**
+     * 优惠特征行：行文本含这些词时，行内金额不作为实付候选
+     * （实测 2026-11-06：美团单"美团红包 -1.08"在"支出 19.72 元"无符号实付在场时，
+     * 因带负号优先级反而被当成实付，导致实付/优惠整体颠倒）。
+     */
+    private static final Pattern DISCOUNT_LINE_PATTERN =
+            Pattern.compile("立减|红包|优惠|满减|券|折扣");
+
+    /**
+     * 实付语义行：行文本含这些词时，行内金额是实付（最高优先）。
+     * 支付宝账单详情的大金额常显示为"支出 19.72 元"（无符号），必须按行语义识别。
+     * ⚠️ 不含"付款"——"扫二维码付款-给135790yaoywc"会把用户 ID 误判成实付。
+     */
+    private static final Pattern PAID_LINE_PATTERN =
+            Pattern.compile("支出|实付|实收");
+
     private static final int DEFAULT_MAX_LENGTH = 50;
 
     /**
@@ -70,7 +86,9 @@ public class DetailPageParser {
             "复制", "查看", "添加", "选择", "请选择", "开关", "分享", "保存", "完成",
             // 支付宝/微信账单详情页底部功能区（实测 2026-10-31：渲染顺序竞态会排到字段标签后面）
             "账单管理", "账单分类", "我的消费图鉴", "往来流水证明", "查看往来记录",
-            "对此订单有疑问", "计入收支", "推荐服务", "使用记账本", "转账红包", "标签", "备注"));
+            "对此订单有疑问", "计入收支", "推荐服务", "使用记账本", "转账红包", "标签", "备注",
+            // 页面标题（实测 2026-11-06：商户布局锚点向上跳状态行时可能落在标题上）
+            "账单详情", "订单详情"));
 
     /** 是否为 UI 噪声词：整值命中，或包含长度 ≥5 的噪声长词（如"查看更多详情"）。 */
     static boolean isUiNoise(String s) {
@@ -85,15 +103,21 @@ public class DetailPageParser {
         return false;
     }
 
-    /** 金额解析结果：绝对值（分）+ 是否带负号 + 原始串。包可见以便 JVM 单测。 */
+    /** 金额解析结果：绝对值（分）+ 是否带负号 + 原始串 + 实付语义行方向（null/expense/income）。包可见以便 JVM 单测。 */
     static class AmountResult {
         final long minor;
         final boolean negative;
         final String raw;
+        /** 金额所在行含"支出/实付"→ expense；含"实收"→ income；无语义 → null。供方向判断。 */
+        final String paidLineKind;
         AmountResult(long minor, boolean negative, String raw) {
+            this(minor, negative, raw, null);
+        }
+        AmountResult(long minor, boolean negative, String raw, String paidLineKind) {
             this.minor = minor;
             this.negative = negative;
             this.raw = raw;
+            this.paidLineKind = paidLineKind;
         }
     }
 
@@ -202,8 +226,8 @@ public class DetailPageParser {
                 info.setTargetAccountHint(defaultTarget);
             }
 
-            // 9. 方向判断（以字段结构为准，符号为辅）
-            String direction = decideDirection(text, fields, amount.negative, rule);
+            // 9. 方向判断（以字段结构为准，符号为辅；实付语义行"支出/实收"直接定方向）
+            String direction = decideDirection(text, fields, amount.negative, rule, amount.paidLineKind);
             info.setDirection(direction);
 
             // 10. 分类建议：备注 + 商户 合并匹配（PRD §6.5）
@@ -394,31 +418,66 @@ public class DetailPageParser {
             }
         }
 
-        // ② 整页扫描：带符号金额（+/¥）绝对优先于裸数字——转账/收款页的真实金额必带符号，
+        // ② 整页扫描（行语义感知）：带符号金额（+/¥）绝对优先于裸数字——转账/收款页的真实金额必带符号，
         //    页面上的余额/累计值/编号是裸数字，不能盖过 +24.22 这类带符号金额。
         //    负数优先于正数（实付通常为负）；同为正时取绝对值最大。
         //    扫描前先剔除时间串与括号内数字（卡号尾缀），避免 "2026-10-31" 的 2026、
         //    "中信银行(5441)" 的 5441 被误认为金额。
+        //    金额按"所在行文本"分类：优惠特征行（立减/红包/优惠/满减/券/折扣）不进主金额候选；
+        //    实付语义行（支出/实付/实收/付款）最高优先（"支出 19.72 元"无符号也要赢过"-1.08"优惠）。
         String scanText = stripNonAmountNoise(text);
-        AmountResult bestSigned = null;      // 带 +/¥ 符号（最高优先）
-        AmountResult bestSignedNegative = null; // 带负号（支出实付，signed 中最优先）
+        String[] scanLines = scanText.split("\n");
+        int[] lineStarts = new int[scanLines.length + 1];
+        int scanPos = 0;
+        for (int i = 0; i < scanLines.length; i++) {
+            lineStarts[i] = scanPos;
+            scanPos += scanLines[i].length() + 1; // +1 对应被 split 吃掉的换行符
+        }
+        lineStarts[scanLines.length] = scanPos; // 哨兵
+
+        AmountResult bestPaidLabeled = null;    // 实付语义行（最高优先）
+        String bestPaidKind = null;             // 该行的方向语义（expense/income）
+        AmountResult bestSigned = null;      // 带 +/¥ 符号（次优先）
+        AmountResult bestSignedNegative = null; // 带负号（signed 中最优先）
         AmountResult bestNegative = null;    // 裸负数
         AmountResult bestPositive = null;    // 裸正数
         Matcher m = AMOUNT_PATTERN.matcher(scanText);
         while (m.find()) {
             // 长数字串片段跳过：商品单号"-2250617227094"会被"符号+前6位"截取成 225061，
-            // 判据——数字组紧邻的前/后字符仍是数字，说明它只是长数字串的一部分
+            // 判据——数字组紧邻的前/后字符仍是数字或 ASCII 字母（如用户 ID"135790yaoywc"
+            // 的 135790、编号"TS3378592522"），说明它只是编号的一部分而非金额
             int dg = m.groupCount() >= 2 ? 2 : 1;
             int ds = m.start(dg);
             int de = m.end(dg);
-            if ((ds > 0 && Character.isDigit(scanText.charAt(ds - 1)))
-                    || (de < scanText.length() && Character.isDigit(scanText.charAt(de)))) {
+            if (isTouchedByNumberOrAsciiLetter(scanText, ds, de)) {
                 continue;
             }
             String raw = m.group(0);
             if (isExcludedAmount(raw, fields, aliases)) continue;
             AmountResult r = parseAmount(raw);
             if (r == null) continue;
+            int lineIdx = findLineIndex(scanLines, lineStarts, m.start());
+            String lineText = scanLines[lineIdx];
+            String prevLineText = lineIdx > 0 ? scanLines[lineIdx - 1] : "";
+            // 优惠特征行（本行或上一行是优惠标签，如"中信银行立减金 -1.00"同行、
+            // "团购神券\n-3.99"分两行）的负数金额不作实付候选；
+            // 正金额不排除——收入场景"现金红包 +6.00"的行含"红包"但金额是真的
+            if (r.negative
+                    && (DISCOUNT_LINE_PATTERN.matcher(lineText).find()
+                            || DISCOUNT_LINE_PATTERN.matcher(prevLineText).find())) {
+                continue;
+            }
+            if (PAID_LINE_PATTERN.matcher(lineText).find()) {
+                // 实付语义行：负/正都收（方向由 decideDirection 统一判断），取绝对值最大；
+                // "实收"语义为收入，"支出/实付"为支出
+                String kind = lineText.contains("实收") ? "income" : "expense";
+                if (bestPaidLabeled == null
+                        || Math.abs(r.minor) > Math.abs(bestPaidLabeled.minor)) {
+                    bestPaidLabeled = r;
+                    bestPaidKind = kind;
+                }
+                continue;
+            }
             boolean signed = SIGNED_AMOUNT_PATTERN.matcher(raw).matches()
                     || raw.contains("+") || raw.contains("¥") || raw.contains("￥");
             if (signed) {
@@ -440,10 +499,48 @@ public class DetailPageParser {
                 }
             }
         }
-        // 优先级：带负号（支出实付）> 带 +/¥ 正数 > 裸负数 > 裸正数
+        // 优先级：实付语义行 > 带负号 > 带 +/¥ 正数 > 裸负数 > 裸正数
+        if (bestPaidLabeled != null) {
+            return new AmountResult(bestPaidLabeled.minor, bestPaidLabeled.negative,
+                    bestPaidLabeled.raw, bestPaidKind);
+        }
         if (bestSignedNegative != null) return bestSignedNegative;
         if (bestSigned != null) return bestSigned;
         return bestNegative != null ? bestNegative : bestPositive;
+    }
+
+    /** 金额数字组紧邻（前或后）数字或 ASCII 字母 → 只是编号的一部分，不是独立金额。 */
+    private static boolean isTouchedByNumberOrAsciiLetter(String text, int ds, int de) {
+        if (ds > 0) {
+            char before = text.charAt(ds - 1);
+            if (Character.isDigit(before) || isAsciiLetter(before)) return true;
+        }
+        if (de < text.length()) {
+            char after = text.charAt(de);
+            if (Character.isDigit(after) || isAsciiLetter(after)) return true;
+        }
+        return false;
+    }
+
+    private static boolean isAsciiLetter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    /** 二分定位偏移所在行下标（scanLines 与 lineStarts 由 split 对齐构建）。 */
+    private static int findLineIndex(String[] lines, int[] lineStarts, int offset) {
+        int lo = 0;
+        int hi = lines.length - 1;
+        int idx = 0;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (lineStarts[mid] <= offset) {
+                idx = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return idx;
     }
 
     /**
@@ -633,10 +730,20 @@ public class DetailPageParser {
     }
 
     /**
+     * 状态词行：交易状态文案（"交易成功"等）不能作为商户名——
+     * 它常挡在商户名与金额之间（实测 2026-11-06 美团页锚点向上撞到"交易成功"）。
+     */
+    private static final Pattern STATUS_LINE_PATTERN =
+            Pattern.compile("成功|失败|处理中|已到账|待确认|等待|已存入|已领取|待使用|已退款");
+
+    /**
      * 布局锚点提取（模板结构）。
      * 规则配置：layoutExtract.merchant = { anchor: "amount", offset: -1 }
      *   anchor=amount → 定位第一个金额形态的行；offset=-1 → 取其上一行。
      * 行序即节点顺序（extractVisibleText 按节点树摊平），模板不变则位置不变。
+     * 上一行若本身是已知字段标签（如"订单金额"）、状态词行（"交易成功"）或
+     * 实付语义行（"支出19.72元"），继续向上找——实测 2026-11-06：锚点会落在
+     * "订单金额"/"交易成功"行上，商户被错抓。
      */
     String extractByLayout(String text, JSONObject rule) {
         JSONObject layout = rule.optJSONObject("layoutExtract");
@@ -647,12 +754,25 @@ public class DetailPageParser {
         int offset = spec.optInt("offset", -1);
         if (!"amount".equals(anchor)) return null;
 
+        Set<String> knownLabels = collectKnownLabels(rule);
         String[] lines = text.split("\\n");
         for (int i = 0; i < lines.length; i++) {
             String line = lines[i].trim();
             if (line.isEmpty()) continue;
             if (line.matches("[+-]?[¥￥]?\\s*\\d{1,6}(\\.\\d{1,2})?")) {
                 int idx = i + offset;
+                // 向上跳过：字段标签行、状态词行、实付语义行（都不是商户名）
+                while (idx >= 0) {
+                    String v = lines[idx].trim();
+                    if (v.isEmpty() || isUiNoise(v)) return null;
+                    if (matchLabel(v, knownLabels) != null
+                            || STATUS_LINE_PATTERN.matcher(v).find()
+                            || PAID_LINE_PATTERN.matcher(v).find()) {
+                        idx--;
+                        continue;
+                    }
+                    break;
+                }
                 if (idx < 0 || idx >= lines.length) return null;
                 String v = lines[idx].trim();
                 if (v.isEmpty() || isUiNoise(v)) return null;
@@ -838,17 +958,25 @@ public class DetailPageParser {
 
     /**
      * 方向判断（PRD §6.6）：以字段结构为准，符号为辅。
-     * 负金额 → expense；否则按字段组合判定。
+     * 负金额 → expense；金额行含"支出/实付"语义 → expense、含"实收" → income
+     * （实测 2026-11-06：支付宝把实付显示为"支出 19.72 元"无符号，按行语义定方向，
+     * 不再弹"可能是收入或转账"的人工确认）；裸无符号金额仍保守 confirm。
      */
     String decideDirection(String text, Map<String, String> fields,
-                                   boolean negative, JSONObject rule) {
+                                   boolean negative, JSONObject rule, String paidLineKind) {
         JSONObject dirRule = rule.optJSONObject("directionRule");
         if (dirRule == null) {
-            return negative ? "expense" : "confirm";
+            if (negative) return "expense";
+            return "expense".equals(paidLineKind) ? "expense"
+                    : "income".equals(paidLineKind) ? "income" : "confirm";
         }
 
         // 负金额 → 支出（自动）
         if (negative) return "expense";
+
+        // 实付语义行（无符号但有明确语义，如"支出 19.72 元"）→ 按语义定方向
+        if ("expense".equals(paidLineKind)) return "expense";
+        if ("income".equals(paidLineKind)) return "income";
 
         // 外部打款信号（任一命中 → income）：
         //   对方账户（外部实体）；转账备注（外部转账/收款特有字段——自账户划转页没有它）

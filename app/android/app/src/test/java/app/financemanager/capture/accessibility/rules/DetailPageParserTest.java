@@ -93,7 +93,7 @@ public class DetailPageParserTest {
         JSONObject rule = alipayRule();
         Map<String, String> fields = PARSER.extractFields(text, rule);
 
-        assertEquals("income", PARSER.decideDirection(text, fields, false, rule));
+        assertEquals("income", PARSER.decideDirection(text, fields, false, rule, null));
     }
 
     /** 图二：含"提现到"/"处理进度"且无"对方账户" → transfer（300.00 无符号不误判支出）。 */
@@ -103,7 +103,7 @@ public class DetailPageParserTest {
         JSONObject rule = alipayRule();
         Map<String, String> fields = PARSER.extractFields(text, rule);
 
-        assertEquals("transfer", PARSER.decideDirection(text, fields, false, rule));
+        assertEquals("transfer", PARSER.decideDirection(text, fields, false, rule, null));
     }
 
     /** 图三：含"收款方式"且无"对方账户" → transfer。 */
@@ -113,7 +113,7 @@ public class DetailPageParserTest {
         JSONObject rule = alipayRule();
         Map<String, String> fields = PARSER.extractFields(text, rule);
 
-        assertEquals("transfer", PARSER.decideDirection(text, fields, false, rule));
+        assertEquals("transfer", PARSER.decideDirection(text, fields, false, rule, null));
     }
 
     /** 负金额 → expense（自动）。 */
@@ -123,7 +123,7 @@ public class DetailPageParserTest {
         JSONObject rule = alipayRule();
         Map<String, String> fields = PARSER.extractFields(text, rule);
 
-        assertEquals("expense", PARSER.decideDirection(text, fields, true, rule));
+        assertEquals("expense", PARSER.decideDirection(text, fields, true, rule, null));
     }
 
     /** 实测场景（2026-10-31 真机）：淘宝评价奖励 +1.00（转账成功+收款方式+转账备注，无对方账户）→ income。 */
@@ -134,7 +134,7 @@ public class DetailPageParserTest {
         JSONObject rule = alipayRule();
         Map<String, String> fields = PARSER.extractFields(text, rule);
 
-        assertEquals("income", PARSER.decideDirection(text, fields, false, rule));
+        assertEquals("income", PARSER.decideDirection(text, fields, false, rule, null));
         assertEquals("淘宝评价奖励", PARSER.extractNote(fields, rule, null));
     }
 
@@ -160,7 +160,7 @@ public class DetailPageParserTest {
         JSONObject rule = alipayRule();
         Map<String, String> fields = PARSER.extractFields(text, rule);
 
-        assertEquals("confirm", PARSER.decideDirection(text, fields, false, rule));
+        assertEquals("confirm", PARSER.decideDirection(text, fields, false, rule, null));
     }
 
     // ---------- 验收 6/8：备注清洗与降级（微信） ----------
@@ -317,7 +317,7 @@ public class DetailPageParserTest {
         assertEquals("远寻**司", PARSER.extractMerchant(text, fields, rule));
         assertEquals("expense:food", PARSER.suggestCategory(
                 PARSER.extractNote(fields, rule, null), PARSER.extractMerchant(text, fields, rule), rule));
-        assertEquals("expense", PARSER.decideDirection(text, fields, r.negative, rule));
+        assertEquals("expense", PARSER.decideDirection(text, fields, r.negative, rule, null));
     }
 
     /** 布局锚点：保险页商户名在金额上方（无标签）→ 结构位置提取（换公司/金额不变）。 */
@@ -373,7 +373,7 @@ public class DetailPageParserTest {
         assertEquals("expense:other-expense", PARSER.suggestCategory(
                 PARSER.extractNote(fields, rule, null), PARSER.extractMerchant(text, fields, rule), rule));
         assertEquals("2026-10-31T16:28:20", PARSER.extractOccurredAt(fields, rule));
-        assertEquals("expense", PARSER.decideDirection(text, fields, r.negative, rule));
+        assertEquals("expense", PARSER.decideDirection(text, fields, r.negative, rule, null));
     }
 
     /** 实测场景（2026-10-31 真机）：微信缴费优惠模板（模板 3，四川非税）→ 完整解析。 */
@@ -401,7 +401,7 @@ public class DetailPageParserTest {
         assertEquals("汽车、低速货车驾驶考试补考科目二", PARSER.extractNote(fields, rule, "四川省财政厅"));
         assertEquals("expense:other-expense", PARSER.suggestCategory(
                 PARSER.extractNote(fields, rule, "四川省财政厅"), PARSER.extractMerchant(text, fields, rule), rule));
-        assertEquals("expense", PARSER.decideDirection(text, fields, r.negative, rule));
+        assertEquals("expense", PARSER.decideDirection(text, fields, r.negative, rule, null));
     }
 
     // ---------- 分类建议（备注 + 商户合并匹配） ----------
@@ -475,7 +475,7 @@ public class DetailPageParserTest {
                 + "\"noteLabel\":[\"缴费说明\",\"交易详情\",\"转账备注\",\"商品说明\",\"理由\",\"商品\"],"
                 + "\"orderIdLabel\":[\"订单号\",\"商户单号\",\"交易单号\",\"户号\"]},"
                 + "\"noteRule\":{\"preferFields\":[\"缴费说明\",\"交易详情\",\"转账备注\",\"商品说明\",\"商品\",\"理由\"],\"maxLength\":50,"
-                + "\"cleanPatterns\":[\"[-–]\\\\*+[^-–]*$\"],\"fallbackToMerchant\":true},"
+                + "\"cleanPatterns\":[\"订单编号\\\\d+$\",\"App-\\\\d+$\",\"[-–]\\\\*+[^-–]*$\",\"[-–]\\\\d{6,}$\"],\"fallbackToMerchant\":true},"
                 + "\"directionRule\":{\"negative\":\"expense\",\"externalIncomeFields\":[\"对方账户\",\"转账备注\"],"
                 + "\"selfTransferFields\":[\"提现到\",\"收款方式\",\"处理进度\"],\"refundFields\":[\"退款\"],\"default\":\"confirm\"},"
                 + "\"categoryMappings\":["
@@ -548,7 +548,7 @@ public class DetailPageParserTest {
         System.out.println("[DEBUG] fields=" + fields);
         System.out.println("[DEBUG] note=" + PARSER.extractNote(fields, rule, "北京三快在线科技有限公司"));
         assertEquals("天天开盲盒现金红包", PARSER.extractNote(fields, rule, "北京三快在线科技有限公司"));
-        assertEquals("income", PARSER.decideDirection(text, fields, r.negative, rule));
+        assertEquals("income", PARSER.decideDirection(text, fields, r.negative, rule, null));
         assertEquals("income:income-other", PARSER.suggestCategory(
                 PARSER.extractNote(fields, rule, "北京三快在线科技有限公司"),
                 PARSER.extractMerchant(text, fields, rule), rule));
@@ -569,6 +569,65 @@ public class DetailPageParserTest {
         assertFalse(r.negative);
         assertEquals("东哥锅盔", PARSER.extractMerchant(text, fields, rule));
         assertEquals("微信转账", PARSER.extractNote(fields, rule, "东哥锅盔"));
-        assertEquals("income", PARSER.decideDirection(text, fields, r.negative, rule));
+        assertEquals("income", PARSER.decideDirection(text, fields, r.negative, rule, null));
+    }
+
+    // ---------- 实测 2026-11-06：实付语义行 / 优惠行排除 ----------
+
+    /**
+     * 美团单（实测 2026-11-06）：大金额"支出19.72元"无符号、优惠行"美团红包 -1.08"带负号。
+     * 旧算法"带负号绝对优先"取 1.08 并把优惠算成 19.72（实付/优惠整体颠倒）；
+     * 行语义修复后取实付 19.72，方向按行语义判 expense（不再弹"可能是收入或转账"）。
+     */
+    @Test
+    public void paidAmount_paidLabeledLine_beatsSignedDiscount() throws Exception {
+        String text = "账单详情\n美团\n支出19.72元\n交易成功\n订单金额\n20.80\n美团红包\n-1.08\n"
+                + "支付时间\n2026-11-06 00:30:00\n付款方式\n花呗\n商品说明\n老成都现炒盖浇饭-美团外卖App-26110511100300001304482249626664";
+        JSONObject rule = alipayRule();
+        Map<String, String> fields = PARSER.extractFields(text, rule);
+
+        DetailPageParser.AmountResult r = PARSER.extractPaidAmount(text, fields, rule);
+        assertEquals(1972L, r.minor);
+        assertFalse(r.negative);
+        assertEquals("expense", r.paidLineKind);
+        // 方向：金额行含"支出"语义 → expense（不再 confirm）
+        assertEquals("expense", PARSER.decideDirection(text, fields, r.negative, rule, r.paidLineKind));
+        // 备注取"商品说明"并清洗平台尾缀（"App-订单号"一起清，结果更干净）
+        assertEquals("老成都现炒盖浇饭-美团外卖", PARSER.extractNote(fields, rule, "美团"));
+        // 商户：布局锚点向上跳过"订单金额"标签行
+        assertEquals("美团", PARSER.extractMerchant(text, fields, rule));
+    }
+
+    /** 无符号"支出"实付（天猫等待确认收货单，实测 2026-11-06）→ 行语义判 expense。 */
+    @Test
+    public void direction_paidLabeledUnsigned_isExpense() throws Exception {
+        String text = "账单详情\n天猫\n支出5.19元\n等待确认收货\n支付时间\n2026-11-05 14:15:59\n"
+                + "付款方式\n花呗\n商品说明\n黄桃罐头水果罐头510g";
+        JSONObject rule = alipayRule();
+        Map<String, String> fields = PARSER.extractFields(text, rule);
+        DetailPageParser.AmountResult r = PARSER.extractPaidAmount(text, fields, rule);
+        assertEquals(519L, r.minor);
+        assertEquals("expense", PARSER.decideDirection(text, fields, r.negative, rule, r.paidLineKind));
+    }
+
+    /**
+     * 蜜雪冰城团购券（实测）：实付 -0.01、团购神券 -3.99（行含"券"）。
+     * 旧算法取绝对值最大的 -3.99；修复后"券"行排除，取实付 0.01，
+     * 优惠 = 订单金额 4.00 − 实付 0.01 = 3.99。
+     */
+    @Test
+    public void paidAmount_discountLineExcluded_groupBuyCoupon() throws Exception {
+        String text = "账单详情\n蜜雪冰城\n-0.01\n交易成功\n订单金额\n4.00\n团购神券\n-3.99\n"
+                + "支付时间\n2026-11-02 11:48:28\n付款方式\n花呗\n收款方全称\n郑州宝岛科技有限公司";
+        JSONObject rule = alipayRule();
+        Map<String, String> fields = PARSER.extractFields(text, rule);
+
+        DetailPageParser.AmountResult r = PARSER.extractPaidAmount(text, fields, rule);
+        assertEquals(1L, r.minor);
+        assertTrue(r.negative);
+        long[] discount = PARSER.extractDiscount(fields, rule, r.minor);
+        assertNotNull(discount);
+        assertEquals(400L, discount[0]);
+        assertEquals(399L, discount[1]);
     }
 }
