@@ -8,10 +8,21 @@ import { CanvasRenderer } from 'echarts/renderers'
 
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import DistributionBars from '@/components/DistributionBars.vue'
+import DistributionDonut from '@/components/DistributionDonut.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import MonthPickerSheet from '@/components/MonthPickerSheet.vue'
+import { ChevronRight } from '@lucide/vue'
 import { useUiPreference } from '@/composables/useUiPreference'
-import { useFinanceService, type HomeSnapshot } from '@/features/finance/finance-service'
+import { useBudgetService } from '@/features/budget/budget-service'
+import {
+  useFinanceService,
+  type ExpenseCategoryOption,
+  type HomeSnapshot,
+  type IncomeCategoryOption,
+} from '@/features/finance/finance-service'
+import { useStatisticsService } from '@/features/statistics/statistics-service'
+import type { AssetTrendPoint } from '@/features/statistics/statistics-service'
 import { useAppStore } from '@/stores/app'
 
 echarts.use([BarChart, GridComponent, TooltipComponent, CanvasRenderer])
@@ -27,6 +38,8 @@ const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 const finance = useFinanceService()
+const budgetService = useBudgetService()
+const statisticsService = useStatisticsService()
 const queryMonth = typeof route.query.month === 'string' ? route.query.month : ''
 const period = ref(
   /^\d{4}-(0[1-9]|1[0-2])$/.test(queryMonth) ? queryMonth : store.selectedHomePeriod,
@@ -50,6 +63,170 @@ const balanceRate = computed(() =>
 
 const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
+
+// ============ 报告聚合状态 ============
+const prevSummary = ref<{ incomeMinor: number; expenseMinor: number } | null>(null)
+const budgetProgress = ref<Awaited<ReturnType<typeof loadBudget>> | null>(null)
+const assetPoints = ref<AssetTrendPoint[]>([])
+const monthTransactions = ref<HomeSnapshot['transactions']>([])
+const yearTransactions = ref<HomeSnapshot['transactions']>([])
+const allCategories = ref<(ExpenseCategoryOption | IncomeCategoryOption)[]>([])
+const savingRate = computed(() =>
+  incomeMinor.value > 0 ? Math.round((balanceMinor.value / incomeMinor.value) * 100) : 0,
+)
+
+function deltaLabel(current: number, prev: number | undefined): string {
+  if (prev === undefined || prev === 0) return '—'
+  const diff = current - prev
+  if (diff === 0) return '持平'
+  const pct = Math.round((Math.abs(diff) / prev) * 100)
+  return `${diff > 0 ? '+' : '−'}${pct}%`
+}
+
+interface CategoryAgg {
+  id: string | null
+  name: string
+  amountMinor: number
+  count: number
+}
+
+/** 交易按一级分类聚合（categoryLabel→分类对照父级；退款负向冲减）。 */
+function aggregateByCategory(
+  transactions: HomeSnapshot['transactions'],
+  categories: (ExpenseCategoryOption | IncomeCategoryOption)[],
+): CategoryAgg[] {
+  const byName = new Map(categories.map((c) => [c.name, c]))
+  const parentNameOf = (name: string): string => {
+    const self = byName.get(name)
+    if (!self) return name
+    if (!self.parentId) return self.name
+    return byName.get(self.parentId)?.name ?? self.name
+  }
+  const map = new Map<string, CategoryAgg>()
+  for (const tx of transactions) {
+    if (tx.type !== 'expense' && tx.type !== 'credit_purchase' && tx.type !== 'refund') continue
+    let amount = tx.amountMinor
+    if (tx.type === 'refund') amount = -amount
+    const parent = parentNameOf(tx.categoryLabel ?? '')
+    const id = byName.get(tx.categoryLabel ?? '')?.id ?? byName.get(parent)?.id ?? null
+    const existing = map.get(parent)
+    if (existing) {
+      existing.amountMinor += amount
+      existing.count += 1
+    } else {
+      map.set(parent, { id, name: parent, amountMinor: amount, count: 1 })
+    }
+  }
+  return [...map.values()].filter((agg) => agg.amountMinor > 0).sort((a, b) => b.amountMinor - a.amountMinor)
+}
+
+const monthCategoryBreakdown = computed(() =>
+  aggregateByCategory(monthTransactions.value, allCategories.value),
+)
+const yearCategoryBreakdown = computed(() =>
+  aggregateByCategory(yearTransactions.value, allCategories.value),
+)
+
+const monthTopMerchants = computed(() => {
+  const map = new Map<string, number>()
+  for (const tx of monthTransactions.value) {
+    if (tx.type !== 'expense' && tx.type !== 'credit_purchase') continue
+    const key = tx.title ?? tx.categoryLabel ?? '其他'
+    map.set(key, (map.get(key) ?? 0) + tx.amountMinor)
+  }
+  return [...map.entries()]
+    .map(([name, amountMinor]) => ({ name, amountMinor }))
+    .sort((a, b) => b.amountMinor - a.amountMinor)
+    .slice(0, 3)
+})
+
+const monthMaxExpense = computed(() => {
+  let max: { amountMinor: number; title: string; merchant: string; occurredAt: string } | null = null
+  for (const tx of monthTransactions.value) {
+    if (tx.type !== 'expense' && tx.type !== 'credit_purchase') continue
+    if (!max || tx.amountMinor > max.amountMinor) {
+      max = {
+        amountMinor: tx.amountMinor,
+        title: tx.categoryLabel ?? tx.title,
+        merchant: tx.title,
+        occurredAt: tx.occurredAt,
+      }
+    }
+  }
+  return max
+})
+
+const monthMovers = computed(() => {
+  if (!prevSummary.value) return []
+  const prevByCat = new Map(
+    aggregateByCategory(prevMonthTransactions.value, allCategories.value).map((agg) => [agg.name, agg.amountMinor]),
+  )
+  return monthCategoryBreakdown.value
+    .map((agg) => {
+      const prev = prevByCat.get(agg.name) ?? 0
+      return { name: agg.name, diff: agg.amountMinor - prev }
+    })
+    .filter((item) => item.diff > 0)
+    .sort((a, b) => b.diff - a.diff)
+    .slice(0, 3)
+})
+
+const prevMonthTransactions = ref<HomeSnapshot['transactions']>([])
+
+const monthAssetChange = computed(() => {
+  const key = period.value
+  const point = assetPoints.value.find((p) => p.periodKey === key)
+  return point ?? null
+})
+
+const yearAssetStart = computed(() =>
+  assetPoints.value.length ? (assetPoints.value[0]?.netAssetsMinor ?? 0) : 0,
+)
+const yearAssetEnd = computed(() =>
+  assetPoints.value.length
+    ? (assetPoints.value[assetPoints.value.length - 1]?.netAssetsMinor ?? 0)
+    : 0,
+)
+
+const yearMaxExpense = computed(() => {
+  let max: { amountMinor: number; title: string; occurredAt: string } | null = null
+  for (const tx of yearTransactions.value) {
+    if (tx.type !== 'expense' && tx.type !== 'credit_purchase') continue
+    if (!max || tx.amountMinor > max.amountMinor) {
+      max = { amountMinor: tx.amountMinor, title: tx.categoryLabel ?? tx.title, occurredAt: tx.occurredAt }
+    }
+  }
+  return max
+})
+
+const yearTopMonth = computed(() =>
+  [...points.value].sort((a, b) => b.expenseMinor - a.expenseMinor)[0] ?? null,
+)
+
+const budgetPercent = computed(() => {
+  if (!budgetProgress.value) return 0
+  const total = budgetProgress.value.spentMinor + budgetProgress.value.remainingMinor
+  if (total <= 0) return 0
+  return Math.min(100, Math.round((budgetProgress.value.spentMinor / total) * 100))
+})
+
+const overspentCategories = computed(() =>
+  (budgetProgress.value?.categories ?? []).filter((c) => c.overspent),
+)
+
+function structureBarWidth(amountMinor: number): string {
+  const max =
+    mode.value === 'month'
+      ? (monthCategoryBreakdown.value[0]?.amountMinor ?? 0)
+      : (yearCategoryBreakdown.value[0]?.amountMinor ?? 0)
+  if (max <= 0) return '0%'
+  return Math.max(4, Math.round((amountMinor / max) * 100)) + '%'
+}
+
+function jumpToCategory(agg: CategoryAgg): void {
+  if (!agg.id) return
+  router.push(`/categories/${agg.id}/statistics`)
+}
 
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -107,7 +284,9 @@ function buildChartOption() {
 
 function renderChart(): void {
   if (!chartRef.value) return
-  if (!chart) {
+  // KeepAlive/条件渲染可能重建 DOM：实例若已不挂在当前容器上则重建
+  if (!chart || chart.getDom() !== chartRef.value) {
+    chart?.dispose()
     chart = echarts.init(chartRef.value)
   }
   chart.setOption(buildChartOption(), true)
@@ -128,11 +307,39 @@ onBeforeUnmount(() => {
   chart = null
 })
 
+async function loadBudget(): Promise<{
+  spentMinor: number
+  remainingMinor: number
+  overspent: boolean
+  categories: readonly { categoryName: string; spentMinor: number; overspent: boolean }[]
+} | null> {
+  if (!budgetService || !store.ledgerId) return null
+  const progress = await budgetService.getBudgetForPeriod(store.ledgerId, period.value)
+  if (!progress) return null
+  return {
+    spentMinor: progress.spentMinor,
+    remainingMinor: progress.remainingMinor,
+    overspent: progress.overspent,
+    categories: progress.categoryBudgets ?? [],
+  }
+}
+
 async function load(): Promise<void> {
   if (!finance || !store.ledgerId) return
   loading.value = true
   store.selectHomePeriod(period.value)
   try {
+    allCategories.value = finance
+      ? ((await Promise.all([
+          finance.listExpenseCategories(store.ledgerId),
+          finance.listIncomeCategories(store.ledgerId),
+        ])) as [ExpenseCategoryOption[], IncomeCategoryOption[]])
+          .flat()
+      : []
+    const assetsPromise = statisticsService
+      ? statisticsService.assets(store.ledgerId, year.value)
+      : Promise.resolve<AssetTrendPoint[]>([])
+
     if (mode.value === 'year') {
       const snapshots = await Promise.all(
         Array.from({ length: 12 }, (_, index) =>
@@ -145,13 +352,23 @@ async function load(): Promise<void> {
         expenseMinor: snapshot.summary.expenseMinor,
       }))
       setTotals(snapshots)
+      yearTransactions.value = snapshots.flatMap((snapshot) => [...snapshot.transactions])
+      monthTransactions.value = []
+      prevSummary.value = null
     } else {
-      const snapshot = await finance.loadHome(
-        store.ledgerId,
-        new Date(year.value, month.value - 1, 1),
-      )
+      const prev =
+        month.value === 1
+          ? finance.loadHome(store.ledgerId, new Date(year.value - 1, 11, 1))
+          : finance.loadHome(store.ledgerId, new Date(year.value, month.value - 2, 1))
+      const [snapshot, prevSnapshot] = await Promise.all([
+        finance.loadHome(store.ledgerId, new Date(year.value, month.value - 1, 1)),
+        prev.catch(() => null),
+      ])
       incomeMinor.value = snapshot.summary.incomeMinor
       expenseMinor.value = snapshot.summary.expenseMinor
+      prevSummary.value = prevSnapshot ? { ...prevSnapshot.summary } : null
+      monthTransactions.value = snapshot.transactions
+      yearTransactions.value = []
       const days = new Date(year.value, month.value, 0).getDate()
       const map = new Map<number, FlowPoint>()
       for (let day = 1; day <= days; day += 1) {
@@ -167,6 +384,10 @@ async function load(): Promise<void> {
       }
       points.value = [...map.values()]
     }
+
+    const [budget, assets] = await Promise.all([loadBudget(), assetsPromise])
+    budgetProgress.value = budget
+    assetPoints.value = assets
   } finally {
     loading.value = false
   }
@@ -250,15 +471,238 @@ onMounted(load)
           <strong>收支趋势</strong>
           <span><i class="income" />收入 <i class="expense" />支出</span>
         </header>
-        <div v-if="loading" class="report-state">正在生成报表…</div>
-        <div v-else ref="chartRef" class="report-chart" />
+        <!-- 图表 DOM 常驻（v-if 卸载会导致 ECharts 实例与重建后的 DOM 错位、画布空白） -->
+        <div ref="chartRef" class="report-chart" :class="{ 'report-chart--loading': loading }" />
+        <div v-if="loading" class="report-state report-state--overlay">正在生成报表…</div>
       </BaseCard>
 
       <BaseCard class="report-kpis">
-        <div><span>收入</span><MoneyText :amount-minor="incomeMinor" tone="income" /></div>
-        <div><span>支出</span><MoneyText :amount-minor="expenseMinor" tone="expense" /></div>
-        <div><span>结余</span><MoneyText :amount-minor="balanceMinor" /></div>
+        <div>
+          <span>收入</span>
+          <MoneyText :amount-minor="incomeMinor" tone="income" />
+          <small v-if="mode === 'month'" class="kpi-delta">{{ deltaLabel(incomeMinor, prevSummary?.incomeMinor) }}</small>
+        </div>
+        <div>
+          <span>支出</span>
+          <MoneyText :amount-minor="expenseMinor" tone="expense" />
+          <small v-if="mode === 'month'" class="kpi-delta">{{ deltaLabel(expenseMinor, prevSummary?.expenseMinor) }}</small>
+        </div>
+        <div>
+          <span>结余</span>
+          <MoneyText :amount-minor="balanceMinor" />
+          <small v-if="mode === 'month'" class="kpi-delta">{{ deltaLabel(balanceMinor, prevSummary ? prevSummary.incomeMinor - prevSummary.expenseMinor : undefined) }}</small>
+        </div>
       </BaseCard>
+
+      <!-- ============ 月报板块 ============ -->
+      <template v-if="mode === 'month'">
+        <BaseCard v-if="monthCategoryBreakdown.length" class="report-section">
+          <header class="report-section__head">
+            <strong>支出结构</strong>
+            <span>按一级分类 · 点击查看分类统计</span>
+          </header>
+          <DistributionDonut
+            v-if="monthCategoryBreakdown.length > 1"
+            :points="monthCategoryBreakdown.map((agg) => ({ id: agg.id ?? agg.name, name: agg.name, amountMinor: agg.amountMinor }))"
+          />
+          <div class="structure-list">
+            <button
+              v-for="agg in monthCategoryBreakdown"
+              :key="agg.name"
+              type="button"
+              class="structure-row"
+              @click="jumpToCategory(agg)"
+            >
+              <span class="structure-row__name">{{ agg.name }}</span>
+              <span class="structure-row__bar">
+                <i
+                  :style="{
+                    width: structureBarWidth(agg.amountMinor),
+                    background: getCssVar('--color-expense') || '#d45f5a',
+                  }"
+                />
+              </span>
+              <span class="structure-row__amount">{{ (agg.amountMinor / 100).toFixed(2) }}</span>
+              <ChevronRight :size="14" />
+            </button>
+          </div>
+        </BaseCard>
+
+        <BaseCard v-if="budgetProgress" class="report-section">
+          <header class="report-section__head">
+            <strong>预算执行</strong>
+            <span :class="budgetProgress.overspent ? 'hl-bad' : 'hl-good'">
+              {{ budgetProgress.overspent ? '已超支' : '剩余 ' + (budgetProgress.remainingMinor / 100).toFixed(2) }}
+            </span>
+          </header>
+          <div class="budget-track">
+            <i
+              class="budget-track__fill"
+              :class="{ 'budget-track__fill--over': budgetProgress.overspent }"
+              :style="{ width: budgetPercent + '%' }"
+            />
+          </div>
+          <p class="budget-caption">
+            已支出 {{ (budgetProgress.spentMinor / 100).toFixed(2) }} / 预算
+            {{ ((budgetProgress.spentMinor + budgetProgress.remainingMinor) / 100).toFixed(2) }}
+          </p>
+          <div v-if="overspentCategories.length" class="budget-overspent">
+            <span class="tpl-kw-label">超支的分类</span>
+            <div class="tpl-kw-words">
+              <span v-for="c in overspentCategories" :key="c.categoryName" class="tpl-kw tpl-kw--bad">
+                {{ c.categoryName }} 超 {{ (c.spentMinor / 100).toFixed(2) }}
+              </span>
+            </div>
+          </div>
+        </BaseCard>
+
+        <BaseCard class="report-section">
+          <header class="report-section__head">
+            <strong>重点关注</strong>
+          </header>
+          <div class="hl-list">
+            <div v-if="monthMaxExpense" class="hl-row">
+              <span class="hl-row__k">最大单笔</span>
+              <span class="hl-row__v">
+                {{ monthMaxExpense.title }}{{ monthMaxExpense.merchant ? ' · ' + monthMaxExpense.merchant : '' }}
+                <b>{{ (monthMaxExpense.amountMinor / 100).toFixed(2) }}</b>
+              </span>
+            </div>
+            <div v-if="monthTopMerchants.length" class="hl-row">
+              <span class="hl-row__k">消费 Top3</span>
+              <span class="hl-row__v">
+                {{ monthTopMerchants.map((m) => m.name).join('、') }}
+              </span>
+            </div>
+            <div v-if="monthMovers.length" class="hl-row">
+              <span class="hl-row__k">较上月多花</span>
+              <span class="hl-row__v">
+                {{ monthMovers.map((m) => `${m.name} +${(m.diff / 100).toFixed(2)}`).join('、') }}
+              </span>
+            </div>
+            <div v-if="!monthMaxExpense && !monthTopMerchants.length" class="hl-row">
+              <span class="hl-row__v">本月暂无支出</span>
+            </div>
+          </div>
+        </BaseCard>
+
+        <BaseCard class="report-section">
+          <header class="report-section__head">
+            <strong>资产变化</strong>
+            <button type="button" class="report-link" @click="router.push('/assets/statistics')">
+              资产统计
+            </button>
+          </header>
+          <div v-if="monthAssetChange" class="hl-list">
+            <div class="hl-row">
+              <span class="hl-row__k">本月资产变动</span>
+              <span class="hl-row__v">
+                <b :class="monthAssetChange.changeMinor >= 0 ? 'hl-good' : 'hl-bad'">
+                  {{ monthAssetChange.changeMinor >= 0 ? '+' : ''
+                  }}{{ (monthAssetChange.changeMinor / 100).toFixed(2) }}
+                </b>
+              </span>
+            </div>
+            <div class="hl-row">
+              <span class="hl-row__k">期末净资产</span>
+              <span class="hl-row__v">
+                {{ (monthAssetChange.netAssetsMinor / 100).toFixed(2) }}
+              </span>
+            </div>
+          </div>
+          <p v-else class="budget-caption">本月暂无资产变动记录</p>
+        </BaseCard>
+      </template>
+
+      <!-- ============ 年报板块 ============ -->
+      <template v-else>
+        <BaseCard v-if="yearCategoryBreakdown.length" class="report-section">
+          <header class="report-section__head">
+            <strong>年度分类排行</strong>
+            <span>按一级分类 · 点击查看分类统计</span>
+          </header>
+          <div class="structure-list">
+            <button
+              v-for="agg in yearCategoryBreakdown"
+              :key="agg.name"
+              type="button"
+              class="structure-row"
+              @click="jumpToCategory(agg)"
+            >
+              <span class="structure-row__name">{{ agg.name }}</span>
+              <span class="structure-row__bar">
+                <i
+                  :style="{
+                    width: structureBarWidth(agg.amountMinor),
+                    background: getCssVar('--color-expense') || '#d45f5a',
+                  }"
+                />
+              </span>
+              <span class="structure-row__amount">{{ (agg.amountMinor / 100).toFixed(2) }}</span>
+              <ChevronRight :size="14" />
+            </button>
+          </div>
+        </BaseCard>
+
+        <BaseCard class="report-section">
+          <header class="report-section__head">
+            <strong>年度之最</strong>
+          </header>
+          <div class="hl-list">
+            <div v-if="yearMaxExpense" class="hl-row">
+              <span class="hl-row__k">最大单笔</span>
+              <span class="hl-row__v">
+                {{ yearMaxExpense.title }}
+                <b>{{ (yearMaxExpense.amountMinor / 100).toFixed(2) }}</b>
+              </span>
+            </div>
+            <div v-if="yearTopMonth" class="hl-row">
+              <span class="hl-row__k">支出最高月</span>
+              <span class="hl-row__v">
+                {{ yearTopMonth.label }}
+                <b>{{ (yearTopMonth.expenseMinor / 100).toFixed(2) }}</b>
+              </span>
+            </div>
+            <div class="hl-row">
+              <span class="hl-row__k">储蓄率</span>
+              <span class="hl-row__v">{{ savingRate }}%</span>
+            </div>
+          </div>
+        </BaseCard>
+
+        <BaseCard class="report-section">
+          <header class="report-section__head">
+            <strong>资产年报</strong>
+            <button type="button" class="report-link" @click="router.push('/assets/statistics')">
+              资产统计
+            </button>
+          </header>
+          <div v-if="assetPoints.length" class="hl-list">
+            <div class="hl-row">
+              <span class="hl-row__k">年初净资产</span>
+              <span class="hl-row__v">{{ (yearAssetStart / 100).toFixed(2) }}</span>
+            </div>
+            <div class="hl-row">
+              <span class="hl-row__k">年末净资产</span>
+              <span class="hl-row__v">{{ (yearAssetEnd / 100).toFixed(2) }}</span>
+            </div>
+            <div class="hl-row">
+              <span class="hl-row__k">全年变动</span>
+              <span class="hl-row__v">
+                <b :class="yearAssetEnd - yearAssetStart >= 0 ? 'hl-good' : 'hl-bad'">
+                  {{ yearAssetEnd - yearAssetStart >= 0 ? '+' : ''
+                  }}{{
+                    (
+                      (yearAssetEnd - yearAssetStart) / 100
+                    ).toFixed(2)
+                  }}
+                </b>
+              </span>
+            </div>
+          </div>
+          <p v-else class="budget-caption">本年暂无资产变动记录</p>
+        </BaseCard>
+      </template>
     </div>
     <MonthPickerSheet
       v-model:show="showMonthPicker"
@@ -373,6 +817,7 @@ onMounted(load)
   justify-content: space-between;
 }
 .report-trend {
+  position: relative;
   display: grid;
   gap: 16px;
   overflow: hidden;
@@ -409,6 +854,17 @@ onMounted(load)
   width: 100%;
   height: 158px;
 }
+
+.report-chart--loading {
+  opacity: 0.25;
+}
+
+.report-state--overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
 .report-state {
   min-height: 158px;
   display: grid;
@@ -431,5 +887,181 @@ onMounted(load)
 .report-kpis :deep(.money-text) {
   font-size: 14px;
   font-weight: 650;
+}
+
+/* ============ 报告板块 ============ */
+.report-section {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.report-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.report-section__head strong {
+  font-size: var(--type-section-title-size);
+}
+
+.report-section__head > span {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.report-link {
+  padding: 0;
+  color: var(--color-primary-600);
+  font-size: var(--type-caption-size);
+  text-decoration: underline;
+  background: transparent;
+  border: 0;
+}
+
+.kpi-delta {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.structure-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.structure-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) 72px 16px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) 0;
+  color: inherit;
+  font-size: var(--type-caption-size);
+  text-align: left;
+  background: transparent;
+  border: 0;
+}
+
+.structure-row__name {
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structure-row__bar {
+  height: 8px;
+  overflow: hidden;
+  background: var(--color-background);
+  border-radius: 999px;
+}
+
+.structure-row__bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.structure-row__amount {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.structure-row > svg {
+  color: var(--color-text-tertiary);
+}
+
+.budget-track {
+  height: 10px;
+  overflow: hidden;
+  background: var(--color-background);
+  border-radius: 999px;
+}
+
+.budget-track__fill {
+  display: block;
+  height: 100%;
+  background: var(--color-primary-500);
+  border-radius: 999px;
+}
+
+.budget-track__fill--over {
+  background: var(--color-expense);
+}
+
+.budget-caption {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.budget-overspent {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.tpl-kw-label {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.tpl-kw-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tpl-kw {
+  padding: 2px 8px;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  background: var(--color-background);
+  border-radius: 4px;
+}
+
+.tpl-kw--bad {
+  color: var(--color-expense);
+  background: color-mix(in srgb, var(--color-expense) 10%, transparent);
+}
+
+.hl-list {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.hl-row {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+}
+
+.hl-row__k {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.hl-row__v {
+  color: var(--color-text-secondary);
+  font-size: var(--type-caption-size);
+  line-height: 1.4;
+}
+
+.hl-row__v b {
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.hl-good {
+  color: var(--color-income);
+}
+
+.hl-bad {
+  color: var(--color-expense);
 }
 </style>

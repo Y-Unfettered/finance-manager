@@ -13,6 +13,8 @@ import StatisticsPeriodFilter, {
 } from '@/components/StatisticsPeriodFilter.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
 import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
+import { useAppStore } from '@/stores/app'
+import { useBudgetService } from '@/features/budget/budget-service'
 import {
   statisticsRange,
   useStatisticsService,
@@ -22,6 +24,8 @@ import {
 const route = useRoute()
 const router = useRouter()
 const service = useStatisticsService()
+const appStore = useAppStore()
+const budgetService = useBudgetService()
 const preset = ref<StatisticsRangePreset>('this_year')
 const year = ref(new Date().getFullYear())
 const customStart = ref('')
@@ -32,6 +36,35 @@ const error = ref('')
 const showTx = ref(false)
 const activeTx = ref<string>()
 const selectedMonth = ref<string>()
+
+/** 该分类本月预算对照（配置了分类预算才显示）。 */
+const categoryBudget = ref<{
+  limitMinor: number
+  spentMinor: number
+  overspent: boolean
+} | null>(null)
+
+async function loadCategoryBudget(categoryName: string): Promise<void> {
+  categoryBudget.value = null
+  if (!budgetService) return
+  const ledgerId = appStore.ledgerId
+  if (!ledgerId) return
+  const now = new Date()
+  const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  try {
+    const progress = await budgetService.getBudgetForPeriod(ledgerId, periodKey)
+    const match = progress?.categoryBudgets.find((c) => c.categoryName === categoryName)
+    if (match) {
+      categoryBudget.value = {
+        limitMinor: match.limitMinor,
+        spentMinor: match.spentMinor,
+        overspent: match.overspent,
+      }
+    }
+  } catch {
+    // 预算读取失败不影响统计展示
+  }
+}
 
 const range = computed(() =>
   statisticsRange(preset.value, {
@@ -68,6 +101,7 @@ async function load(
   if (!options.preserveSelection) selectedMonth.value = undefined
   try {
     data.value = await service.category(String(route.params.categoryId), range.value)
+    if (data.value) void loadCategoryBudget(data.value.name)
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
   } finally {
@@ -114,6 +148,30 @@ useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
           </div>
           <div><span>日均金额</span><MoneyText :amount-minor="dailyAverage" /></div>
           <div><span>笔均金额</span><MoneyText :amount-minor="data.averageMinor" /></div>
+        </BaseCard>
+        <BaseCard v-if="categoryBudget" class="budget-card">
+          <h2>本月预算</h2>
+          <div class="budget-track">
+            <i
+              class="budget-track__fill"
+              :class="{ 'budget-track__fill--over': categoryBudget.overspent }"
+              :style="{
+                width: Math.min(
+                  100,
+                  Math.round(
+                    (categoryBudget.spentMinor / Math.max(1, categoryBudget.limitMinor)) * 100,
+                  ),
+                ) + '%',
+              }"
+            />
+          </div>
+          <p class="budget-caption">
+            已支出 {{ (categoryBudget.spentMinor / 100).toFixed(2) }} / 预算
+            {{ (categoryBudget.limitMinor / 100).toFixed(2) }}
+            <b :class="categoryBudget.overspent ? 'budget-caption--bad' : 'budget-caption--ok'">
+              {{ categoryBudget.overspent ? '已超支' : '剩余 ' + ((categoryBudget.limitMinor - categoryBudget.spentMinor) / 100).toFixed(2) }}
+            </b>
+          </p>
         </BaseCard>
         <BaseCard>
           <h2>月度趋势</h2>
@@ -165,5 +223,43 @@ useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   text-align: center;
+}
+
+/* 本月预算对照 */
+.budget-card h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--type-section-title-size);
+}
+
+.budget-track {
+  height: 10px;
+  overflow: hidden;
+  background: var(--color-background);
+  border-radius: 999px;
+}
+
+.budget-track__fill {
+  display: block;
+  height: 100%;
+  background: var(--color-primary-500);
+  border-radius: 999px;
+}
+
+.budget-track__fill--over {
+  background: var(--color-expense);
+}
+
+.budget-caption {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.budget-caption--ok {
+  color: var(--color-income);
+}
+
+.budget-caption--bad {
+  color: var(--color-expense);
 }
 </style>
