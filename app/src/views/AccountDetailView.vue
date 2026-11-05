@@ -978,6 +978,10 @@ section {
   display: grid;
   gap: var(--space-3);
 }
+.editor > *,
+.editor label {
+  min-width: 0;
+}
 .editor label {
   display: grid;
   gap: 6px;
@@ -988,11 +992,22 @@ section {
 }
 .editor input,
 .editor select {
+  min-width: 0;
+  width: 100%;
   height: 44px;
   padding: 0 var(--space-3);
   background: var(--color-background);
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-control);
+}
+.editor :deep(.app-select),
+.editor :deep(.app-date-input) {
+  min-width: 0;
+  width: 100%;
+}
+.editor :deep(.app-select--compact .app-select__value),
+.editor :deep(.app-date-input--compact .app-date-input__value) {
+  max-width: 100%;
 }
 .two-fields {
   display: grid;
