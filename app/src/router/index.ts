@@ -78,6 +78,21 @@ const router = createRouter({
       component: () => import('@/views/LogView.vue'),
     },
     {
+      path: '/settings/screen-reader-test',
+      name: 'screen-reader-test',
+      component: () => import('@/views/ScreenReaderTestView.vue'),
+    },
+    {
+      path: '/settings/capture-rules',
+      name: 'capture-rules',
+      component: () => import('@/views/CaptureRulesView.vue'),
+    },
+    {
+      path: '/settings/capture-rules/:pkg',
+      name: 'capture-rule-app',
+      component: () => import('@/views/CaptureRuleAppView.vue'),
+    },
+    {
       path: '/categories',
       name: 'categories',
       component: () => import('@/views/CategoryManagementView.vue'),

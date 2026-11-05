@@ -223,6 +223,27 @@ export interface PaymentCapturePlugin {
   getCaptureRules(): Promise<RuleConfigResult>
   saveCaptureRules(options: { config: string }): Promise<RuleConfigResult>
   resetCaptureRules(): Promise<RuleConfigResult>
+
+  // 读屏测试（诊断工具）
+  setReaderDebugEnabled(options: { enabled: boolean }): Promise<{
+    granted: boolean
+    showing: boolean
+    enabled: boolean
+  }>
+  getReaderDebugEnabled(): Promise<{
+    enabled: boolean
+    overlayGranted: boolean
+    accessibilityConnected: boolean
+  }>
+  getPendingScreenDump(options?: { peek?: boolean }): Promise<{
+    hasData: boolean
+    text: string
+    capturedAt: number
+  }>
+
+  // 自动记账总开关（关闭后服务完全不识别/不入队/不跳转）
+  getAutoCaptureEnabled(): Promise<{ enabled: boolean }>
+  setAutoCaptureEnabled(options: { enabled: boolean }): Promise<{ enabled: boolean }>
 }
 
 export interface RuleConfigResult {
@@ -382,6 +403,25 @@ class WebPaymentCapture implements PaymentCapturePlugin {
   }
   async resetCaptureRules(): Promise<RuleConfigResult> {
     return { success: false, message: '仅原生平台可用' }
+  }
+  async setReaderDebugEnabled(): Promise<{ granted: boolean; showing: boolean; enabled: boolean }> {
+    return { granted: false, showing: false, enabled: false }
+  }
+  async getReaderDebugEnabled(): Promise<{
+    enabled: boolean
+    overlayGranted: boolean
+    accessibilityConnected: boolean
+  }> {
+    return { enabled: false, overlayGranted: false, accessibilityConnected: false }
+  }
+  async getPendingScreenDump(): Promise<{ hasData: boolean; text: string; capturedAt: number }> {
+    return { hasData: false, text: '', capturedAt: 0 }
+  }
+  async getAutoCaptureEnabled(): Promise<{ enabled: boolean }> {
+    return { enabled: true }
+  }
+  async setAutoCaptureEnabled(): Promise<{ enabled: boolean }> {
+    return { enabled: true }
   }
 
   async removeAllListeners(): Promise<void> {}

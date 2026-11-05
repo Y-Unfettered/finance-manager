@@ -267,6 +267,26 @@ async function checkPendingCaptureData() {
 // 已随最小闭环方案停用。悬浮窗卡片不再触发，统一由「拉起 MainActivity → checkPendingCaptureData
 // → 记账页预填金额」处理。
 
+/** 读屏测试结果检查重入锁（同 checkPendingCaptureData 的并发防抖理由）。 */
+let screenDumpCheckInFlight = false
+
+/** 检查是否有待展示的读屏测试抓取结果，自动打开结果页（peek 不清除，结果页读取时才清）。 */
+async function checkPendingScreenDump() {
+  if (screenDumpCheckInFlight) return
+  screenDumpCheckInFlight = true
+  try {
+    if (!Capacitor.isNativePlatform()) return
+    const r = await PaymentCapture.getPendingScreenDump({ peek: true })
+    if (!r?.hasData || !r.text) return
+    if (route.name === 'screen-reader-test') return
+    router.push({ path: '/settings/screen-reader-test' })
+  } catch (e) {
+    log.error('checkPendingScreenDump 失败', { msg: e instanceof Error ? e.message : String(e) })
+  } finally {
+    screenDumpCheckInFlight = false
+  }
+}
+
 onMounted(async () => {
   if (appLockService && appStore.databaseStatus === 'ready') {
     await lockStore.load(appLockService)
@@ -291,7 +311,11 @@ onMounted(async () => {
           void autoBackupService?.ensureMonthlyBackup()
           // 热启动补检：捕获服务拉起 MainActivity 时进程常驻，onMounted 已不会再次触发，
           // 必须在这里补一次待入账检查，否则点完支付后回到前台不会自动进记账页（时灵时不灵的主因）
-          if (appStore.databaseStatus === 'ready') void checkPendingCaptureData()
+          if (appStore.databaseStatus === 'ready') {
+            void checkPendingCaptureData()
+            // 读屏测试：悬浮按钮抓取后拉起结果页
+            void checkPendingScreenDump()
+          }
         }
       })
       log.info('App.vue: appStateChange 监听器注册完成')
@@ -421,6 +445,7 @@ onMounted(async () => {
       void autoRecoverAccessibility()
       // 检查是否有待入账的捕获数据，自动打开记账页面
       void checkPendingCaptureData()
+      void checkPendingScreenDump()
     } else {
       log.info('App.vue: 数据库未就绪，等待 ready 后启动轮询')
       const stopWatch = watch(
@@ -437,6 +462,7 @@ onMounted(async () => {
             void autoRecoverAccessibility()
             // 检查是否有待入账的捕获数据，自动打开记账页面
             void checkPendingCaptureData()
+            void checkPendingScreenDump()
           }
         },
       )
