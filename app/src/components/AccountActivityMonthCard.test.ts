@@ -20,7 +20,7 @@ describe('AccountActivityMonthCard', () => {
             title: '还款',
             categoryLabel: '还款',
             dateLabel: '08-08',
-            ledgerLabel: '日常账本',
+            noteLabel: '同事聚餐',
             accountLabel: '中信银行→美团月付',
           },
           {
@@ -32,7 +32,6 @@ describe('AccountActivityMonthCard', () => {
             title: '三餐',
             categoryLabel: '三餐',
             dateLabel: '08-05',
-            ledgerLabel: '日常账本',
             accountLabel: '美团月付',
           },
         ],
@@ -45,6 +44,8 @@ describe('AccountActivityMonthCard', () => {
     expect(wrapper.text()).toContain('流出：¥58.80')
     expect(wrapper.text()).toContain('中信银行→美团月付')
     expect(wrapper.text()).toContain('-20.64')
-    expect(wrapper.findAll('.account-activity-row__body small')[0]!.text()).toBe('日常账本')
+    expect(wrapper.text()).toContain('08-08 · 同事聚餐')
+    expect(wrapper.text()).toContain('08-05')
+    expect(wrapper.find('.account-activity-row__body small').exists()).toBe(false)
   })
 })

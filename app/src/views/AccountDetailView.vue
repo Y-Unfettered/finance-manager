@@ -97,7 +97,6 @@ const repaymentDateLabel = computed(() => {
 
 type AccountLedgerItem = LedgerListItem & {
   dateLabel: string
-  ledgerLabel: string
   displayAmountMinor: number
 }
 
@@ -151,7 +150,7 @@ const groups = computed(() => {
       categoryLabel: activityCategoryLabel(row),
       accountLabel: activityAccountLabel(row),
       dateLabel: formatActivityDate(row.occurredAt),
-      ledgerLabel: row.ledgerName,
+      noteLabel: row.merchant ?? row.counterparty ?? row.note ?? undefined,
       displayAmountMinor,
     })
     if (displayAmountMinor > 0) group.inflow += displayAmountMinor
@@ -535,7 +534,7 @@ onUnmounted(() => {
           </div>
         </div>
       </BaseCard>
-      <section>
+      <section class="month-card-list">
         <AccountActivityMonthCard
           v-for="group in groups"
           :key="group.key"
@@ -802,6 +801,7 @@ onUnmounted(() => {
 }
 .hero {
   display: grid;
+  gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   place-items: center;
   border: 0;
@@ -832,7 +832,7 @@ onUnmounted(() => {
 .credit-grid strong {
   font-size: 12px;
 }
-section {
+.month-card-list {
   display: grid;
   gap: var(--space-3);
 }

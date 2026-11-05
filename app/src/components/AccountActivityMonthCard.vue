@@ -8,7 +8,6 @@ import type { LedgerListItem } from '@/db/repositories/dashboard-repository'
 
 interface AccountLedgerListItem extends LedgerListItem {
   dateLabel: string
-  ledgerLabel: string
   displayAmountMinor: number
 }
 
@@ -54,6 +53,10 @@ function activate(item: AccountLedgerListItem): void {
   }
   if (props.selectionMode) emit('toggle', item)
   else emit('select', item)
+}
+
+function dateText(item: AccountLedgerListItem): string {
+  return item.noteLabel ? `${item.dateLabel} · ${item.noteLabel}` : item.dateLabel
 }
 
 function formatMinor(amountMinor: number): string {
@@ -113,8 +116,7 @@ onBeforeUnmount(cancelPress)
 
         <div class="account-activity-row__body">
           <strong>{{ item.categoryLabel ?? item.title }}</strong>
-          <span>{{ item.dateLabel }}</span>
-          <small v-if="item.ledgerLabel">{{ item.ledgerLabel }}</small>
+          <span>{{ dateText(item) }}</span>
         </div>
 
         <div class="account-activity-row__right">
@@ -250,19 +252,12 @@ onBeforeUnmount(cancelPress)
 }
 
 .account-activity-row__body > span {
+  overflow: hidden;
   color: var(--color-text-tertiary);
   font-size: 11px;
   line-height: 16px;
-}
-
-.account-activity-row__body > small {
-  justify-self: start;
-  padding: 0 3px;
-  color: var(--color-text-tertiary);
-  font-size: 10px;
-  line-height: 15px;
-  border: 1px solid var(--color-divider);
-  border-radius: 3px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .account-activity-row__right {
