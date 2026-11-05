@@ -12,6 +12,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import AppDateInput from '@/components/AppDateInput.vue'
+import DateTimePicker from '@/components/DateTimePicker.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
@@ -236,6 +239,18 @@ function localDateValue(date: Date): string {
 }
 
 onMounted(load)
+
+// ===== 原生控件替换：下拉选项与弹层状态 =====
+const depositAccountOptions = computed(() =>
+  liquidAccounts.value.map((a) => ({
+    value: a.id,
+    label: `${a.name} · ¥${(a.balanceMinor / 100).toFixed(2)}`,
+  })),
+)
+const repaymentAccountOptions = computed(() =>
+  liquidAccounts.value.map((a) => ({ value: a.id, label: a.name })),
+)
+
 </script>
 
 <template>
@@ -299,21 +314,23 @@ onMounted(load)
           ><span>借入金额</span
           ><input v-model="addForm.amount" required inputmode="decimal" placeholder="0.00"
         /></label>
-        <label
-          ><span>转入哪个账户</span
-          ><select v-model="addForm.depositAccountId" required>
-            <option value="" disabled>请选择资金账户</option>
-            <option v-for="account in liquidAccounts" :key="account.id" :value="account.id">
-              {{ account.name }} · ¥{{ (account.balanceMinor / 100).toFixed(2) }}
-            </option>
-          </select></label
-        >
-        <label
-          ><span>借入时间</span><input v-model="addForm.occurredAt" type="datetime-local" required
-        /></label>
-        <label
-          ><span>约定还款日（可选）</span><input v-model="addForm.dueDate" type="date"
-        /></label>
+        <AppSelect
+          v-model="addForm.depositAccountId"
+          label="转入哪个账户"
+          description="请选择资金账户"
+          :options="depositAccountOptions"
+        />
+        <AppDateInput
+          v-model="addForm.occurredAt"
+          label="借入时间"
+          description="点击选择日期与时间"
+          time
+        />
+        <AppDateInput
+          v-model="addForm.dueDate"
+          label="约定还款日（可选）"
+          description="点击选择日期"
+        />
         <label
           ><span>备注（可选）</span><textarea v-model="addForm.note" rows="3" maxlength="120" />
         </label>
@@ -379,7 +396,7 @@ onMounted(load)
       <form class="sheet-form" @submit.prevent="submitEdit">
         <label>
           <span>约定还款日（可选）</span>
-          <input v-model="editForm.dueDate" type="date" />
+          <AppDateInput v-model="editForm.dueDate" label="约定还款日（可选）" description="点击选择日期" />
         </label>
         <label>
           <span>备注（可选）</span>
@@ -413,19 +430,18 @@ onMounted(load)
           ><span>本次归还金额</span
           ><input v-model="repaymentForm.amount" required inputmode="decimal"
         /></label>
-        <label
-          ><span>还款账户</span
-          ><select v-model="repaymentForm.sourceAccountId" required>
-            <option value="" disabled>请选择还款账户</option>
-            <option v-for="account in liquidAccounts" :key="account.id" :value="account.id">
-              {{ account.name }}
-            </option>
-          </select></label
-        >
-        <label
-          ><span>归还时间</span
-          ><input v-model="repaymentForm.occurredAt" type="datetime-local" required
-        /></label>
+        <AppSelect
+          v-model="repaymentForm.sourceAccountId"
+          label="还款账户"
+          description="请选择还款账户"
+          :options="repaymentAccountOptions"
+        />
+        <AppDateInput
+          v-model="repaymentForm.occurredAt"
+          label="归还时间"
+          description="点击选择日期与时间"
+          time
+        />
         <label
           ><span>备注（可选）</span
           ><textarea v-model="repaymentForm.note" rows="3" maxlength="120" />

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CalendarDays, List, SlidersHorizontal } from '@lucide/vue'
+import { CalendarDays, List } from '@lucide/vue'
 import { Tab, Tabs } from 'vant'
 import 'vant/es/tab/style'
 import 'vant/es/tabs/style'
@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import DailyLedgerCard from '@/components/DailyLedgerCard.vue'
+import FilterSelect from '@/components/FilterSelect.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import MonthPickerSheet from '@/components/MonthPickerSheet.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
@@ -70,6 +71,28 @@ const showPeriod = ref(false)
 const categoryOptions = computed(() => [
   ...expenseCategories.value.map((item) => ({ ...item, group: '支出分类' })),
   ...incomeCategories.value.map((item) => ({ ...item, group: '收入分类' })),
+])
+
+const billTypeOptions = [
+  { value: 'all', label: '全部类型' },
+  { value: 'expense', label: '支出' },
+  { value: 'income', label: '收入' },
+  { value: 'transfer', label: '转账' },
+  { value: 'credit_purchase', label: '信用消费' },
+  { value: 'repayment', label: '还款' },
+  { value: 'refund', label: '退款' },
+] as const
+const accountFilterOptions = computed(() => [
+  { value: '', label: '全部账户' },
+  ...accounts.value.map((a) => ({ value: a.id, label: a.name })),
+])
+const categoryFilterOptions = computed(() => [
+  { value: '', label: '全部分类', group: '' },
+  ...categoryOptions.value.map((c) => ({
+    value: c.id,
+    label: c.parentId ? `— ${c.name}` : c.name,
+    group: c.group,
+  })),
 ])
 const summary = computed(() =>
   items.value.reduce(
@@ -255,52 +278,13 @@ useRefreshOnActivated(async () => {
     </div>
     <div class="content">
       <BaseCard v-if="view === 'list'" class="filters">
-        <label><span>月份</span><input v-model="month" type="month" /></label>
-        <label>
-          <SlidersHorizontal :size="17" />
-          <select v-model="typeFilter">
-            <option value="all">全部类型</option>
-            <option value="expense">支出</option>
-            <option value="income">收入</option>
-            <option value="transfer">转账</option>
-            <option value="credit_purchase">信用消费</option>
-            <option value="repayment">还款</option>
-            <option value="refund">退款</option>
-          </select>
-        </label>
-        <label>
-          <span>账户</span>
-          <select v-model="accountId">
-            <option value="">全部账户</option>
-            <option v-for="account in accounts" :key="account.id" :value="account.id">
-              {{ account.name }}
-            </option>
-          </select>
-        </label>
-        <label>
-          <span>分类</span>
-          <select v-model="categoryId">
-            <option value="">全部分类</option>
-            <optgroup label="支出分类">
-              <option
-                v-for="category in categoryOptions.filter((item) => item.group === '支出分类')"
-                :key="category.id"
-                :value="category.id"
-              >
-                {{ category.parentId ? `— ${category.name}` : category.name }}
-              </option>
-            </optgroup>
-            <optgroup label="收入分类">
-              <option
-                v-for="category in categoryOptions.filter((item) => item.group === '收入分类')"
-                :key="category.id"
-                :value="category.id"
-              >
-                {{ category.parentId ? `— ${category.name}` : category.name }}
-              </option>
-            </optgroup>
-          </select>
-        </label>
+        <button type="button" class="filter-month" @click="showPeriod = true">
+          <span>月份</span>
+          <span class="filter-month__value">{{ month.replace('-', '.') }}</span>
+        </button>
+        <FilterSelect v-model="typeFilter" label="类型" :options="billTypeOptions" />
+        <FilterSelect v-model="accountId" label="账户" :options="accountFilterOptions" />
+        <FilterSelect v-model="categoryId" label="分类" :options="categoryFilterOptions" />
       </BaseCard>
       <BaseCard v-if="view === 'list'" class="summary">
         <div><span>收入</span><MoneyText :amount-minor="summary.income" tone="income" /></div>
@@ -457,6 +441,36 @@ useRefreshOnActivated(async () => {
   flex: none;
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
+}
+.filter-month,
+.filter-select {
+  min-width: 0;
+}
+.filter-month {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+}
+.filter-month > span:first-child {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+.filter-month__value {
+  display: flex;
+  height: 38px;
+  align-items: center;
+  padding: 0 var(--space-2);
+  color: var(--color-text-primary);
+  font-size: 13px;
+  background: var(--color-background);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
 }
 input,
 select {

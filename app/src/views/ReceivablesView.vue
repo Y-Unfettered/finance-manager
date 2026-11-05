@@ -12,6 +12,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import AppDateInput from '@/components/AppDateInput.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
@@ -46,6 +48,16 @@ const liquidAccounts = computed(() =>
       !['receivable', 'investment', 'restricted_asset'].includes(account.type),
   ),
 )
+const sourceAccountOptions = computed(() =>
+  liquidAccounts.value.map((a) => ({
+    value: a.id,
+    label: `${a.name} · ¥${(a.balanceMinor / 100).toFixed(2)}`,
+  })),
+)
+const depositAccountOptions = computed(() =>
+  liquidAccounts.value.map((a) => ({ value: a.id, label: a.name })),
+)
+
 const outstandingMinor = computed(() =>
   receivables.value.reduce((sum, item) => sum + Math.max(0, item.outstandingMinor), 0),
 )
@@ -304,21 +316,23 @@ onMounted(load)
           ><span>借出金额</span
           ><input v-model="addForm.amount" required inputmode="decimal" placeholder="0.00"
         /></label>
-        <label
-          ><span>从哪个账户借出</span
-          ><select v-model="addForm.sourceAccountId" required>
-            <option value="" disabled>请选择资金账户</option>
-            <option v-for="account in liquidAccounts" :key="account.id" :value="account.id">
-              {{ account.name }} · ¥{{ (account.balanceMinor / 100).toFixed(2) }}
-            </option>
-          </select></label
-        >
-        <label
-          ><span>借出时间</span><input v-model="addForm.occurredAt" type="datetime-local" required
-        /></label>
-        <label
-          ><span>约定还款日（可选）</span><input v-model="addForm.dueDate" type="date"
-        /></label>
+        <AppSelect
+          v-model="addForm.sourceAccountId"
+          label="从哪个账户借出"
+          description="请选择资金账户"
+          :options="sourceAccountOptions"
+        />
+        <AppDateInput
+          v-model="addForm.occurredAt"
+          label="借出时间"
+          description="点击选择日期与时间"
+          time
+        />
+        <AppDateInput
+          v-model="addForm.dueDate"
+          label="约定还款日（可选）"
+          description="点击选择日期"
+        />
         <label
           ><span>备注（可选）</span><textarea v-model="addForm.note" rows="3" maxlength="120" />
         </label>
@@ -382,10 +396,11 @@ onMounted(load)
 
     <AppBottomSheet v-model:show="showEdit" title="编辑借出款">
       <form class="sheet-form" @submit.prevent="submitEdit">
-        <label>
-          <span>约定还款日（可选）</span>
-          <input v-model="editForm.dueDate" type="date" />
-        </label>
+        <AppDateInput
+          v-model="editForm.dueDate"
+          label="约定还款日（可选）"
+          description="点击选择日期"
+        />
         <label>
           <span>备注（可选）</span>
           <textarea v-model="editForm.note" rows="3" maxlength="120" />
@@ -418,19 +433,18 @@ onMounted(load)
           ><span>本次收到金额</span
           ><input v-model="recoveryForm.amount" required inputmode="decimal"
         /></label>
-        <label
-          ><span>收款账户</span
-          ><select v-model="recoveryForm.depositAccountId" required>
-            <option value="" disabled>请选择收款账户</option>
-            <option v-for="account in liquidAccounts" :key="account.id" :value="account.id">
-              {{ account.name }}
-            </option>
-          </select></label
-        >
-        <label
-          ><span>收到时间</span
-          ><input v-model="recoveryForm.occurredAt" type="datetime-local" required
-        /></label>
+        <AppSelect
+          v-model="recoveryForm.depositAccountId"
+          label="收款账户"
+          description="请选择收款账户"
+          :options="depositAccountOptions"
+        />
+        <AppDateInput
+          v-model="recoveryForm.occurredAt"
+          label="收到时间"
+          description="点击选择日期与时间"
+          time
+        />
         <label
           ><span>备注（可选）</span
           ><textarea v-model="recoveryForm.note" rows="3" maxlength="120" />

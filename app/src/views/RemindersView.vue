@@ -4,6 +4,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import AppDateInput from '@/components/AppDateInput.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
 import AppSwitch from '@/components/AppSwitch.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
@@ -78,6 +80,17 @@ const creditAccounts = computed(() => accounts.value.filter((a) => a.normalBalan
 const prepaidAccounts = computed(() => accounts.value.filter((a) => a.type === 'prepaid'))
 
 const allAccounts = computed(() => accounts.value)
+
+const reminderTypeOptions = computed(() =>
+  (Object.keys(REMINDER_TYPE_LABELS) as ReminderType[]).map((k) => ({
+    value: k,
+    label: REMINDER_TYPE_LABELS[k],
+  })),
+)
+const accountSelectOptions = computed(() => [
+  { value: '', label: '不关联' },
+  ...allAccounts.value.map((a) => ({ value: a.id, label: a.name })),
+])
 
 const currentAccountOptions = computed(() => {
   switch (form.value.type) {
@@ -369,14 +382,7 @@ onMounted(load)
 
     <AppBottomSheet v-model:show="showEditor" :title="editingId ? '编辑提醒' : '新建提醒'">
       <form class="form" @submit.prevent="submit">
-        <label class="form-row">
-          <span>提醒类型</span>
-          <select v-model="form.type">
-            <option v-for="(label, key) in REMINDER_TYPE_LABELS" :key="key" :value="key">
-              {{ label }}
-            </option>
-          </select>
-        </label>
+        <AppSelect v-model="form.type" label="提醒类型" :options="reminderTypeOptions" />
         <label class="form-row">
           <span>标题</span>
           <input
@@ -387,26 +393,24 @@ onMounted(load)
             placeholder="例如：招行还款"
           />
         </label>
-        <label v-if="currentAccountOptions.length > 0" class="form-row">
-          <span>关联账户（可选）</span>
-          <select v-model="form.accountId">
-            <option value="">不关联</option>
-            <option v-for="a in currentAccountOptions" :key="a.id" :value="a.id">
-              {{ a.name }}
-            </option>
-          </select>
-        </label>
-        <label class="form-row">
-          <span>到期日期</span>
-          <input v-model="form.dueDate" type="date" required />
-        </label>
+        <AppSelect
+          v-if="currentAccountOptions.length > 0"
+          v-model="form.accountId"
+          label="关联账户（可选）"
+          :options="accountSelectOptions"
+        />
+        <AppDateInput
+          v-model="form.dueDate"
+          label="到期日期"
+          description="点击选择日期"
+        />
         <label class="form-row">
           <span>金额（可选）</span>
           <input v-model="form.amount" type="text" inputmode="decimal" placeholder="0.00" />
         </label>
         <label class="form-row">
           <span>提前几天提醒</span>
-          <input v-model="form.advanceDays" type="number" min="0" max="60" required />
+          <input v-model="form.advanceDays" type="text" inputmode="numeric" placeholder="0" required />
         </label>
         <label class="form-row form-row--switch">
           <AppSwitch

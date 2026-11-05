@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import AppSelect from './AppSelect.vue'
+import AppDateInput from './AppDateInput.vue'
+
 export type StatisticsRangePreset =
   'this_month' | 'last_month' | 'this_year' | 'last_year' | 'year' | 'all' | 'custom'
 
@@ -15,47 +18,49 @@ defineEmits<{
   'update:startDate': [value: string]
   'update:endDate': [value: string]
 }>()
+
+const PRESET_OPTIONS = [
+  { value: 'this_month', label: '本月' },
+  { value: 'last_month', label: '上月' },
+  { value: 'this_year', label: '今年' },
+  { value: 'last_year', label: '去年' },
+  { value: 'year', label: '指定年份' },
+  { value: 'all', label: '全部' },
+  { value: 'custom', label: '自定义' },
+]
 </script>
 
 <template>
   <div class="statistics-filter">
-    <select
-      :value="preset"
-      aria-label="统计日期范围"
-      @change="
-        $emit('update:preset', ($event.target as HTMLSelectElement).value as StatisticsRangePreset)
-      "
-    >
-      <option value="this_month">本月</option>
-      <option value="last_month">上月</option>
-      <option value="this_year">今年</option>
-      <option value="last_year">去年</option>
-      <option value="year">指定年份</option>
-      <option value="all">全部</option>
-      <option value="custom">自定义</option>
-    </select>
-    <input
-      v-if="preset === 'year'"
-      :value="year"
-      type="number"
-      min="1970"
-      max="2200"
-      aria-label="指定年份"
-      @input="$emit('update:year', Number(($event.target as HTMLInputElement).value))"
+    <AppSelect
+      :model-value="preset"
+      :options="PRESET_OPTIONS"
+      variant="inline"
+      @update:model-value="$emit('update:preset', $event as StatisticsRangePreset)"
     />
-    <template v-if="preset === 'custom'">
+    <label v-if="preset === 'year'" class="statistics-filter__field">
+      <span>年份</span>
       <input
-        :value="startDate"
-        type="date"
-        aria-label="开始日期"
-        @input="$emit('update:startDate', ($event.target as HTMLInputElement).value)"
+        :value="year"
+        type="text"
+        inputmode="numeric"
+        placeholder="2026"
+        @input="$emit('update:year', Number(($event.target as HTMLInputElement).value))"
+      />
+    </label>
+    <template v-if="preset === 'custom'">
+      <AppDateInput
+        :model-value="startDate"
+        label="开始日期"
+        variant="compact"
+        @update:model-value="$emit('update:startDate', $event ?? '')"
       />
       <span>至</span>
-      <input
-        :value="endDate"
-        type="date"
-        aria-label="结束日期"
-        @input="$emit('update:endDate', ($event.target as HTMLInputElement).value)"
+      <AppDateInput
+        :model-value="endDate"
+        label="结束日期"
+        variant="compact"
+        @update:model-value="$emit('update:endDate', $event ?? '')"
       />
     </template>
   </div>
@@ -73,19 +78,43 @@ defineEmits<{
   border-radius: var(--radius-control);
 }
 
-.statistics-filter select,
-.statistics-filter input {
+.statistics-filter :deep(.app-select--inline .app-select__value) {
   min-width: 112px;
-  height: 36px;
+}
+
+.statistics-filter__field {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  align-content: start;
+}
+
+.statistics-filter__field > span {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.statistics-filter__field input {
+  min-width: 112px;
+  height: 38px;
   padding: 0 var(--space-2);
   color: var(--color-text-primary);
+  font-size: 13px;
   background: var(--color-background);
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-control);
 }
 
-.statistics-filter span {
+.statistics-filter > span {
   color: var(--color-text-tertiary);
   white-space: nowrap;
+}
+
+.statistics-filter :deep(.app-date-input--compact) {
+  min-width: 0;
+}
+
+.statistics-filter :deep(.app-date-input--compact .app-date-input__value) {
+  height: 38px;
 }
 </style>

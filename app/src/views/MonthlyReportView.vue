@@ -9,6 +9,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import MoneyText from '@/components/MoneyText.vue'
+import MonthPickerSheet from '@/components/MonthPickerSheet.vue'
 import { useUiPreference } from '@/composables/useUiPreference'
 import { useFinanceService, type HomeSnapshot } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
@@ -32,6 +33,7 @@ const period = ref(
 )
 const mode = useUiPreference<ReportMode>('monthly-report:mode', 'month', ['month', 'year'])
 const loading = ref(true)
+const showMonthPicker = ref(false)
 const points = ref<FlowPoint[]>([])
 const incomeMinor = ref(0)
 const expenseMinor = ref(0)
@@ -180,6 +182,10 @@ function changeYear(event: Event): void {
   if (Number.isInteger(value) && value >= 1970 && value <= 2200) period.value = `${value}-01`
 }
 
+function pickMonth(next: string): void {
+  period.value = next
+}
+
 watch([period, mode], load)
 watch(points, () => nextTick(renderChart), { deep: true })
 onMounted(load)
@@ -219,14 +225,22 @@ onMounted(load)
             年
           </button>
         </div>
-        <input v-if="mode === 'month'" v-model="period" type="month" aria-label="选择月份" />
+        <button
+          v-if="mode === 'month'"
+          type="button"
+          class="report-period"
+          aria-label="选择月份"
+          @click="showMonthPicker = true"
+        >
+          {{ period.replace('-', '.') }} <span aria-hidden="true">▾</span>
+        </button>
         <input
           v-else
           :value="year"
-          type="number"
-          min="1970"
-          max="2200"
+          type="text"
+          inputmode="numeric"
           aria-label="选择年份"
+          class="report-period"
           @change="changeYear"
         />
       </div>
@@ -246,6 +260,12 @@ onMounted(load)
         <div><span>结余</span><MoneyText :amount-minor="balanceMinor" /></div>
       </BaseCard>
     </div>
+    <MonthPickerSheet
+      v-model:show="showMonthPicker"
+      :period="period"
+      title="选择月份"
+      @select="pickMonth"
+    />
   </main>
 </template>
 
@@ -336,14 +356,21 @@ onMounted(load)
   font-weight: 600;
   background: var(--color-primary-600);
 }
-.report-controls input {
+.report-controls input,
+.report-controls .report-period {
   width: 146px;
   height: 40px;
   padding: 0 12px;
   color: var(--color-text-primary);
+  font-size: var(--type-body-size);
   background: var(--color-surface);
   border: 1px solid var(--color-divider);
   border-radius: 12px;
+}
+.report-controls .report-period {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 .report-trend {
   display: grid;

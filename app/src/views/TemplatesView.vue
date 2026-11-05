@@ -4,6 +4,8 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import AppDateInput from '@/components/AppDateInput.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
@@ -117,6 +119,25 @@ function defaultRecurringForm(): RecurringFormState {
   }
 }
 
+const transactionTypeOptions = computed(() =>
+  (Object.keys(TEMPLATE_TYPE_LABELS) as TransactionTemplateType[]).map((k) => ({
+    value: k,
+    label: TEMPLATE_TYPE_LABELS[k],
+  })),
+)
+const frequencyOptions = computed(() =>
+  (Object.keys(FREQUENCY_LABELS) as RecurringFrequency[]).map((k) => ({
+    value: k,
+    label: FREQUENCY_LABELS[k],
+  })),
+)
+const templateOptions = computed(() =>
+  templates.value.map((t) => ({
+    value: t.id,
+    label: `${t.name} · ¥${(t.amountMinor / 100).toFixed(2)}`,
+  })),
+)
+
 const debitAccounts = computed(() => accounts.value.filter((a) => a.normalBalance === 'debit'))
 
 const creditAccounts = computed(() => accounts.value.filter((a) => a.normalBalance === 'credit'))
@@ -178,6 +199,19 @@ const currentTargetAccounts = computed(() => {
   }
   return transferTargetAccounts.value
 })
+
+const categorySelectOptions = computed(() => [
+  { value: '', label: '不指定分类' },
+  ...currentCategoryOptions.value.map((c) => ({ value: c.id, label: c.name })),
+])
+const sourceSelectOptions = computed(() => [
+  { value: '', label: '请选择' },
+  ...currentSourceAccounts.value.map((a) => ({ value: a.id, label: a.name })),
+])
+const targetSelectOptions = computed(() => [
+  { value: '', label: '请选择' },
+  ...currentTargetAccounts.value.map((a) => ({ value: a.id, label: a.name })),
+])
 
 async function load(): Promise<void> {
   if (!templateService || !appStore.ledgerId) {
@@ -553,14 +587,11 @@ onMounted(load)
             placeholder="例如：午餐"
           />
         </label>
-        <label class="form-row">
-          <span>类型</span>
-          <select v-model="templateForm.transactionType">
-            <option v-for="(label, key) in TEMPLATE_TYPE_LABELS" :key="key" :value="key">
-              {{ label }}
-            </option>
-          </select>
-        </label>
+        <AppSelect
+          v-model="templateForm.transactionType"
+          label="类型"
+          :options="transactionTypeOptions"
+        />
         <label class="form-row">
           <span>金额</span>
           <input
@@ -571,33 +602,24 @@ onMounted(load)
             required
           />
         </label>
-        <label v-if="needsCategory" class="form-row">
-          <span>分类</span>
-          <select v-model="templateForm.categoryId">
-            <option value="">不指定分类</option>
-            <option v-for="c in currentCategoryOptions" :key="c.id" :value="c.id">
-              {{ c.name }}
-            </option>
-          </select>
-        </label>
-        <label v-if="needsSourceAccount" class="form-row">
-          <span>付款 / 转出账户</span>
-          <select v-model="templateForm.sourceAccountId">
-            <option value="">请选择</option>
-            <option v-for="a in currentSourceAccounts" :key="a.id" :value="a.id">
-              {{ a.name }}
-            </option>
-          </select>
-        </label>
-        <label v-if="needsTargetAccount" class="form-row">
-          <span>收款 / 转入账户</span>
-          <select v-model="templateForm.targetAccountId">
-            <option value="">请选择</option>
-            <option v-for="a in currentTargetAccounts" :key="a.id" :value="a.id">
-              {{ a.name }}
-            </option>
-          </select>
-        </label>
+        <AppSelect
+          v-if="needsCategory"
+          v-model="templateForm.categoryId"
+          label="分类"
+          :options="categorySelectOptions"
+        />
+        <AppSelect
+          v-if="needsSourceAccount"
+          v-model="templateForm.sourceAccountId"
+          label="付款 / 转出账户"
+          :options="sourceSelectOptions"
+        />
+        <AppSelect
+          v-if="needsTargetAccount"
+          v-model="templateForm.targetAccountId"
+          label="收款 / 转入账户"
+          :options="targetSelectOptions"
+        />
         <label class="form-row">
           <span>商户（可选）</span>
           <input v-model="templateForm.merchant" type="text" maxlength="30" />
@@ -621,35 +643,33 @@ onMounted(load)
       :title="editingRecurringId ? '编辑周期交易' : '新建周期交易'"
     >
       <form class="form" @submit.prevent="submitRecurring">
-        <label class="form-row">
-          <span>使用模板</span>
-          <select v-model="recurringForm.templateId" :disabled="!!editingRecurringId" required>
-            <option value="" disabled>请选择模板</option>
-            <option v-for="t in templates" :key="t.id" :value="t.id">
-              {{ t.name }} · ¥{{ (t.amountMinor / 100).toFixed(2) }}
-            </option>
-          </select>
-        </label>
-        <label class="form-row">
-          <span>频率</span>
-          <select v-model="recurringForm.frequency">
-            <option value="daily">每日</option>
-            <option value="weekly">每周</option>
-            <option value="monthly">每月</option>
-          </select>
-        </label>
+        <AppSelect
+          v-model="recurringForm.templateId"
+          label="使用模板"
+          description="请选择模板"
+          :options="templateOptions"
+          :disabled="!!editingRecurringId"
+        />
+        <AppSelect
+          v-model="recurringForm.frequency"
+          label="频率"
+          :options="frequencyOptions"
+        />
         <label class="form-row">
           <span>间隔（每 N 个频率执行一次）</span>
-          <input v-model="recurringForm.intervalValue" type="number" min="1" required />
+          <input v-model="recurringForm.intervalValue" type="text" inputmode="numeric" placeholder="1" required />
         </label>
-        <label class="form-row">
-          <span>下次执行时间</span>
-          <input v-model="recurringForm.nextOccurrenceAt" type="datetime-local" required />
-        </label>
-        <label class="form-row">
-          <span>结束日期（可选）</span>
-          <input v-model="recurringForm.endDate" type="date" />
-        </label>
+        <AppDateInput
+          v-model="recurringForm.nextOccurrenceAt"
+          label="下次执行时间"
+          description="点击选择日期与时间"
+          time
+        />
+        <AppDateInput
+          v-model="recurringForm.endDate"
+          label="结束日期（可选）"
+          description="点击选择日期"
+        />
         <label class="form-row form-row--inline">
           <input v-model="recurringForm.enabled" type="checkbox" />
           <span>启用此周期交易</span>

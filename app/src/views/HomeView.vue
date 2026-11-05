@@ -15,6 +15,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
+import AppDateInput from '@/components/AppDateInput.vue'
 import AppIconButton from '@/components/AppIconButton.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
@@ -752,7 +753,7 @@ onUnmounted(() => {
     <AppBottomSheet v-model:show="showBulkEdit" title="批量修改">
       <form class="bulk-edit" @submit.prevent="applyBulkEdit">
         <p>只会修改已填写的字段，留空的内容保持原样。</p>
-        <label><span>统一日期</span><input v-model="bulkEditDate" type="date" /></label>
+        <AppDateInput v-model="bulkEditDate" label="统一日期" variant="compact" />
         <label
           ><span>统一备注</span
           ><input v-model="bulkEditNote" type="text" placeholder="留空则不修改"

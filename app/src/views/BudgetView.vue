@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
+import AppSelect from '@/components/AppSelect.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import BudgetRing from '@/components/BudgetRing.vue'
 import CategoryIcon from '@/components/CategoryIcon.vue'
@@ -47,6 +48,20 @@ const remainingPercent = computed(() => {
   const value = progress.value
   return value ? budgetRemainingRingPercent(value.totalLimitMinor, value.spentMinor) : 0
 })
+const addCategoryPicker = ref('')
+const addCategoryOptions = computed(() => [
+  { value: '', label: '+ 添加分类' },
+  ...rootCategories.value.map((item) => ({
+    value: item.id,
+    label: form.value.categories.some((row) => row.categoryId === item.id)
+      ? `${item.name}（已添加）`
+      : item.name,
+  })),
+])
+function onPickAddCategory(value: string): void {
+  if (!value) return
+  addCategory(value)
+}
 
 async function load(options: { silent?: boolean } = {}) {
   if (!budgets || !appStore.ledgerId) return
@@ -254,24 +269,16 @@ useRefreshOnActivated(() => load({ silent: true }))
         </div>
         <div v-if="form.mode !== 'total_only'" class="category-editor">
           <div class="category-editor__head">
-            <strong>一级分类预算</strong
-            ><select
-              @change="
-                addCategory(($event.target as HTMLSelectElement).value)
-                ;($event.target as HTMLSelectElement).value = ''
-              "
-            >
-              <option value="">+ 添加分类</option>
-              <option
-                v-for="item in rootCategories"
-                :key="item.id"
-                :value="item.id"
-                :disabled="form.categories.some((row) => row.categoryId === item.id)"
-              >
-                {{ item.name }}
-              </option>
-            </select>
+            <strong>一级分类预算</strong>
           </div>
+          <AppSelect
+            v-model="addCategoryPicker"
+            label="添加分类"
+            :options="addCategoryOptions"
+            variant="compact"
+            reset-on-select
+            @change="onPickAddCategory"
+          />
           <label v-for="item in form.categories" :key="item.categoryId"
             ><span>{{ categoryName(item.categoryId) }}</span
             ><input

@@ -6,6 +6,8 @@ import { useRoute, useRouter } from 'vue-router'
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import AccountActivityMonthCard from '@/components/AccountActivityMonthCard.vue'
+import AppSelect from '@/components/AppSelect.vue'
+import AppDateInput from '@/components/AppDateInput.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import DeleteVerifyPopup from '@/components/DeleteVerifyPopup.vue'
 import MoneyText from '@/components/MoneyText.vue'
@@ -65,6 +67,17 @@ let lastAccountScrollTop = 0
 let accountTouchY: number | undefined
 let accountUsesTouchInput = false
 const accountId = computed(() => String(route.params.accountId ?? ''))
+const ACCOUNT_TYPE_OPTIONS: { value: AccountType; label: string }[] = [
+  { value: 'cash', label: '现金' },
+  { value: 'bank', label: '银行卡' },
+  { value: 'platform', label: '平台余额' },
+  { value: 'restricted_asset', label: '受限资产' },
+  { value: 'prepaid', label: '预付资产' },
+  { value: 'investment', label: '投资余额' },
+  { value: 'credit_card', label: '信用卡' },
+  { value: 'consumer_credit', label: '消费信用' },
+  { value: 'other_liability', label: '其他负债' },
+]
 const liability = computed(() =>
   account.value ? isLiabilityAccountType(account.value.type) : false,
 )
@@ -554,20 +567,12 @@ onUnmounted(() => {
     </Teleport>
     <AppBottomSheet v-model:show="showEdit" title="修改账户"
       ><form class="editor" @submit.prevent="save">
-        <label
-          ><span>账户类型</span
-          ><select v-model="form.type">
-            <option value="cash">现金</option>
-            <option value="bank">银行卡</option>
-            <option value="platform">平台余额</option>
-            <option value="restricted_asset">受限资产</option>
-            <option value="prepaid">预付资产</option>
-            <option value="investment">投资余额</option>
-            <option value="credit_card">信用卡</option>
-            <option value="consumer_credit">消费信用</option>
-            <option value="other_liability">其他负债</option>
-          </select></label
-        ><label><span>账户名称</span><input v-model="form.name" required /></label
+        <AppSelect
+          v-model="form.type"
+          label="账户类型"
+          :options="ACCOUNT_TYPE_OPTIONS"
+          variant="compact"
+        /><label><span>账户名称</span><input v-model="form.name" required /></label
         ><label><span>机构</span><input v-model="form.institution" /></label
         ><template v-if="isLiabilityAccountType(form.type)"
           ><label
@@ -576,9 +581,9 @@ onUnmounted(() => {
           <div class="two-fields">
             <label
               ><span>出账日</span
-              ><input v-model="form.billDay" type="number" min="1" max="31" /></label
+              ><input v-model="form.billDay" type="text" inputmode="numeric" placeholder="1-31" /></label
             ><label
-              ><span>还款日</span><input v-model="form.repaymentDay" type="number" min="1" max="31"
+              ><span>还款日</span><input v-model="form.repaymentDay" type="text" inputmode="numeric" placeholder="1-31"
             /></label></div></template
         ><label class="toggle"
           ><span>是否计入资产统计</span
@@ -702,7 +707,7 @@ onUnmounted(() => {
     <AppBottomSheet v-model:show="showBulkEdit" title="批量修改">
       <form class="bulk-edit" @submit.prevent="applyBulkEdit">
         <p>只会修改已填写的字段，留空的内容保持原样。</p>
-        <label><span>统一日期</span><input v-model="bulkEditDate" type="date" /></label>
+        <AppDateInput v-model="bulkEditDate" label="统一日期" variant="compact" />
         <label
           ><span>统一备注</span
           ><input v-model="bulkEditNote" type="text" placeholder="留空则不修改"

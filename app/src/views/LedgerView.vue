@@ -4,6 +4,7 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
+import AppConfirmPopup from '@/components/AppConfirmPopup.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import type { LedgerSummary } from '@/db/repositories/ledger-repository'
@@ -18,6 +19,9 @@ const showEditor = ref(false)
 const saving = ref(false)
 const error = ref('')
 const form = ref({ id: '', name: '' })
+const pendingArchive = ref<LedgerSummary | null>(null)
+const showArchiveConfirm = ref(false)
+const archiving = ref(false)
 
 async function load(): Promise<void> {
   if (!service) return
@@ -66,7 +70,17 @@ function select(ledger: LedgerSummary): void {
 
 async function toggleArchive(ledger: LedgerSummary): Promise<void> {
   if (!service) return
-  if (!ledger.archivedAt && !confirm(`归档账本“${ledger.name}”？数据不会被删除。`)) return
+  if (!ledger.archivedAt) {
+    pendingArchive.value = ledger
+    showArchiveConfirm.value = true
+    return
+  }
+  await doToggleArchive(ledger)
+}
+
+async function doToggleArchive(ledger: LedgerSummary): Promise<void> {
+  if (!service) return
+  archiving.value = true
   error.value = ''
   try {
     await service.setArchived(ledger.id, !ledger.archivedAt)
@@ -77,6 +91,9 @@ async function toggleArchive(ledger: LedgerSummary): Promise<void> {
     await load()
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
+  } finally {
+    archiving.value = false
+    pendingArchive.value = null
   }
 }
 
@@ -132,6 +149,15 @@ onMounted(load)
         <button type="submit" :disabled="saving">{{ saving ? '保存中…' : '保存' }}</button>
       </form>
     </AppBottomSheet>
+    <AppConfirmPopup
+      v-model:show="showArchiveConfirm"
+      title="归档该账本？"
+      :description="`归档「${pendingArchive?.name ?? ''}」后不可再选中记账，数据不会被删除，可随时恢复。`"
+      confirm-text="归档"
+      danger
+      :loading="archiving"
+      @confirm="pendingArchive && doToggleArchive(pendingArchive)"
+    />
   </main>
 </template>
 

@@ -13,7 +13,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
+import AppConfirmPopup from '@/components/AppConfirmPopup.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
+import AppSelect from '@/components/AppSelect.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import { useUiPreference } from '@/composables/useUiPreference'
@@ -40,6 +42,9 @@ const showArchived = ref(false)
 const iconQuery = ref('')
 const iconSeries = ref<CategoryIconSeries>('outline')
 const customIconInput = ref<HTMLInputElement>()
+const pendingArchive = ref<CategoryDetailRecord | null>(null)
+const showArchiveConfirm = ref(false)
+const archiving = ref(false)
 const form = ref({
   categoryId: '',
   parentId: '',
@@ -61,6 +66,13 @@ const busy = computed(() => saving.value || preparingIcon.value)
 const hasCustomIcon = computed(() =>
   /^data:image\/(?:png|jpeg|webp);base64,/i.test(form.value.iconKey),
 )
+const parentOptions = computed(() => [
+  { value: '', label: '无（一级分类）' },
+  ...activeRoots.value
+    .filter((item) => item.id !== form.value.categoryId)
+    .map((root) => ({ value: root.id, label: root.name })),
+])
+
 const filteredIcons = computed(() => {
   const query = iconQuery.value.trim().toLowerCase()
   return CATEGORY_ICON_OPTIONS.filter(
@@ -156,10 +168,25 @@ async function uploadCustomIcon(event: Event): Promise<void> {
 
 async function setArchived(item: CategoryDetailRecord, archived: boolean): Promise<void> {
   if (!finance || !appStore.ledgerId) return
-  if (archived && !confirm(`停用分类“${item.name}”？历史交易仍会保留。`)) return
-  if (archived) await finance.archiveCategory(appStore.ledgerId, item.id)
-  else await finance.unarchiveCategory(appStore.ledgerId, item.id)
-  await load()
+  if (archived) {
+    pendingArchive.value = item
+    showArchiveConfirm.value = true
+    return
+  }
+  await doSetArchived(item, false)
+}
+
+async function doSetArchived(item: CategoryDetailRecord, archived: boolean): Promise<void> {
+  if (!finance || !appStore.ledgerId) return
+  archiving.value = true
+  try {
+    if (archived) await finance.archiveCategory(appStore.ledgerId, item.id)
+    else await finance.unarchiveCategory(appStore.ledgerId, item.id)
+    await load()
+  } finally {
+    archiving.value = false
+    pendingArchive.value = null
+  }
 }
 
 async function move(item: CategoryDetailRecord, direction: -1 | 1): Promise<void> {
@@ -310,19 +337,12 @@ onMounted(load)
     >
       <form class="editor" @submit.prevent="save">
         <label><span>分类名称</span><input v-model="form.name" required maxlength="12" /></label>
-        <label>
-          <span>上级分类</span>
-          <select v-model="form.parentId">
-            <option value="">无（一级分类）</option>
-            <option
-              v-for="root in activeRoots.filter((item) => item.id !== form.categoryId)"
-              :key="root.id"
-              :value="root.id"
-            >
-              {{ root.name }}
-            </option>
-          </select>
-        </label>
+        <AppSelect
+          v-model="form.parentId"
+          label="上级分类"
+          :options="parentOptions"
+          variant="compact"
+        />
         <div class="custom-icon-upload">
           <button
             type="button"
@@ -403,6 +423,15 @@ onMounted(load)
         </button>
       </form>
     </AppBottomSheet>
+    <AppConfirmPopup
+      v-model:show="showArchiveConfirm"
+      title="停用该分类？"
+      :description="`停用「${pendingArchive?.name ?? ''}」后不可再选它记账，历史交易仍会保留。`"
+      confirm-text="停用"
+      danger
+      :loading="archiving"
+      @confirm="pendingArchive && doSetArchived(pendingArchive, true)"
+    />
   </main>
 </template>
 

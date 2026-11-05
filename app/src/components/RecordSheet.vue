@@ -24,6 +24,7 @@ import {
   type HomePreferences,
 } from '@/features/preferences/home-preferences-service'
 import AccountPicker from './AccountPicker.vue'
+import AppSelect from './AppSelect.vue'
 import DatePicker from './DatePicker.vue'
 
 type EntryMode = 'expense' | 'income' | 'transfer' | 'credit_purchase' | 'repayment' | 'refund'
@@ -126,6 +127,10 @@ const creditAccounts = computed(() =>
 const transferDiscountIncomeCategories = computed(() =>
   incomeCategories.value.filter((c) => !c.parentId),
 )
+const discountCategoryOptions = computed(() => [
+  { value: '', label: '选择收入分类' },
+  ...transferDiscountIncomeCategories.value.map((c) => ({ value: c.id, label: c.name })),
+])
 const discountIncomeCategoryId = ref('')
 
 // 自动记账捕获元数据（P1：备注/方向/来源，落库 transactions 用）
@@ -1291,20 +1296,11 @@ onUnmounted(() => {
     <!-- 转账优惠收入分类选择 -->
     <div v-if="(isTransfer || isRepayment) && hasDiscount" class="discount-category-row">
       <span class="discount-category-label">优惠归属</span>
-      <select
+      <AppSelect
         v-model="discountIncomeCategoryId"
-        class="discount-category-select"
-        aria-label="选择优惠收入分类"
-      >
-        <option disabled value="">选择收入分类</option>
-        <option
-          v-for="cat in transferDiscountIncomeCategories"
-          :key="cat.id"
-          :value="cat.id"
-        >
-          {{ cat.name }}
-        </option>
-      </select>
+        :options="discountCategoryOptions"
+        variant="inline"
+      />
     </div>
 
     <section class="record-bottom">
@@ -1903,13 +1899,7 @@ onUnmounted(() => {
   font-size: var(--type-caption-size);
   flex-shrink: 0;
 }
-.discount-category-select {
+.discount-category-row :deep(.app-select--inline .app-select__value) {
   flex: 1;
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--type-body-size);
-  color: var(--color-text-primary);
-  background: var(--color-background);
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-control);
 }
 </style>
