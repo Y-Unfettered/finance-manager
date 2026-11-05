@@ -224,11 +224,12 @@ const selectedRootId = computed(() => {
   )
   return selected?.parentId ?? selected?.id ?? ''
 })
-const activeChildCategories = computed(() =>
-  selectedRootId.value
-    ? activeCategories.value.filter((category) => category.parentId === selectedRootId.value)
-    : [],
-)
+/** 用户点击展开的根分类（默认不展开任何二级，与"选中"解耦）。 */
+const expandedRootId = ref<string | null>(null)
+
+function childCategoriesOf(rootId: string): typeof activeCategories.value {
+  return activeCategories.value.filter((category) => category.parentId === rootId)
+}
 const pickerAccounts = computed(() => {
   if (accountPickerContext.value === 'target') {
     if (mode.value === 'repayment') return creditAccounts.value
@@ -736,6 +737,175 @@ function selectCategory(cat: ExpenseCategoryOption | IncomeCategoryOption): void
   selectedCategoryName.value = cat.name
 }
 
+// ============ 分类网格：二级就地展开 + 长按拖拽排序 ============
+const orderedIds = ref<string[]>([])
+const draggingId = ref<string | null>(null)
+let longPressTimer: ReturnType<typeof setTimeout> | undefined
+let longPressStart = { x: 0, y: 0 }
+let dragPointerId = -1
+let suppressClick = false
+
+/** 拖拽后的显示顺序（未拖拽时保持库序）。 */
+const displayRootCategories = computed(() => {
+  const roots = activeRootCategories.value
+  if (!orderedIds.value.length) return roots
+  const rank = new Map(orderedIds.value.map((id, i) => [id, i]))
+  return [...roots].sort((a, b) => (rank.get(a.id) ?? 99) - (rank.get(b.id) ?? 99))
+})
+
+// 分类列表变化（加载/收支切换）时清掉失效的本地顺序
+watch(activeRootCategories, (roots) => {
+  if (!orderedIds.value.length) return
+  const valid = new Set(roots.map((c) => c.id))
+  orderedIds.value = orderedIds.value.filter((id) => valid.has(id))
+})
+
+function preventScrollDuringDrag(ev: TouchEvent): void {
+  if (draggingId.value) ev.preventDefault()
+}
+
+function startLongPress(
+  cat: ExpenseCategoryOption | IncomeCategoryOption,
+  ev: PointerEvent,
+): void {
+  if (!ev.isPrimary) return
+  cancelLongPress()
+  longPressStart = { x: ev.clientX, y: ev.clientY }
+  dragPointerId = ev.pointerId
+  longPressTimer = setTimeout(() => {
+    draggingId.value = cat.id
+    suppressClick = true
+    try {
+      navigator.vibrate?.(30)
+    } catch {
+      /* 设备不支持则忽略 */
+    }
+    // 拖拽中锁页面滚动（touchmove 非被动拦截）；
+    // move/up/cancel 挂 document 级——手指移出网格再松手也能收到（否则 draggingId 残留、
+    // 该分类一直停留在半透明拖拽态，实测 2026-11-06）
+    document.addEventListener('pointermove', onDragPointerMove)
+    document.addEventListener('pointerup', onDragPointerUp)
+    document.addEventListener('pointercancel', onDragPointerUp)
+    document.addEventListener('touchmove', preventScrollDuringDrag, { passive: false })
+  }, 500)
+}
+
+function cancelLongPress(): void {
+  if (longPressTimer) clearTimeout(longPressTimer)
+  longPressTimer = undefined
+}
+
+function onDragPointerMove(ev: PointerEvent): void {
+  if (dragPointerId >= 0 && ev.pointerId !== dragPointerId) return
+  if (!draggingId.value) {
+    // 长按未触发前的移动（滚动）取消长按，避免滚动手势误入拖拽
+    if (
+      longPressTimer &&
+      (Math.abs(ev.clientX - longPressStart.x) > 10 ||
+        Math.abs(ev.clientY - longPressStart.y) > 10)
+    ) {
+      cancelLongPress()
+    }
+    return
+  }
+  const targetId = document
+    .elementFromPoint(ev.clientX, ev.clientY)
+    ?.closest('[data-cat-id]')
+    ?.getAttribute('data-cat-id')
+  if (!targetId || targetId === draggingId.value) return
+  const ids = displayRootCategories.value.map((c) => c.id)
+  const from = ids.indexOf(draggingId.value)
+  const to = ids.indexOf(targetId)
+  if (from < 0 || to < 0) return
+  const moved = ids.splice(from, 1)[0]
+  if (moved === undefined) return
+  ids.splice(to, 0, moved)
+  orderedIds.value = ids
+}
+
+/** 一级分类按 5 列分行渲染（行分组：二级条可插在选中行之后而不破坏行内布局）。 */
+const CATEGORY_COLS = 5
+const rootRows = computed(() => {
+  const rows: (ExpenseCategoryOption | IncomeCategoryOption)[][] = []
+  const cats = displayRootCategories.value
+  for (let i = 0; i < cats.length; i += CATEGORY_COLS) {
+    const chunk = cats.slice(i, i + CATEGORY_COLS)
+    if (chunk.length) rows.push(chunk)
+  }
+  return rows
+})
+
+/** 拖拽结束（document 级 up/cancel 触发）：卸监听、清状态、持久化。 */
+function onDragPointerUp(ev: PointerEvent): void {
+  if (dragPointerId >= 0 && ev.pointerId !== dragPointerId) return
+  endDrag()
+}
+
+function endDrag(): void {
+  cancelLongPress()
+  document.removeEventListener('pointermove', onDragPointerMove)
+  document.removeEventListener('pointerup', onDragPointerUp)
+  document.removeEventListener('pointercancel', onDragPointerUp)
+  document.removeEventListener('touchmove', preventScrollDuringDrag)
+  dragPointerId = -1
+  if (draggingId.value) {
+    draggingId.value = null
+    void persistOrder()
+  }
+  // 长按松手后的合成 click 若未落在分类上（如拖出网格），点击抑制标志无人消费——兜底清掉
+  setTimeout(() => {
+    suppressClick = false
+  }, 150)
+}
+
+/** 按新顺序整组持久化（与分类管理页同款 saveCategory）。失败回滚本地顺序。 */
+async function persistOrder(): Promise<void> {
+  if (!finance || !appStore.ledgerId) return
+  const list = displayRootCategories.value
+  try {
+    for (let i = 0; i < list.length; i++) {
+      const cat = list[i]
+      if (!cat) continue
+      await finance.saveCategory({
+        ledgerId: appStore.ledgerId,
+        categoryId: cat.id,
+        kind: cat.kind,
+        parentId: cat.parentId,
+        name: cat.name,
+        iconKey: cat.iconKey,
+        color: cat.color ?? '',
+        sortOrder: i + 1,
+      })
+    }
+  } catch (e) {
+    orderedIds.value = [] // 回滚为库序
+    log.error('分类排序保存失败，已回滚', {
+      msg: e instanceof Error ? e.message : String(e),
+    })
+  }
+}
+
+/** 网格点击：选中分类 + 切换二级展开（再点同一分类收起；无二级的分类只选中）。
+ *  长按拖拽结束后的 click 不触发选择。 */
+function onCategoryClick(cat: ExpenseCategoryOption | IncomeCategoryOption): void {
+  if (suppressClick) {
+    suppressClick = false
+    return
+  }
+  selectCategory(cat)
+  const hasChildren = childCategoriesOf(cat.id).length > 0
+  expandedRootId.value =
+    expandedRootId.value === cat.id || !hasChildren ? null : cat.id
+}
+
+function onGridUnmount(): void {
+  cancelLongPress()
+  document.removeEventListener('pointermove', onDragPointerMove)
+  document.removeEventListener('pointerup', onDragPointerUp)
+  document.removeEventListener('pointercancel', onDragPointerUp)
+  document.removeEventListener('touchmove', preventScrollDuringDrag)
+}
+
 function toggleDiscountMode(): void {
   discountMode.value = !discountMode.value
 }
@@ -1172,6 +1342,7 @@ onUnmounted(() => {
     frame?.removeEventListener('scroll', frameScrollHandler)
     frameScrollHandler = null
   }
+  onGridUnmount()
 })
 </script>
 
@@ -1205,36 +1376,53 @@ onUnmounted(() => {
     </header>
 
     <section class="record-body">
-      <!-- 分类网格 -->
-      <div v-if="hasCategory" class="category-grid">
-        <div
-          v-for="cat in activeRootCategories"
-          :key="cat.id"
-          :class="['category-item', { active: selectedRootId === cat.id }]"
-          @click="selectCategory(cat)"
-        >
-          <CategoryIcon
-            :icon-key="cat.iconKey"
-            :color="selectedRootId === cat.id ? 'var(--color-primary-500)' : 'var(--color-text-tertiary)'"
-            :size="32"
-            :label="cat.name"
-          />
-          <span class="category-item__label">{{ cat.name }}</span>
-        </div>
-      </div>
-      <div v-if="hasCategory && activeChildCategories.length" class="category-children">
-        <span>二级分类</span>
-        <div>
-          <button
-            v-for="child in activeChildCategories"
-            :key="child.id"
-            type="button"
-            :class="{ active: selectedCategoryId === child.id }"
-            @click="selectCategory(child)"
+      <!-- 分类网格：选中根分类后，二级分类条内嵌在该行下方 -->
+      <div
+        v-if="hasCategory"
+        class="category-grid"
+        :class="{ 'category-grid--dragging': !!draggingId }"
+      >
+        <template v-for="(row, rowIndex) in rootRows" :key="rowIndex">
+          <div class="category-row">
+            <div
+              v-for="cat in row"
+              :key="cat.id"
+              class="category-item"
+              :class="{
+                active: selectedRootId === cat.id,
+                'category-item--dragging': draggingId === cat.id,
+              }"
+              :data-cat-id="cat.id"
+              @click="onCategoryClick(cat)"
+              @pointerdown="startLongPress(cat, $event)"
+              @contextmenu.prevent
+            >
+              <CategoryIcon
+                :icon-key="cat.iconKey"
+                :color="selectedRootId === cat.id ? 'var(--color-primary-500)' : 'var(--color-text-tertiary)'"
+                :size="32"
+                :label="cat.name"
+              />
+              <span class="category-item__label">{{ cat.name }}</span>
+            </div>
+          </div>
+          <div
+            v-if="expandedRootId && row.some((cat) => cat.id === expandedRootId) && !draggingId"
+            class="category-children--inline"
           >
-            {{ child.name }}
-          </button>
-        </div>
+            <div>
+              <button
+                v-for="child in childCategoriesOf(expandedRootId)"
+                :key="child.id"
+                type="button"
+                :class="{ active: selectedCategoryId === child.id }"
+                @click="selectCategory(child)"
+              >
+                {{ child.name }}
+              </button>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- 转账/还款模式账户选择 -->
@@ -1528,6 +1716,11 @@ onUnmounted(() => {
 
 .category-grid {
   display: grid;
+  gap: var(--space-2) 0;
+}
+
+.category-row {
+  display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-3) var(--space-2);
 }
@@ -1542,6 +1735,10 @@ onUnmounted(() => {
   border: 0;
   border-radius: var(--radius-card);
   cursor: pointer;
+  /* 长按用于拖拽排序：禁掉 WebView 原生的文本选择/复制菜单 */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .category-item.active :deep(.category-icon) {
@@ -1560,38 +1757,44 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-.category-children {
-  display: grid;
-  margin-top: var(--space-4);
-  gap: var(--space-2);
+.category-item--dragging {
+  opacity: 0.45;
+  transform: scale(0.92);
 }
 
-.category-children > span {
-  color: var(--color-text-tertiary);
-  font-size: var(--type-caption-size);
+/* 二级分类条：内嵌在网格中、紧跟所选一级分类那一行 */
+.category-children--inline {
+  grid-column: 1 / -1;
+  margin: var(--space-1) 0 var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-surface);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-control);
 }
 
-.category-children > div {
+.category-children--inline > div {
   display: flex;
   overflow-x: auto;
   gap: var(--space-2);
   scrollbar-width: none;
 }
 
-.category-children button {
-  min-height: 36px;
-  padding: 0 var(--space-4);
+.category-children--inline button {
+  min-height: 34px;
+  padding: 0 var(--space-3);
   flex: none;
   color: var(--color-text-secondary);
-  background: var(--color-surface);
+  background: var(--color-background);
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-pill);
+  font-size: var(--type-caption-size);
 }
 
-.category-children button.active {
+.category-children--inline button.active {
   color: var(--color-primary-700);
   background: var(--color-primary-50);
   border-color: var(--color-primary-500);
+  font-weight: 600;
 }
 
 .transfer-panel {
