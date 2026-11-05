@@ -74,6 +74,7 @@ const ACCOUNT_TYPE_OPTIONS: { value: AccountType; label: string }[] = [
   { value: 'restricted_asset', label: '受限资产' },
   { value: 'prepaid', label: '预付资产' },
   { value: 'investment', label: '投资余额' },
+  { value: 'receivable', label: '借出款' },
   { value: 'credit_card', label: '信用卡' },
   { value: 'consumer_credit', label: '消费信用' },
   { value: 'other_liability', label: '其他负债' },
@@ -775,6 +776,7 @@ onUnmounted(() => {
 .top-actions {
   display: flex;
   align-items: center;
+  overflow-x: auto;
   white-space: nowrap;
 }
 .top-actions button {

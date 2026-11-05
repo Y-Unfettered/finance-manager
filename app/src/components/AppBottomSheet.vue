@@ -105,6 +105,7 @@ defineEmits<{
 }
 
 .app-bottom-sheet__body {
+  overflow-x: hidden;
   padding: var(--space-4);
 }
 </style>
