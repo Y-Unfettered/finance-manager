@@ -12,6 +12,7 @@ import {
   PiggyBank,
   Receipt,
   Scan,
+  ScrollText,
 } from '@lucide/vue'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -22,6 +23,7 @@ import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import { useFinanceService } from '@/features/finance/finance-service'
+import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
 import {
   useHomePreferencesService,
   type HomePreferences,
@@ -94,7 +96,27 @@ const entries = [
 
 const debugEntries = [
   { label: '诊断日志', description: '查看剪贴板检测、导入流程等运行记录', icon: Bug, route: 'app-logs' },
+  { label: '匹配规则', description: '自动记账的页面识别模板', icon: ScrollText, route: 'capture-rules' },
 ] as const
+
+// 读屏测试（诊断工具）：悬浮按钮抓取当前屏幕的无障碍节点树
+const readerDebugEnabled = ref(false)
+const readerDebugNotice = ref('')
+
+async function onReaderDebugToggle(enabled: boolean): Promise<void> {
+  try {
+    const r = await PaymentCapture.setReaderDebugEnabled({ enabled })
+    if (enabled && !r.granted) {
+      readerDebugEnabled.value = false
+      readerDebugNotice.value = '需要「显示在其他应用上层」权限，正在打开系统设置…'
+      void PaymentCapture.openOverlaySettings()
+      return
+    }
+    readerDebugNotice.value = r.showing ? '' : '悬浮窗权限未授予，按钮未显示'
+  } catch {
+    readerDebugNotice.value = '设置失败（仅原生环境可用）'
+  }
+}
 
 async function save(): Promise<void> {
   if (!preferencesService || !appStore.ledgerId || saving.value) return
@@ -154,7 +176,18 @@ async function load(): Promise<void> {
   ])
 }
 
-onMounted(load)
+onMounted(async () => {
+  void load()
+  try {
+    const s = await PaymentCapture.getReaderDebugEnabled()
+    readerDebugEnabled.value = s.enabled
+    if (s.enabled && !s.overlayGranted) {
+      readerDebugNotice.value = '悬浮窗权限未授予，按钮未显示'
+    }
+  } catch {
+    // web 环境或原生不可用：保持关闭
+  }
+})
 </script>
 
 <template>
@@ -251,6 +284,22 @@ onMounted(load)
       </section>
       <section>
         <h2>诊断</h2>
+        <BaseCard class="settings-card">
+          <AppSwitch
+            v-model="readerDebugEnabled"
+            label="读屏测试"
+            description="显示悬浮按钮，抓取当前屏幕的读屏内容（纯只读诊断）"
+            @change="onReaderDebugToggle"
+          />
+          <p v-if="readerDebugNotice" class="reader-notice">{{ readerDebugNotice }}</p>
+          <button
+            type="button"
+            class="reader-entry"
+            @click="router.push({ name: 'screen-reader-test' })"
+          >
+            查看最近一次抓取结果
+          </button>
+        </BaseCard>
         <BaseCard class="entry-card">
           <button
             v-for="entry in debugEntries"
@@ -293,9 +342,11 @@ h2 {
   margin: 0 0 var(--space-3);
   font-size: var(--type-section-title-size);
 }
-.settings-card,
 .entry-card {
   padding: 0 var(--space-4);
+}
+.settings-card {
+  padding: var(--space-2) var(--space-4);
 }
 .appearance-entry {
   margin-top: var(--space-3);
@@ -344,5 +395,21 @@ h2 {
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   text-align: center;
+}
+.reader-notice {
+  margin: 0;
+  color: var(--color-warning);
+  font-size: var(--type-caption-size);
+  line-height: var(--type-caption-line);
+}
+.reader-entry {
+  margin-top: var(--space-2);
+  padding: 0;
+  color: var(--color-primary-600);
+  font-size: var(--type-caption-size);
+  text-align: left;
+  text-decoration: underline;
+  background: transparent;
+  border: 0;
 }
 </style>

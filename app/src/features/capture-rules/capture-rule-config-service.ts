@@ -474,6 +474,19 @@ const DEFAULT_CONFIG: CaptureRuleConfig = {
   },
 }
 
+/** 包名 → 应用展示名（匹配规则页面用；未知包名回退显示包名本身）。 */
+export const CAPTURE_APP_NAMES: Record<string, string> = {
+  'com.eg.android.AlipayGphone': '支付宝',
+  'com.tencent.mm': '微信',
+  'com.jingdong.app.mall': '京东',
+  'com.sankuai.meituan': '美团',
+  'com.ss.android.ugc.aweme': '抖音',
+}
+
+export function captureAppName(packageName: string): string {
+  return CAPTURE_APP_NAMES[packageName] ?? packageName
+}
+
 const STORAGE_KEY = 'capture-rule-config'
 
 /** 校验配置版本：v1~v5 均接受（v5 为最新：微信多模板变体标签齐备）。 */
