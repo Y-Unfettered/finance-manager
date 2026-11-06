@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
 import { PieChart } from 'echarts/charts'
@@ -17,11 +18,11 @@ let chart: echarts.ECharts | null = null
 const selectedId = ref<string>()
 const colors = [
   'var(--color-primary-500)',
-  '#d8a248',
-  '#5b8def',
-  '#d45f5a',
-  '#8a73bd',
-  '#55a6a6',
+  THEME_COLOR_FALLBACKS.gold,
+  THEME_COLOR_FALLBACKS.blue,
+  THEME_COLOR_FALLBACKS.expense,
+  THEME_COLOR_FALLBACKS.purple,
+  THEME_COLOR_FALLBACKS.teal,
 ]
 
 function getCssVar(name: string): string {
@@ -40,8 +41,8 @@ const resolvedColors = computed(() =>
 
 /** "其他"归并项用中性灰，与真实分类的固定配色区分（PRD BUG-04）。 */
 function colorFor(point: { isOther?: boolean }, index: number): string {
-  if (point.isOther) return getCssVar('--color-text-tertiary') || '#999999'
-  return resolvedColors.value[index % resolvedColors.value.length] ?? '#999999'
+  if (point.isOther) return getCssVar('--color-text-tertiary') || THEME_COLOR_FALLBACKS.gray
+  return resolvedColors.value[index % resolvedColors.value.length] ?? THEME_COLOR_FALLBACKS.gray
 }
 
 const positivePoints = computed(() => props.points.filter((point) => point.amountMinor > 0))

@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "cap:sync": "npm run build && cap sync && node scripts/patch-capacitor-plugins.mjs",
-    "android:open": "cap open android"
+    "android:open": "cap open android",
+    "check:tokens": "node scripts/check-tokens.mjs"
   },
   "dependencies": {
     "@capacitor-community/sqlite": "^8.1.0",

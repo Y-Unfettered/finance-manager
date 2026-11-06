@@ -113,13 +113,13 @@ function onCancel(): void {
 .datetime-picker__btn {
   min-height: 40px;
   border-radius: var(--radius-md, 8px);
-  border: 1px solid var(--color-divider, #e5e7eb);
+  border: 1px solid var(--color-divider);
   background: transparent;
-  color: var(--color-text-primary, #1f2329);
+  color: var(--color-text-primary);
   font-size: 15px;
 }
 .datetime-picker__btn--primary {
-  background: var(--color-primary, #176b5d);
+  background: var(--color-primary);
   color: #fff;
   border-color: transparent;
 }

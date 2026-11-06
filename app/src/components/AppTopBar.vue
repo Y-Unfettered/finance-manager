@@ -65,8 +65,9 @@ defineEmits<{
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
+  box-sizing: border-box;
   width: 100%;
-  height: var(--size-app-bar);
+  height: calc(var(--size-app-bar) + env(safe-area-inset-top));
   color: var(--color-text-primary);
   background: var(--color-surface);
   transition:

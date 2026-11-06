@@ -133,7 +133,7 @@ async function handleConfirm(): Promise<void> {
   max-width: 320px;
   padding: var(--space-5);
   text-align: center;
-  background: var(--color-surface, #fff);
+  background: var(--color-surface);
   border-radius: 18px;
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.22);
 }
@@ -144,19 +144,19 @@ async function handleConfirm(): Promise<void> {
   height: 44px;
   margin: 0 auto var(--space-3);
   place-items: center;
-  color: var(--color-warning-600, #b7791f);
-  background: var(--color-warning-50, #fef3c7);
+  color: var(--color-warning-600);
+  background: var(--color-warning-50);
   border-radius: 999px;
 }
 
 .app-confirm--danger .app-confirm__icon {
-  color: var(--color-danger-600, #d45f5a);
-  background: var(--color-danger-50, #fde8e7);
+  color: var(--color-danger-600);
+  background: var(--color-danger-50);
 }
 
 .app-confirm__title {
   margin: 0 0 var(--space-2);
-  color: var(--color-text-primary, #1f2329);
+  color: var(--color-text-primary);
   font-size: 17px;
   font-weight: 600;
   line-height: 1.4;
@@ -164,14 +164,14 @@ async function handleConfirm(): Promise<void> {
 
 .app-confirm__desc {
   margin: 0 0 var(--space-4);
-  color: var(--color-text-secondary, #4b5563);
+  color: var(--color-text-secondary);
   font-size: 14px;
   line-height: 1.5;
 }
 
 .app-confirm__error {
   margin: calc(-1 * var(--space-2)) 0 var(--space-3);
-  color: var(--color-danger, #d45f5a);
+  color: var(--color-danger);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -184,9 +184,9 @@ async function handleConfirm(): Promise<void> {
 
 .app-confirm__btn {
   min-height: 42px;
-  color: var(--color-text-primary, #1f2329);
+  color: var(--color-text-primary);
   font-size: 15px;
-  background: var(--color-background, #f5f6f8);
+  background: var(--color-background);
   border: 0;
   border-radius: 12px;
 }
@@ -197,11 +197,11 @@ async function handleConfirm(): Promise<void> {
 
 .app-confirm__btn--primary {
   color: #fff;
-  background: var(--color-primary-600, #176b5d);
+  background: var(--color-primary-600);
 }
 
 .app-confirm__btn--danger {
-  background: var(--color-danger-600, #d45f5a);
+  background: var(--color-danger-600);
 }
 
 .app-confirm-enter-active,

@@ -732,7 +732,7 @@ onUnmounted(() => {
 }
 /* 删除账户入口（危险操作，区别于普通菜单项） */
 .danger-action {
-  color: var(--color-danger, #dc2626);
+  color: var(--color-danger);
 }
 /* 归档确认弹窗内容 */
 .confirm-body {
@@ -742,7 +742,7 @@ onUnmounted(() => {
   padding: var(--space-2) 0 var(--space-4);
 }
 .confirm-text {
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   line-height: 1.6;
 }
 .confirm-actions {
@@ -755,7 +755,7 @@ onUnmounted(() => {
   border-radius: var(--radius-md);
   border: 1px solid var(--color-line);
   background: var(--color-surface);
-  color: var(--color-text);
+  color: var(--color-text-primary);
   font-size: var(--type-body-size);
 }
 .confirm-actions .primary {
@@ -768,7 +768,6 @@ onUnmounted(() => {
   position: sticky;
   z-index: 30;
   top: 0;
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }

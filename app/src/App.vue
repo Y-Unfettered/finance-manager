@@ -545,7 +545,7 @@ watch(
      这些属性会让本容器变成 position: fixed 子孙元素的 containing block，
      于是页面内的弹窗、遮罩层、悬浮按钮不再相对视口定位，而是相对容器内容定位：
      遮罩盖不满整屏、底部面板浮在半屏中间，还能越过遮罩继续滚动后面的内容。
-     路由切换所需的 translate3d 由下面的 enter/leave 类临时提供，动画期间浏览器会自动建层。 */
+     路由切换的滑动动画由内层 .route-page-slide 承担，帧自身始终保持未变换状态（BUG-13）。 */
   backface-visibility: hidden;
 }
 
@@ -553,29 +553,41 @@ watch(
   overflow-y: hidden;
 }
 
+.route-page-slide {
+  width: 100%;
+  height: 100%;
+}
+
 .route-page-enter-active,
 .route-page-leave-active {
-  will-change: transform;
+  transition: opacity 260ms var(--ease-emphasized);
 }
 
 .route-page-enter-active {
   z-index: 62;
-  transition: transform 260ms var(--ease-emphasized);
 }
 
 .route-page-leave-active {
   z-index: 61;
-  transition:
-    transform 260ms var(--ease-emphasized),
-    opacity 260ms var(--ease-emphasized);
 }
 
-.app-navigation[data-navigation-direction='forward'] .route-page-enter-from {
+/* 滑动动画只作用在内层 wrapper 上：帧（滚动锚点）自身不参与 transform / will-change，
+   避免过渡窗口内未 teleport 的 fixed 元素相对内容定位（PRD BUG-13） */
+.route-page-enter-active .route-page-slide,
+.route-page-leave-active .route-page-slide {
+  will-change: transform;
+  transition: transform 260ms var(--ease-emphasized);
+}
+
+.app-navigation[data-navigation-direction='forward'] .route-page-enter-from .route-page-slide {
   transform: translate3d(100%, 0, 0);
 }
 
 .app-navigation[data-navigation-direction='forward'] .route-page-leave-to {
   opacity: 0.92;
+}
+
+.app-navigation[data-navigation-direction='forward'] .route-page-leave-to .route-page-slide {
   transform: translate3d(-18%, 0, 0);
 }
 
@@ -583,19 +595,19 @@ watch(
   z-index: 62;
 }
 
-.app-navigation[data-navigation-direction='back'] .route-page-leave-to {
+.app-navigation[data-navigation-direction='back'] .route-page-leave-to .route-page-slide {
   transform: translate3d(100%, 0, 0);
 }
 
 .app-navigation[data-navigation-direction='back'] .route-page-enter-active {
   z-index: 61;
-  transition:
-    transform 260ms var(--ease-emphasized),
-    opacity 260ms var(--ease-emphasized);
 }
 
 .app-navigation[data-navigation-direction='back'] .route-page-enter-from {
   opacity: 0.92;
+}
+
+.app-navigation[data-navigation-direction='back'] .route-page-enter-from .route-page-slide {
   transform: translate3d(-18%, 0, 0);
 }
 

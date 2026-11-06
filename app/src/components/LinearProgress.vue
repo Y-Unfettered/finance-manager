@@ -14,8 +14,8 @@ const barStyle = computed(() => {
   return {
     width: `${width}%`,
     background: overspent
-      ? '#c0392b'
-      : 'var(--color-primary-500, #248561)',
+      ? 'var(--color-danger)'
+      : 'var(--color-primary-500)',
     borderRadius: '4px',
   }
 })
@@ -32,7 +32,7 @@ const barStyle = computed(() => {
   width: 100%;
   height: 8px;
   border-radius: 4px;
-  background: var(--color-primary-50, #e8f5f0);
+  background: var(--color-primary-50);
   overflow: hidden;
 }
 .linear-progress-bar {

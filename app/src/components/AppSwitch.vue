@@ -49,12 +49,12 @@ function toggle() {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) 0;
+  padding: var(--space-2) 0;
   border-top: 1px solid var(--color-divider);
   cursor: pointer;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
-  min-height: 68px;
+  min-height: 56px;
 }
 
 .app-switch-row:first-child {
@@ -69,15 +69,15 @@ function toggle() {
 }
 
 .app-switch-row__label strong {
-  font-size: 16px;
+  font-size: var(--type-list-primary-size);
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--color-text-primary);
   line-height: 1.35;
 }
 
 .app-switch-row__label small {
-  font-size: 13px;
-  color: var(--color-text-2);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
   line-height: 1.4;
 }
 

@@ -80,7 +80,7 @@ function onSelect(value: string) {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  min-height: 68px;
+  min-height: 56px;
   padding: var(--space-3) 0;
   border-top: 1px solid var(--color-divider);
   cursor: pointer;
@@ -100,15 +100,15 @@ function onSelect(value: string) {
 }
 
 .app-date-input__label strong {
-  font-size: 16px;
+  font-size: var(--type-list-primary-size);
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--color-text-primary);
   line-height: 1.35;
 }
 
 .app-date-input__label small {
-  font-size: 13px;
-  color: var(--color-text-2);
+  font-size: var(--type-caption-size);
+  color: var(--color-text-tertiary);
   line-height: 1.4;
 }
 
@@ -116,7 +116,7 @@ function onSelect(value: string) {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--color-text-2);
+  color: var(--color-text-secondary);
   font-size: 15px;
 }
 

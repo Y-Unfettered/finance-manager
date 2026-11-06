@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
 import { BarChart } from 'echarts/charts'
@@ -27,8 +28,8 @@ function getCssVar(name: string): string {
 }
 
 function buildOption() {
-  const incomeColor = getCssVar('--color-income') || '#248561'
-  const expenseColor = getCssVar('--color-expense') || '#d45f5a'
+  const incomeColor = getCssVar('--color-income') || THEME_COLOR_FALLBACKS.primary500
+  const expenseColor = getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense
   const xData = props.points.map((p) => `${Number(p.periodKey.slice(5))}月`)
   const incomeData = props.points.map((p) =>
     Number(((p.incomeMinor ?? p.inflowMinor ?? 0) / 100).toFixed(2)),

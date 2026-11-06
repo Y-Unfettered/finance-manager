@@ -107,9 +107,9 @@ const sheetVisible = computed(() => showSheet.value && pageActive.value)
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  min-height: 68px;
+  min-height: 56px;
   gap: var(--space-3);
-  padding: var(--space-3) 0;
+  padding: var(--space-2) 0;
   border-top: 1px solid var(--color-divider);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;

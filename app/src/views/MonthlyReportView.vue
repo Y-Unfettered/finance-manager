@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts/core'
@@ -241,8 +242,8 @@ function getCssVar(name: string): string {
 }
 
 function buildChartOption() {
-  const incomeColor = getCssVar('--color-income') || '#248561'
-  const expenseColor = getCssVar('--color-expense') || '#d45f5a'
+  const incomeColor = getCssVar('--color-income') || THEME_COLOR_FALLBACKS.income
+  const expenseColor = getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense
   const textColor = getCssVar('--color-text-tertiary') || '#999'
   const xData = points.value.map((p) => p.label)
   const incomeData = points.value.map((p) => Number((p.incomeMinor / 100).toFixed(2)))
@@ -553,7 +554,7 @@ onMounted(load)
                 <i
                   :style="{
                     width: structureBarWidth(agg.amountMinor),
-                    background: getCssVar('--color-expense') || '#d45f5a',
+                    background: getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense,
                   }"
                 />
               </span>
@@ -669,7 +670,7 @@ onMounted(load)
                 <i
                   :style="{
                     width: structureBarWidth(agg.amountMinor),
-                    background: getCssVar('--color-expense') || '#d45f5a',
+                    background: getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense,
                   }"
                 />
               </span>
@@ -778,7 +779,6 @@ onMounted(load)
   top: 0;
   right: 0;
   left: 0;
-  padding-top: env(safe-area-inset-top);
   background: linear-gradient(180deg, rgb(7 20 18 / 48%), transparent);
 }
 .report-summary {

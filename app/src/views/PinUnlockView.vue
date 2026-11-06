@@ -49,7 +49,6 @@ async function onComplete(value: string): Promise<void> {
   background: var(--color-background);
 }
 .unlock-page__safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
 }
 .unlock-page__content {

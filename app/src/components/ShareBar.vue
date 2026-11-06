@@ -9,7 +9,7 @@ const clampedPercent = computed(() => Math.max(0, Math.min(100, props.percent)))
 
 const barStyle = computed(() => ({
   width: `${clampedPercent.value}%`,
-  background: 'var(--color-primary-500, #248561)',
+  background: 'var(--color-primary-500)',
   borderRadius: '4px 0 0 4px',
 }))
 </script>
@@ -26,7 +26,7 @@ const barStyle = computed(() => ({
   height: 5px;
   margin-top: var(--space-3);
   border-radius: var(--radius-pill);
-  background: var(--color-warning, #f0a020);
+  background: var(--color-warning);
   overflow: hidden;
 }
 .share-bar-fill {

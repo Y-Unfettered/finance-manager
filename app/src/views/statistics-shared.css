@@ -3,32 +3,15 @@
   background: var(--color-background);
 }
 .safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
 .content {
   display: grid;
-  max-width: 520px;
-  padding: var(--space-3) var(--page-gutter) calc(var(--space-8) + env(safe-area-inset-bottom));
+  max-width: var(--container-max-width);
+  padding: var(--space-3) var(--page-gutter) var(--page-bottom-inset);
   margin: auto;
   gap: var(--space-3);
-}
-.period {
-  display: grid;
-  grid-template-columns: 44px 1fr 44px;
-  align-items: center;
-  text-align: center;
-}
-.period button {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  place-items: center;
-  color: var(--color-text-primary);
-  background: var(--color-surface);
-  border: 0;
-  border-radius: 50%;
 }
 .state {
   padding: var(--space-8);
@@ -59,29 +42,6 @@ h2 {
   font-size: 16px;
   font-weight: 700;
   color: var(--color-text-primary);
-}
-.distribution {
-  display: grid;
-  gap: var(--space-3);
-}
-.distribution > div {
-  display: grid;
-  grid-template-columns: 72px 1fr auto;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--type-caption-size);
-}
-.distribution i {
-  height: 7px;
-  overflow: hidden;
-  background: var(--color-primary-50);
-  border-radius: 999px;
-}
-.distribution b {
-  display: block;
-  height: 100%;
-  background: var(--color-primary-500);
-  border-radius: 999px;
 }
 .distribution p,
 .tx-list p {

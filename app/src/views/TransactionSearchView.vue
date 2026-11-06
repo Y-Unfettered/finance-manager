@@ -443,7 +443,6 @@ useRefreshOnActivated(async () => {
   background: var(--color-background);
 }
 .search-page__safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }

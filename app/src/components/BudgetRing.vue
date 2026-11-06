@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
 import { GaugeChart } from 'echarts/charts'
@@ -22,8 +23,8 @@ function getCssVar(name: string): string {
 }
 
 function buildOption() {
-  const color = props.overspent ? (getCssVar('--color-expense') || '#d45f5a') : (getCssVar('--color-primary-500') || '#248561')
-  const trackColor = getCssVar('--color-primary-50') || '#e8f5f0'
+  const color = props.overspent ? (getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense) : (getCssVar('--color-primary-500') || THEME_COLOR_FALLBACKS.income)
+  const trackColor = getCssVar('--color-primary-50') || THEME_COLOR_FALLBACKS.primary50
   const percent = props.overspent ? 100 : props.remainingPercent
 
   return {

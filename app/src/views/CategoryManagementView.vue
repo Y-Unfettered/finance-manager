@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import {
   Archive,
   ArrowDown,
@@ -24,6 +25,7 @@ import { getLogger } from '@/features/debug/app-logger'
 import { CATEGORY_ICON_OPTIONS, type CategoryIconSeries } from '@/features/finance/category-icons'
 import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
+import { showAppFailToast } from '@/utils/app-toast'
 import { prepareCustomIconDataUri } from '@/utils/icon-image'
 
 const router = useRouter()
@@ -53,7 +55,7 @@ const form = ref({
   parentId: '',
   name: '',
   iconKey: 'utensils',
-  color: '#5b8def',
+  color: THEME_COLOR_FALLBACKS.blue,
 })
 
 const roots = computed(() =>
@@ -102,7 +104,7 @@ function openCreate(parentId = ''): void {
     parentId,
     name: '',
     iconKey: 'circle-ellipsis',
-    color: '#5b8def',
+    color: THEME_COLOR_FALLBACKS.blue,
   }
   iconQuery.value = ''
   iconSeries.value = 'outline'
@@ -117,7 +119,7 @@ function openEdit(item: CategoryDetailRecord): void {
     parentId: item.parentId ?? '',
     name: item.name,
     iconKey: item.iconKey ?? 'circle-ellipsis',
-    color: item.color ?? '#5b8def',
+    color: item.color ?? THEME_COLOR_FALLBACKS.blue,
   }
   iconQuery.value = ''
   iconSeries.value = form.value.iconKey.startsWith('filled:') ? 'filled' : 'outline'
@@ -180,8 +182,9 @@ async function setArchived(item: CategoryDetailRecord, archived: boolean): Promi
   }
   try {
     await doSetArchived(item, false)
-  } catch {
-    // 恢复失败已记录日志；确认弹窗路径的失败由弹窗内红字展示
+  } catch (cause) {
+    // 恢复失败：轻提示反馈；确认弹窗路径的失败由弹窗内红字展示
+    showAppFailToast(`恢复分类失败：${cause instanceof Error ? cause.message : String(cause)}`)
   }
 }
 
@@ -467,7 +470,6 @@ onMounted(load)
   background: var(--color-background);
 }
 .safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -537,7 +539,7 @@ onMounted(load)
 }
 .category-row {
   display: grid;
-  min-height: 68px;
+  min-height: 56px;
   grid-template-columns: 44px 1fr 28px 28px 36px 36px;
   align-items: center;
   gap: 2px;

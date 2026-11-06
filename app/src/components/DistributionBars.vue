@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
 import { BarChart } from 'echarts/charts'
@@ -22,8 +23,8 @@ const sortedItems = computed(() =>
 )
 
 function buildOption() {
-  const primaryColor = getCssVar('--color-primary-500') || '#248561'
-  const expenseColor = getCssVar('--color-expense') || '#d45f5a'
+  const primaryColor = getCssVar('--color-primary-500') || THEME_COLOR_FALLBACKS.primary500
+  const expenseColor = getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense
   const textColor = getCssVar('--color-text-secondary') || '#666'
   const tertiaryColor = getCssVar('--color-text-tertiary') || '#999'
 

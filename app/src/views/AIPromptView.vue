@@ -130,7 +130,6 @@ watch(
   background: var(--color-background);
 }
 .safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }

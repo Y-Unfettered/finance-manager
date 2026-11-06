@@ -994,7 +994,7 @@ onUnmounted(() => {
   display: block;
   min-width: 2px;
   height: 100%;
-  background: #55c59b;
+  background: var(--color-income);
 }
 
 .trend-card__footer {

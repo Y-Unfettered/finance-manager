@@ -465,7 +465,6 @@ onMounted(load)
   background: var(--color-background);
 }
 .receivables-page__safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -482,7 +481,7 @@ onMounted(load)
   padding: var(--space-6);
   align-content: center;
   text-align: center;
-  background: linear-gradient(145deg, #f8fbfa, #fff);
+  background: linear-gradient(145deg, var(--color-primary-50), var(--color-surface));
 }
 .summary-card > span,
 .summary-card > small {
@@ -523,8 +522,8 @@ onMounted(load)
   width: 40px;
   height: 40px;
   place-items: center;
-  color: #a76819;
-  background: #fff2da;
+  color: var(--color-warning-600);
+  background: var(--color-warning-50);
   border-radius: var(--radius-pill);
 }
 .loan-icon--settled {

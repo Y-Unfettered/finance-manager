@@ -269,7 +269,6 @@ onActivated(async () => {
   position: sticky;
   z-index: 40;
   top: 0;
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -320,7 +319,7 @@ onActivated(async () => {
   margin-top: 16px;
   font-size: 16px;
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--color-text-primary);
 }
 
 .empty-state__desc {
@@ -410,7 +409,7 @@ onActivated(async () => {
 
 .event-item__merchant {
   font-size: 14px;
-  color: var(--color-text);
+  color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -486,7 +485,7 @@ onActivated(async () => {
   border: 1px solid var(--color-line);
   border-radius: 8px;
   background: var(--color-surface);
-  color: var(--color-text);
+  color: var(--color-text-primary);
   font-size: 12px;
   cursor: pointer;
 }
@@ -510,7 +509,7 @@ onActivated(async () => {
   background: color-mix(in srgb, var(--color-warning) 10%, transparent);
   border-radius: 8px;
   font-size: 12px;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
 }
 
 .setup-hint__btn {

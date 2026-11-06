@@ -177,7 +177,7 @@ onBeforeUnmount(cancelPress)
 
 .account-activity-row {
   display: grid;
-  min-height: 68px;
+  min-height: 56px;
   padding: 6px 0;
   grid-template-columns: 5px minmax(0, 1fr) minmax(100px, auto);
   align-items: center;

@@ -40,8 +40,8 @@ withDefaults(
 }
 
 .account-avatar--compact {
-  width: 24px;
-  height: 24px;
+  width: var(--size-account-avatar-compact);
+  height: var(--size-account-avatar-compact);
   border-radius: 50%;
 }
 

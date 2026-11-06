@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { MoreHorizontal } from '@lucide/vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts/core'
@@ -33,8 +34,8 @@ function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
 
-const incomeColor = ref('#248561')
-const expenseColor = ref('#d45f5a')
+const incomeColor = ref(THEME_COLOR_FALLBACKS.income)
+const expenseColor = ref(THEME_COLOR_FALLBACKS.expense)
 
 function syncColors(): void {
   const inc = getCssVar('--color-income')
@@ -60,7 +61,7 @@ function tooltipFormatter(params: unknown): string {
   const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
   const inc = `¥${(point.incomeMinor / 100).toFixed(2)}`
   const exp = `¥${(point.expenseMinor / 100).toFixed(2)}`
-  return `<div style="background:#1a1a1a;color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.5;min-width:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+  return `<div style="background:${THEME_COLOR_FALLBACKS.textPrimary};color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.5;min-width:auto;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
     <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:2px;">
       <span style="font-weight:600;">${monthDay}</span>
       <span style="color:#aaa;">${weekday}</span>

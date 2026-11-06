@@ -171,7 +171,6 @@ function formatStamp(date: Date): string {
   background: var(--color-background);
 }
 .export-page__safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -196,7 +195,7 @@ function formatStamp(date: Date): string {
 .format-item {
   display: grid;
   width: 100%;
-  min-height: 68px;
+  min-height: 56px;
   padding: var(--space-3) 0;
   grid-template-columns: 40px minmax(0, 1fr) 20px;
   align-items: center;

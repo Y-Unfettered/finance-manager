@@ -21,6 +21,7 @@ import AppSelect from '@/components/AppSelect.vue'
 import AppSwitch from '@/components/AppSwitch.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
+import SettingsSection from '@/components/SettingsSection.vue'
 import type { AccountBalanceRecord } from '@/domain/entities'
 import { useFinanceService } from '@/features/finance/finance-service'
 import { PaymentCapture } from '@/features/payment-capture/payment-capture-reader'
@@ -221,8 +222,7 @@ onMounted(async () => {
   <main class="settings-page">
     <div class="safe-top"><AppTopBar title="设置" @back="router.back()" /></div>
     <div class="content">
-      <section>
-        <h2>首页展示</h2>
+      <SettingsSection title="首页展示">
         <BaseCard class="settings-card">
           <AppSelect
             v-model="preferences.summaryDisplayType"
@@ -239,9 +239,8 @@ onMounted(async () => {
             @change="onRangeTypeChange"
           />
         </BaseCard>
-      </section>
-      <section>
-        <h2>记账设置</h2>
+      </SettingsSection>
+      <SettingsSection title="记账设置">
         <BaseCard class="settings-card">
           <AppSelect
             v-model="preferences.defaultExpenseAccountId"
@@ -264,9 +263,8 @@ onMounted(async () => {
             @change="onRememberAccountChange"
           />
         </BaseCard>
-      </section>
-      <section>
-        <h2>外观</h2>
+      </SettingsSection>
+      <SettingsSection title="外观">
         <BaseCard class="settings-card">
           <AppSelect
             v-model="preferences.colorTheme"
@@ -283,16 +281,15 @@ onMounted(async () => {
             @change="onAppearanceChange"
           />
         </BaseCard>
-        <BaseCard class="entry-card appearance-entry">
+        <BaseCard class="entry-card">
           <button type="button" @click="router.push({ name: 'account-icons' })">
             <span class="entry-icon"><Images :size="20" /></span>
             <span><strong>账户图标管理</strong><small>为已有账户自行替换图标</small></span>
             <ChevronRight :size="19" />
           </button>
         </BaseCard>
-      </section>
-      <section>
-        <h2>账本与数据</h2>
+      </SettingsSection>
+      <SettingsSection title="账本与数据">
         <BaseCard class="entry-card">
           <button
             v-for="entry in entries"
@@ -308,9 +305,8 @@ onMounted(async () => {
             <ChevronRight :size="19" />
           </button>
         </BaseCard>
-      </section>
-      <section>
-        <h2>诊断</h2>
+      </SettingsSection>
+      <SettingsSection title="诊断">
         <BaseCard class="settings-card">
           <AppSwitch
             v-model="readerDebugEnabled"
@@ -324,7 +320,8 @@ onMounted(async () => {
             class="reader-entry"
             @click="router.push({ name: 'screen-reader-test' })"
           >
-            查看最近一次抓取结果
+            <span>查看最近一次抓取结果</span>
+            <ChevronRight :size="18" :stroke-width="1.75" aria-hidden="true" />
           </button>
         </BaseCard>
         <BaseCard class="entry-card">
@@ -348,7 +345,7 @@ onMounted(async () => {
             <pre>{{ scrollDiagnosticsText }}</pre>
           </details>
         </BaseCard>
-      </section>
+      </SettingsSection>
       <p class="privacy-note">账本数据默认仅保存在本机，请定期创建备份。</p>
     </div>
   </main>
@@ -360,7 +357,6 @@ onMounted(async () => {
   background: var(--color-background);
 }
 .safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -369,11 +365,7 @@ onMounted(async () => {
   max-width: 520px;
   padding: var(--space-4) var(--page-gutter) calc(var(--space-8) + env(safe-area-inset-bottom));
   margin: auto;
-  gap: var(--space-5);
-}
-h2 {
-  margin: 0 0 var(--space-3);
-  font-size: var(--type-section-title-size);
+  gap: var(--space-6);
 }
 .entry-card {
   padding: 0 var(--space-4);
@@ -381,13 +373,10 @@ h2 {
 .settings-card {
   padding: var(--space-2) var(--space-4);
 }
-.appearance-entry {
-  margin-top: var(--space-3);
-}
 .entry-card button {
   display: grid;
   width: 100%;
-  min-height: 68px;
+  min-height: 56px;
   grid-template-columns: 40px 1fr 20px;
   align-items: center;
   gap: var(--space-3);
@@ -450,13 +439,20 @@ h2 {
   word-break: break-all;
 }
 .reader-entry {
-  margin-top: var(--space-2);
+  display: flex;
+  width: 100%;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
   padding: 0;
-  color: var(--color-primary-600);
-  font-size: var(--type-caption-size);
+  color: var(--color-text-secondary);
+  font-size: var(--type-body-size);
   text-align: left;
-  text-decoration: underline;
   background: transparent;
   border: 0;
+  border-top: 1px solid var(--color-divider);
+}
+.reader-entry svg {
+  color: var(--color-text-tertiary);
 }
 </style>

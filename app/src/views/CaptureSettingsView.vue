@@ -846,7 +846,6 @@ onUnmounted(() => {
 }
 
 .safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -904,7 +903,7 @@ section {
   grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
-  min-height: 68px;
+  min-height: 56px;
 }
 
 .channel-icon {
@@ -927,7 +926,7 @@ section {
 .channel-info strong {
   font-size: 16px;
   font-weight: 600;
-  color: var(--color-text);
+  color: var(--color-text-primary);
 }
 
 .channel-info small {
@@ -982,8 +981,8 @@ section {
 
 .channel-action--shizuku {
   border-top: 1px dashed var(--color-divider);
-  color: #7c3aed;
-  background: color-mix(in srgb, #7c3aed 6%, transparent);
+  color: var(--color-accent-purple);
+  background: color-mix(in srgb, var(--color-accent-purple) 6%, transparent);
 }
 
 .channel-action--shizuku-disabled {
@@ -1007,7 +1006,7 @@ section {
 .stat-label {
   font-size: 15px;
   font-weight: 500;
-  color: var(--color-text);
+  color: var(--color-text-primary);
 }
 
 .stat-value {
@@ -1075,7 +1074,7 @@ section {
   border-radius: var(--radius-lg);
   background: var(--color-surface);
   font-size: 13px;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
 }
 
 .diag-row--export {
@@ -1098,9 +1097,9 @@ section {
 }
 
 .diag-btn--share {
-  background: color-mix(in srgb, #7c3aed 12%, transparent);
-  color: #7c3aed;
-  border: 1px solid color-mix(in srgb, #7c3aed 40%, transparent);
+  background: color-mix(in srgb, var(--color-accent-purple) 12%, transparent);
+  color: var(--color-accent-purple);
+  border: 1px solid color-mix(in srgb, var(--color-accent-purple) 40%, transparent);
 }
 
 .diag-btn--share:disabled {
@@ -1148,7 +1147,7 @@ section {
 
 .diag-note em {
   font-style: normal;
-  color: var(--color-text);
+  color: var(--color-text-primary);
   font-weight: 600;
 }
 
@@ -1178,7 +1177,7 @@ section {
 .diag-cell__v {
   font-size: 18px;
   font-weight: 700;
-  color: var(--color-text);
+  color: var(--color-text-primary);
 }
 
 .diag-cell__v.warn {
@@ -1215,7 +1214,7 @@ section {
   font-size: 13px;
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--color-text);
+  color: var(--color-text-primary);
 }
 
 .diag-last-fail {
@@ -1227,7 +1226,7 @@ section {
   background: color-mix(in srgb, var(--color-warning) 12%, transparent);
   border-radius: 8px;
   font-size: 12px;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
 }
 
 .diag-last-fail code {
@@ -1247,7 +1246,7 @@ section {
   background: none;
   border: 1px solid var(--color-line);
   border-radius: 8px;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
@@ -1263,9 +1262,9 @@ section {
 .diag-ring {
   margin-top: 8px;
   padding: 10px 12px;
-  background: #1e1e1e;
+  background: var(--code-bg);
   border-radius: 8px;
-  color: #d4d4d4;
+  color: var(--code-text);
   max-height: 260px;
   overflow-y: auto;
 }
@@ -1288,7 +1287,7 @@ section {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   line-height: 1.5;
-  color: #9cdcfe;
+  color: var(--code-accent);
   word-break: break-all;
 }
 
@@ -1387,7 +1386,7 @@ section {
   position: relative;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
 }
 
 .tip-list li::before {
@@ -1506,7 +1505,7 @@ section {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -1545,9 +1544,9 @@ section {
 }
 
 .recover-btn--secondary {
-  background: color-mix(in srgb, #7c3aed 10%, transparent);
-  border-color: color-mix(in srgb, #7c3aed 40%, transparent);
-  color: #7c3aed;
+  background: color-mix(in srgb, var(--color-accent-purple) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent-purple) 40%, transparent);
+  color: var(--color-accent-purple);
 }
 
 .recover-btn:disabled {
@@ -1564,7 +1563,7 @@ section {
   background: var(--color-surface);
   border-radius: 8px;
   font-size: 12px;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
 }
 
 .recover-note {

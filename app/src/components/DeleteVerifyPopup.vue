@@ -146,8 +146,8 @@ watch(() => props.show, (v) => {
   margin: 0 0 var(--space-2, 8px);
   padding: var(--space-2, 8px) var(--space-3, 12px);
   border-radius: var(--radius-md, 8px);
-  background: var(--color-danger-soft, #fdecec);
-  color: var(--color-danger, #c0392b);
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
   font-size: var(--type-body-size, 14px);
   line-height: 1.4;
   text-align: left;

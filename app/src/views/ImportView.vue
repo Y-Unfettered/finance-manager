@@ -1367,7 +1367,6 @@ function goToBatches(): void {
   background: var(--color-background);
 }
 .import-page__safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -1930,7 +1929,7 @@ function goToBatches(): void {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  color: var(--color-warning, #f0a030);
+  color: var(--color-warning);
   font-size: var(--type-body-size);
   line-height: var(--type-body-line);
 }
@@ -1943,7 +1942,7 @@ function goToBatches(): void {
   gap: 4px;
 }
 .duplicate-warning__text strong {
-  color: var(--color-warning, #f0a030);
+  color: var(--color-warning);
   font-weight: 600;
 }
 .duplicate-warning__text span {
@@ -1953,7 +1952,7 @@ function goToBatches(): void {
 .existing-batch-info {
   margin-top: var(--space-3);
   padding: var(--space-3);
-  background: var(--color-background-raised, #ffffff);
+  background: var(--color-background-raised);
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-md);
   display: grid;
@@ -2004,11 +2003,11 @@ function goToBatches(): void {
   gap: var(--space-2);
 }
 .unmatched-item__alert-icon {
-  color: #f0a030;
+  color: var(--color-warning-600);
   flex: none;
 }
 .unmatched-item__alert-text {
-  color: #c77e20;
+  color: var(--color-warning-600);
   font-size: var(--type-body-size);
   font-weight: 500;
 }
@@ -2042,10 +2041,10 @@ function goToBatches(): void {
 }
 /* 未选择时显示警告边框 */
 .unmatched-item__picker--warning:deep(.van-cell) {
-  border-bottom-color: #f0a030 !important;
+  border-bottom-color: var(--color-warning-600) !important;
 }
 .unmatched-item__picker--warning:deep(.van-field__placeholder) {
-  color: #f0a030 !important;
+  color: var(--color-warning-600) !important;
 }
 
 /* 有效行预览卡片 */
@@ -2108,7 +2107,7 @@ function goToBatches(): void {
   white-space: nowrap;
 }
 .preview-field__value--empty {
-  color: var(--color-text-quaternary, #999);
+  color: var(--color-text-quaternary);
 }
 .preview-field__value--mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;

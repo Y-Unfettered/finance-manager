@@ -462,7 +462,6 @@ const repaymentAccountOptions = computed(() =>
   background: var(--color-background);
 }
 .payables-page__safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }
@@ -479,7 +478,7 @@ const repaymentAccountOptions = computed(() =>
   padding: var(--space-6);
   align-content: center;
   text-align: center;
-  background: linear-gradient(145deg, #f8fbfa, #fff);
+  background: linear-gradient(145deg, var(--color-primary-50), var(--color-surface));
 }
 .summary-card > span,
 .summary-card > small {
@@ -520,8 +519,8 @@ const repaymentAccountOptions = computed(() =>
   width: 40px;
   height: 40px;
   place-items: center;
-  color: #6b4f9d;
-  background: #efe9f8;
+  color: var(--color-accent-purple);
+  background: color-mix(in srgb, var(--color-accent-purple) 10%, var(--color-surface));
   border-radius: var(--radius-pill);
 }
 .loan-icon--settled {

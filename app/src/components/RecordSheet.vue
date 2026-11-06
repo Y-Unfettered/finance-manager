@@ -1885,8 +1885,8 @@ onUnmounted(() => {
   margin: var(--space-1) 0 var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-warning, #f59e0b) 12%, transparent);
-  color: var(--color-warning, #b45309);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--color-warning);
   font-size: var(--type-caption-size);
 }
 

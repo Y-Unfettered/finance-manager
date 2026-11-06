@@ -786,7 +786,6 @@ onUnmounted(() => {
   right: 0;
   left: 0;
   height: calc(var(--size-app-bar) + env(safe-area-inset-top));
-  padding-top: env(safe-area-inset-top);
   background: transparent;
   border-bottom: 1px solid transparent;
   box-shadow: 0 5px 16px rgb(11 27 23 / 10%);
@@ -999,7 +998,7 @@ onUnmounted(() => {
 }
 
 .budget-card--danger {
-  color: #c0392b !important;
+  color: var(--color-danger) !important;
 }
 
 .page-state,

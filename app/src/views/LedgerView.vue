@@ -11,6 +11,7 @@ import type { LedgerSummary } from '@/db/repositories/ledger-repository'
 import { getLogger } from '@/features/debug/app-logger'
 import { useLedgerService } from '@/features/ledger/ledger-service'
 import { useAppStore } from '@/stores/app'
+import { showAppFailToast } from '@/utils/app-toast'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -82,8 +83,9 @@ async function toggleArchive(ledger: LedgerSummary): Promise<void> {
   }
   try {
     await doToggleArchive(ledger)
-  } catch {
-    // 恢复失败已写入页面 error 展示；确认弹窗路径的失败由弹窗内红字展示
+  } catch (cause) {
+    // 恢复失败：轻提示反馈（页面 error 仍保留）；确认弹窗路径的失败由弹窗内红字展示
+    showAppFailToast(`恢复账本失败：${cause instanceof Error ? cause.message : String(cause)}`)
   }
 }
 
@@ -191,7 +193,6 @@ onMounted(load)
   background: var(--color-background);
 }
 .safe-top {
-  padding-top: env(safe-area-inset-top);
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }

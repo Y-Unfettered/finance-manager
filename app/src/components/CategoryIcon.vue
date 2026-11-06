@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { computed } from 'vue'
 
 import { findCategoryIcon } from '@/features/finance/category-icons'
@@ -10,7 +11,7 @@ const props = withDefaults(
     size?: number
     label?: string
   }>(),
-  { iconKey: 'circle-ellipsis', color: '#5b8def', size: 42, label: '分类' },
+  { iconKey: 'circle-ellipsis', color: THEME_COLOR_FALLBACKS.blue, size: 42, label: '分类' },
 )
 
 const icon = computed(() => findCategoryIcon(props.iconKey))

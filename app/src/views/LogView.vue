@@ -378,7 +378,6 @@ const LEVEL_META: Record<LogLevel, { label: string; cls: string }> = {
 }
 
 .safe-top {
-  padding-top: env(safe-area-inset-top);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -429,8 +428,8 @@ section h2 {
 }
 .overview-item--debug strong { color: var(--color-text-tertiary); }
 .overview-item--info strong { color: var(--color-primary-600); }
-.overview-item--warn strong { color: #c77700; }
-.overview-item--error strong { color: #c23b3b; }
+.overview-item--warn strong { color: var(--color-warning-600); }
+.overview-item--error strong { color: var(--color-danger-600); }
 
 .filter-card {
   display: grid;
@@ -502,7 +501,7 @@ section h2 {
   color: #fff;
   font-size: var(--type-body-size);
   font-weight: 600;
-  background: #1677ff;
+  background: var(--color-info);
   border: 0;
   border-radius: var(--radius-pill);
   height: 44px;
@@ -606,10 +605,10 @@ section h2 {
   font-weight: 700;
   color: #fff;
 }
-.chip--debug { background: #9ea5ad; }
+.chip--debug { background: var(--color-text-tertiary); }
 .chip--info { background: var(--color-primary-600); }
-.chip--warn { background: #c77700; }
-.chip--error { background: #c23b3b; }
+.chip--warn { background: var(--color-warning-600); }
+.chip--error { background: var(--color-danger-600); }
 
 .tag-chip {
   font-size: 11px;
