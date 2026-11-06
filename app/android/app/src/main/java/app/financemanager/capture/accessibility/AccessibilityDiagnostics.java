@@ -35,7 +35,8 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class AccessibilityDiagnostics {
 
     private static final String PREFS = "a11y_diag";
-    private static final int RING_SIZE = 200;
+    /** PRD 需求三 6.2：ring 容量 200→2000（约覆盖当日+前两日的关键节点）。 */
+    private static final int RING_SIZE = 2000;
 
     private static final ConcurrentLinkedDeque<String> RING = new ConcurrentLinkedDeque<>();
     private static final ConcurrentMap<String, PackageStats> PER_PKG = new java.util.concurrent.ConcurrentHashMap<>();
@@ -231,6 +232,33 @@ public final class AccessibilityDiagnostics {
     private static void trimRing() {
         while (RING.size() > RING_SIZE) {
             RING.pollFirst();
+        }
+    }
+
+    /**
+     * 将当前 ring 落盘为 JSONL（诊断目录 runtime_log.jsonl，覆盖写）。
+     * PRD 需求三 6.2：进程被杀后内存清零，落盘文件保证"最近一次导出/落盘时点之前"的
+     * 捕获节点可回溯；仅在导出等低频时机调用，避免高频事件 IO 阻塞读屏线程。
+     */
+    public static synchronized void persistRingToFile(Context ctx) {
+        if (ctx == null) return;
+        try {
+            java.io.File dir = new java.io.File(ctx.getExternalFilesDir(null), "diagnostics");
+            if (!dir.exists()) {
+                //noinspection ResultOfMethodCallIgnored
+                dir.mkdirs();
+            }
+            java.io.File file = new java.io.File(dir, "runtime_log.jsonl");
+            StringBuilder sb = new StringBuilder();
+            for (String line : RING) {
+                sb.append(line).append('\n');
+            }
+            try (java.io.FileWriter writer = new java.io.FileWriter(file, false)) {
+                writer.write(sb.toString());
+                writer.flush();
+            }
+        } catch (Exception ignored) {
+            // 诊断落盘失败不影响业务
         }
     }
 

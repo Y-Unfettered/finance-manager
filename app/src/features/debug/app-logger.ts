@@ -10,6 +10,8 @@
 
 import { defineStore } from 'pinia'
 
+import type { SqliteExecutor } from '@/db/core/types'
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 
 export interface LogEntry {
@@ -109,6 +111,167 @@ function saveConfig(config: LogConfig): void {
   }
 }
 
+// ============================================================
+// SQLite 落盘（PRD 需求三：最近 3 个自然日滚动保留，双闸容量）
+// ============================================================
+
+const LOG_RETENTION_DAYS = 3
+const LOG_DAILY_CAP = 800
+const LOG_BYTE_CAP = 2 * 1024 * 1024
+const LOG_FLUSH_DELAY_MS = 800
+const LOG_DATA_MAX_BYTES = 1024
+
+let logDb: SqliteExecutor | null = null
+let logFlushTimer: number | undefined
+let logFlushing = false
+const logWriteQueue: LogEntry[] = []
+
+function localDayKey(ts: number): string {
+  const d = new Date(ts)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function serializeLogData(data?: Record<string, unknown>): string | null {
+  if (!data) return null
+  let json = JSON.stringify(data)
+  if (json.length > LOG_DATA_MAX_BYTES) {
+    json = `${json.slice(0, LOG_DATA_MAX_BYTES - 24)},"__truncated":true}`
+  }
+  return json
+}
+
+function safeParseLogData(raw: string): Record<string, unknown> | undefined {
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+/** 数据库就绪后调用（main.ts bootstrap）：挂接落盘、启动回灌、切后台强制 flush。 */
+export function attachLogDatabase(executor: SqliteExecutor): void {
+  logDb = executor
+  void hydrateLogsFromDatabase()
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') void flushLogsNow()
+    })
+  }
+}
+
+async function hydrateLogsFromDatabase(): Promise<void> {
+  if (!logDb) return
+  try {
+    const cutoff = Date.now() - (LOG_RETENTION_DAYS - 1) * 86_400_000
+    const rows = await logDb.query<{
+      id: number
+      ts: number
+      level: LogLevel
+      tag: string
+      message: string
+      data_json: string | null
+    }>('SELECT id, ts, level, tag, message, data_json FROM app_logs WHERE ts >= ? ORDER BY ts ASC', [
+      cutoff,
+    ])
+    const store = getStore()
+    if (!store) return
+    const hydrated: LogEntry[] = rows.map((row) => ({
+      id: row.id,
+      timestamp: row.ts,
+      level: row.level,
+      tag: row.tag,
+      message: row.message,
+      data: row.data_json ? safeParseLogData(row.data_json) : undefined,
+    }))
+    if (hydrated.length) {
+      const seen = new Set(store.entries.map((e) => `${e.timestamp}|${e.tag}|${e.message}`))
+      const merged = [
+        ...hydrated.filter((e) => !seen.has(`${e.timestamp}|${e.tag}|${e.message}`)),
+        ...store.entries,
+      ]
+      merged.sort((a, b) => a.timestamp - b.timestamp)
+      store.entries = merged.slice(-store.config.maxEntries)
+      nextLogId = Math.max(nextLogId, ...store.entries.map((e) => e.id + 1))
+    }
+    void pruneLogStore()
+  } catch {
+    // 日志表不可用（migration 未跑完等）不影响内存日志
+  }
+}
+
+/** 淘汰策略：3 天前整日清除 + 当日 debug/info 超 800 条裁剪 + 全局 2MB 最旧天优先裁 debug/info。 */
+async function pruneLogStore(): Promise<void> {
+  if (!logDb) return
+  const days = Array.from({ length: LOG_RETENTION_DAYS }, (_, i) =>
+    localDayKey(Date.now() - i * 86_400_000),
+  )
+  const placeholders = days.map(() => '?').join(',')
+  const today = days[0] ?? ''
+  try {
+    await logDb.executeSet([
+      { statement: `DELETE FROM app_logs WHERE day NOT IN (${placeholders})`, values: days },
+      {
+        statement: `DELETE FROM app_logs WHERE day = ? AND level IN ('debug','info') AND id NOT IN (
+          SELECT id FROM app_logs WHERE day = ? AND level IN ('debug','info') ORDER BY id DESC LIMIT ${LOG_DAILY_CAP})`,
+        values: [today, today],
+      },
+    ])
+    for (let round = 0; round < 3; round += 1) {
+      const sizeRows = await logDb.query<{ total: number | null }>(
+        'SELECT COALESCE(SUM(length(message) + COALESCE(length(data_json), 0)), 0) AS total FROM app_logs',
+      )
+      if ((sizeRows[0]?.total ?? 0) <= LOG_BYTE_CAP) break
+      const oldest = await logDb.query<{ id: number }>(
+        "SELECT id FROM app_logs WHERE level IN ('debug','info') ORDER BY day ASC, id ASC LIMIT 1",
+      )
+      const id = oldest[0]?.id
+      if (!id) break
+      await logDb.executeSet([{ statement: 'DELETE FROM app_logs WHERE id = ?', values: [id] }])
+    }
+  } catch {
+    // 淘汰失败不影响内存日志
+  }
+}
+
+function scheduleLogFlush(): void {
+  if (logFlushTimer !== undefined || !logDb) return
+  logFlushTimer = window.setTimeout(() => {
+    logFlushTimer = undefined
+    void flushLogsNow()
+  }, LOG_FLUSH_DELAY_MS)
+}
+
+async function flushLogsNow(): Promise<void> {
+  if (!logDb || logFlushing || logWriteQueue.length === 0) return
+  logFlushing = true
+  const batch = logWriteQueue.splice(0, logWriteQueue.length)
+  try {
+    for (let i = 0; i < batch.length; i += 40) {
+      const chunk = batch.slice(i, i + 40)
+      await logDb.executeSet(
+        chunk.map((entry) => ({
+          statement:
+            'INSERT INTO app_logs (day, ts, level, tag, message, data_json) VALUES (?, ?, ?, ?, ?, ?)',
+          values: [
+            localDayKey(entry.timestamp),
+            entry.timestamp,
+            entry.level,
+            entry.tag,
+            entry.message,
+            serializeLogData(entry.data),
+          ],
+        })),
+      )
+    }
+  } catch {
+    // 写库失败静默：日志绝不能影响业务
+  } finally {
+    logFlushing = false
+  }
+  void pruneLogStore()
+}
+
 /** 判断某条日志是否应该被记录（基于配置）。 */
 function shouldLog(config: LogConfig, tag: string, level: LogLevel): boolean {
   if (!config.enabled) return false
@@ -131,14 +294,17 @@ export const useAppLogStore = defineStore('app-log', {
     },
   },
   actions: {
-    /** 追加一条日志，超过容量上限时裁剪最旧的记录。 */
+    /** 追加一条日志，超过容量上限时裁剪最旧的记录；同时进入落盘队列（800ms 批量 flush）。 */
     append(level: LogLevel, tag: string, message: string, data?: Record<string, unknown>) {
       if (!shouldLog(this.config, tag, level)) return
-      this.entries.push(makeEntry(level, tag, message, data))
+      const entry = makeEntry(level, tag, message, data)
+      this.entries.push(entry)
       if (this.entries.length > this.config.maxEntries) {
         const over = this.entries.length - this.config.maxEntries
         this.entries.splice(0, over)
       }
+      logWriteQueue.push(entry)
+      scheduleLogFlush()
     },
 
     debug(tag: string, message: string, data?: Record<string, unknown>) {
@@ -156,6 +322,8 @@ export const useAppLogStore = defineStore('app-log', {
 
     clear() {
       this.entries = []
+      logWriteQueue.length = 0
+      if (logDb) void logDb.execute('DELETE FROM app_logs').catch(() => {})
     },
 
     /** 更新日志配置并持久化。 */
@@ -176,12 +344,19 @@ export const useAppLogStore = defineStore('app-log', {
       saveConfig(this.config)
     },
 
-    /** 导出为 JSON 文件，方便发给开发者或本地分析。 */
+    /** 导出为 JSON 文件（结构向后兼容：保留 entries，新增 days 分区）。 */
     exportJson(): string {
+      const days: Record<string, number> = {}
+      for (const entry of this.entries) {
+        const day = localDayKey(entry.timestamp)
+        days[day] = (days[day] ?? 0) + 1
+      }
       return JSON.stringify(
         {
           exportedAt: new Date().toISOString(),
           totalEntries: this.entries.length,
+          retentionDays: LOG_RETENTION_DAYS,
+          days,
           config: this.config,
           entries: this.entries,
         },

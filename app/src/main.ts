@@ -2,7 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
 import App from './App.vue'
-import { installGlobalPinia } from '@/features/debug/app-logger'
+import { attachLogDatabase, installGlobalPinia } from '@/features/debug/app-logger'
 import { initializeFinanceDatabase, requireFinanceDatabase } from './db/bootstrap'
 import { FinanceService, financeServiceKey } from './features/finance/finance-service'
 import { AutoBackupService, autoBackupServiceKey } from './features/backup/auto-backup-service'
@@ -59,6 +59,8 @@ async function bootstrap(): Promise<void> {
       )
     } else if (database.initialized) {
       const db = requireFinanceDatabase()
+      // 诊断日志落库挂接（最近 3 天滚动保留，PRD 需求三）
+      attachLogDatabase(db)
       const preferredLedgerId = localStorage.getItem('finance-manager:selected-ledger')
       const preferredLedger = preferredLedgerId
         ? await new LedgerRepository(db).findById(preferredLedgerId)

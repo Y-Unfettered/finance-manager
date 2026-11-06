@@ -1269,6 +1269,12 @@ public class PaymentCapturePlugin extends Plugin {
             ret.put("message", "诊断日志已导出");
             Log.d(TAG, "exportDiagnosticLog: 已写入 " + file.getAbsolutePath());
 
+            // PRD 需求三 6.2：ring 落盘 + 导出文件按"最近 5 个或 3 天"自动清理（此前只写不删）
+            try {
+                app.financemanager.capture.accessibility.AccessibilityDiagnostics.persistRingToFile(getContext());
+            } catch (Exception ignored) {}
+            cleanupDiagnosticFiles();
+
         } catch (IOException e) {
             Log.e(TAG, "exportDiagnosticLog: 写入文件失败", e);
             ret.put("success", false);
@@ -1279,6 +1285,32 @@ public class PaymentCapturePlugin extends Plugin {
             ret.put("message", "诊断导出失败: " + e.getMessage());
         }
         call.resolve(ret);
+    }
+
+    /**
+     * 诊断导出文件清理（PRD 需求三 6.2）：只保留最近 5 个且最近 3 天内的 diagnostic_*.json。
+     */
+    private void cleanupDiagnosticFiles() {
+        try {
+            File dir = new File(getContext().getExternalFilesDir(null), "diagnostics");
+            File[] files = dir.listFiles((d, name) -> name.startsWith("diagnostic_") && name.endsWith(".json"));
+            if (files == null || files.length == 0) return;
+            long cutoff = System.currentTimeMillis() - 3L * 24 * 60 * 60 * 1000;
+            java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+            int kept = 0;
+            for (File file : files) {
+                if (file.lastModified() < cutoff || kept >= 5) {
+                    //noinspection ResultOfMethodCallIgnored
+                    if (!file.delete()) {
+                        Log.w(TAG, "cleanupDiagnosticFiles: 删除失败 " + file.getName());
+                    }
+                } else {
+                    kept++;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "cleanupDiagnosticFiles: 清理失败", e);
+        }
     }
 
     /**

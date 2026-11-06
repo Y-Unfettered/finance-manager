@@ -8,9 +8,7 @@ import DistributionBars from '@/components/DistributionBars.vue'
 import DistributionDonut from '@/components/DistributionDonut.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import MonthlyBarChart from '@/components/MonthlyBarChart.vue'
-import StatisticsPeriodFilter, {
-  type StatisticsRangePreset,
-} from '@/components/StatisticsPeriodFilter.vue'
+import PeriodWheel, { type StatisticsRangePreset } from '@/components/PeriodWheel.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
 import { useRefreshOnActivated } from '@/composables/useRefreshOnActivated'
 import { useAppStore } from '@/stores/app'
@@ -73,6 +71,11 @@ const range = computed(() =>
     endDate: customEnd.value,
   }),
 )
+/** 有数据的最早年份（滚轮起点用，PRD 需求二 5.2） */
+const minYear = computed(() => {
+  const first = data.value?.monthly[0]?.periodKey
+  return first ? Number(first.slice(0, 4)) : undefined
+})
 const displayedTransactions = computed(() =>
   selectedMonth.value
     ? (data.value?.transactions.filter((item) =>
@@ -127,11 +130,12 @@ useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
       <AppTopBar :title="`分类统计${data ? ` - ${data.name}` : ''}`" @back="router.back()" />
     </div>
     <div class="content">
-      <StatisticsPeriodFilter
+      <PeriodWheel
         v-model:preset="preset"
         v-model:year="year"
         v-model:start-date="customStart"
         v-model:end-date="customEnd"
+        :min-year="minYear"
       />
       <p class="range-label">{{ range.label }}</p>
       <div v-if="loading" class="state">正在统计…</div>

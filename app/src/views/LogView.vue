@@ -75,10 +75,44 @@ const filtered = computed<LogEntry[]>(() => {
     })
 })
 
+function localDayOf(ts: number): string {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function dayLabel(day: string): string {
+  const today = localDayOf(Date.now())
+  if (day === today) return `今天 · ${day}`
+  if (day === localDayOf(Date.now() - 86_400_000)) return `昨天 · ${day}`
+  return day
+}
+
+/** 按日分组（今天/昨天/前天），组头带当日条数与警告/错误数（PRD 需求三 6.2）。 */
+const dayGroups = computed(() => {
+  const groups = new Map<string, LogEntry[]>()
+  for (const entry of filtered.value) {
+    const day = localDayOf(entry.timestamp)
+    const list = groups.get(day) ?? []
+    list.push(entry)
+    groups.set(day, list)
+  }
+  return [...groups.entries()].map(([day, entries]) => ({
+    day,
+    label: dayLabel(day),
+    entries,
+    warnError: entries.filter((e) => e.level === 'warn' || e.level === 'error').length,
+  }))
+})
+
+const retentionNote = computed(() => {
+  const earliest = new Date(Date.now() - 2 * 86_400_000)
+  return `保留最近 3 天 · 共 ${logStore.entries.length} 条 · 最早保留至 ${localDayOf(earliest.getTime())}`
+})
+
 function showClearConfirm(): void {
   const dialog = showConfirmDialog({
     title: '清空日志',
-    message: `确定清空 ${logStore.entries.length} 条日志吗？此操作不可撤销。`,
+    message: `确定清空 ${logStore.entries.length} 条日志吗？只清本机最近 3 天诊断日志，不影响账本数据。`,
   })
   dialog.then(() => {
     logStore.clear()
@@ -89,7 +123,13 @@ function showClearConfirm(): void {
 }
 
 function makeLogFilename(): string {
-  return `app-log-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+  // 文件名含起止日期：app-log-20261104_20261106.json（PRD 需求三 6.2）
+  const entries = filtered.value.length ? filtered.value : logStore.entries
+  const times = entries.map((e) => e.timestamp)
+  const stamp = (ts: number) => localDayOf(ts).replace(/-/g, '')
+  const start = times.length ? stamp(Math.min(...times)) : stamp(Date.now())
+  const end = times.length ? stamp(Math.max(...times)) : start
+  return start === end ? `app-log-${start}.json` : `app-log-${start}_${end}.json`
 }
 
 async function buildExportJson(): Promise<{ json: string; entries: LogEntry[] } | null> {
@@ -109,6 +149,15 @@ async function buildExportJson(): Promise<{ json: string; entries: LogEntry[] } 
 }
 
 async function onExport(): Promise<void> {
+  // 导出前提示（PRD 需求三 6.2）：日志可能含金额/账户名，仅本地文件不上传
+  const confirmed = await showConfirmDialog({
+    title: '导出诊断日志',
+    message:
+      '日志可能包含金额、账户名等业务字段；文件只保存在本机或通过本机分享，不会上传。继续导出？',
+  })
+    .then(() => true)
+    .catch(() => false)
+  if (!confirmed) return
   const result = await buildExportJson()
   if (!result) {
     showToast({ type: 'fail', message: '没有可导出的日志', position: 'bottom', duration: 1000 })
@@ -268,6 +317,7 @@ const LEVEL_META: Record<LogLevel, { label: string; cls: string }> = {
     <div class="content">
       <section>
         <h2>总览</h2>
+        <p class="retention-note">{{ retentionNote }}</p>
         <BaseCard class="overview-card">
           <div class="overview-item">
             <strong>{{ logStore.entries.length }}</strong>
@@ -354,15 +404,25 @@ const LEVEL_META: Record<LogLevel, { label: string; cls: string }> = {
       <section v-else>
         <h2>日志（{{ filtered.length }} 条）</h2>
         <div class="log-list">
-          <div v-for="entry in filtered" :key="entry.id" class="log-entry">
-            <div class="log-entry__head">
-              <span :class="LEVEL_META[entry.level].cls">{{ LEVEL_META[entry.level].label }}</span>
-              <span class="tag-chip" title="分类">{{ entry.tag }}</span>
-              <span class="ts">{{ formatTimestamp(entry.timestamp) }}</span>
+          <template v-for="group in dayGroups" :key="group.day">
+            <div class="log-day">
+              <span>{{ group.label }}</span>
+              <small>
+                {{ group.entries.length }} 条<template v-if="group.warnError">
+                  · {{ group.warnError }} 条警告/错误</template
+                >
+              </small>
             </div>
-            <p class="log-entry__msg">{{ entry.message }}</p>
-            <pre v-if="entry.data && Object.keys(entry.data).length" class="log-entry__data">{{ JSON.stringify(entry.data, null, 2) }}</pre>
-          </div>
+            <div v-for="entry in group.entries" :key="entry.id" class="log-entry">
+              <div class="log-entry__head">
+                <span :class="LEVEL_META[entry.level].cls">{{ LEVEL_META[entry.level].label }}</span>
+                <span class="tag-chip" title="分类">{{ entry.tag }}</span>
+                <span class="ts">{{ formatTimestamp(entry.timestamp) }}</span>
+              </div>
+              <p class="log-entry__msg">{{ entry.message }}</p>
+              <pre v-if="entry.data && Object.keys(entry.data).length" class="log-entry__data">{{ JSON.stringify(entry.data, null, 2) }}</pre>
+            </div>
+          </template>
         </div>
       </section>
 
@@ -575,6 +635,30 @@ section h2 {
 }
 .empty-card small {
   font-size: 13px;
+}
+
+.retention-note {
+  margin: 0;
+  padding: 0 var(--space-1);
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+
+.log-day {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-1) var(--space-1);
+  border-bottom: 1px solid var(--color-divider);
+}
+.log-day span {
+  color: var(--color-text-secondary);
+  font-size: var(--type-label-size);
+  font-weight: 600;
+}
+.log-day small {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
 }
 
 .log-list {
