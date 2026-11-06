@@ -23,6 +23,15 @@ export interface DateRange {
   endUtc: string
   label: string
 }
+/** 归一化后的支出分布切片；"其他"归并项固定最后一位、UI 用中性灰渲染。 */
+export interface DistributionSlice {
+  id: string
+  name: string
+  amountMinor: number
+  /** true = 由小项归并出的"其他" */
+  isOther?: boolean
+}
+
 export interface CategoryStatistics {
   name: string
   incomeMinor: number
@@ -31,7 +40,7 @@ export interface CategoryStatistics {
   transactionCount: number
   averageMinor: number
   monthly: readonly MonthlyFlowRow[]
-  distribution: readonly DistributionRow[]
+  distribution: readonly DistributionSlice[]
   transactions: readonly TransactionSearchResultItem[]
 }
 export interface AccountStatistics {
@@ -42,7 +51,7 @@ export interface AccountStatistics {
   transferRepaymentMinor: number
   transactionCount: number
   monthly: readonly { periodKey: string; inflowMinor: number; outflowMinor: number }[]
-  distribution: readonly DistributionRow[]
+  distribution: readonly DistributionSlice[]
   activities: readonly AccountActivityRecord[]
 }
 export interface AssetTrendPoint {
@@ -51,6 +60,45 @@ export interface AssetTrendPoint {
   liabilitiesMinor: number
   netAssetsMinor: number
   changeMinor: number
+}
+
+export const DISTRIBUTION_OTHER_ID = '__other__'
+const DISTRIBUTION_TOP_N = 8
+const DISTRIBUTION_OTHER_MIN_SHARE = 0.01
+
+/**
+ * 支出分布归一化（账户统计与分类统计共用口径，PRD BUG-04）：
+ * 过滤 0/负值（退款冲抵、纯退款分类）→ 按金额倒序 → 占比 <1% 或超出前 8 的并入"其他"。
+ * 环形图与条形图必须吃同一份输出，保证图例和条目一一对应。
+ */
+export function buildDistribution(
+  rows: readonly DistributionRow[],
+  options: { topN?: number } = {},
+): DistributionSlice[] {
+  const positive = rows
+    .filter((row) => row.amountMinor > 0)
+    .sort((left, right) => right.amountMinor - left.amountMinor)
+  if (!positive.length) return []
+  const total = positive.reduce((sum, row) => sum + row.amountMinor, 0)
+  const kept = positive.filter(
+    (row) => row.amountMinor / total >= DISTRIBUTION_OTHER_MIN_SHARE,
+  )
+  // 全部都 <1%（大量碎片分类）时至少保留最大一项，避免图表整体消失
+  const merged = kept.length ? kept : positive.slice(0, 1)
+  const top = merged.slice(0, options.topN ?? DISTRIBUTION_TOP_N)
+  const restAmount = positive
+    .filter((row) => !top.includes(row))
+    .reduce((sum, row) => sum + row.amountMinor, 0)
+  const slices: DistributionSlice[] = top.map((row) => ({ ...row }))
+  if (restAmount > 0) {
+    slices.push({
+      id: DISTRIBUTION_OTHER_ID,
+      name: '其他',
+      amountMinor: restAmount,
+      isOther: true,
+    })
+  }
+  return slices
 }
 
 export class StatisticsService {
@@ -90,7 +138,7 @@ export class StatisticsService {
         ? Math.round((totals.incomeMinor + totals.expenseMinor) / totals.transactionCount)
         : 0,
       monthly,
-      distribution,
+      distribution: buildDistribution(distribution),
       transactions,
     }
   }
@@ -153,7 +201,9 @@ export class StatisticsService {
       transferRepaymentMinor,
       transactionCount: activities.length,
       monthly: [...monthMap.values()].sort((a, b) => a.periodKey.localeCompare(b.periodKey)),
-      distribution: await this.stats.accountDistribution(accountId, range.startUtc, range.endUtc),
+      distribution: buildDistribution(
+        await this.stats.accountDistribution(accountId, range.startUtc, range.endUtc),
+      ),
       activities,
     }
   }

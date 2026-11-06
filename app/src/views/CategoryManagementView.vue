@@ -9,7 +9,7 @@ import {
   Plus,
   RotateCcw,
 } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
@@ -20,6 +20,7 @@ import BaseCard from '@/components/BaseCard.vue'
 import CategoryIcon from '@/components/CategoryIcon.vue'
 import { useUiPreference } from '@/composables/useUiPreference'
 import type { CategoryDetailRecord } from '@/domain/entities'
+import { getLogger } from '@/features/debug/app-logger'
 import { CATEGORY_ICON_OPTIONS, type CategoryIconSeries } from '@/features/finance/category-icons'
 import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
@@ -44,7 +45,9 @@ const iconSeries = ref<CategoryIconSeries>('outline')
 const customIconInput = ref<HTMLInputElement>()
 const pendingArchive = ref<CategoryDetailRecord | null>(null)
 const showArchiveConfirm = ref(false)
-const archiving = ref(false)
+/** 弹窗打开时快照描述文案，避免确认后 pendingArchive 被清导致文案变空 */
+const archiveDescription = ref('')
+const archiveLog = getLogger('category')
 const form = ref({
   categoryId: '',
   parentId: '',
@@ -170,24 +173,48 @@ async function setArchived(item: CategoryDetailRecord, archived: boolean): Promi
   if (!finance || !appStore.ledgerId) return
   if (archived) {
     pendingArchive.value = item
+    archiveDescription.value = `停用「${item.name}」后不可再选它记账，历史交易仍会保留。`
+    archiveLog.info('停用确认弹窗打开', { categoryId: item.id, name: item.name })
     showArchiveConfirm.value = true
     return
   }
-  await doSetArchived(item, false)
+  try {
+    await doSetArchived(item, false)
+  } catch {
+    // 恢复失败已记录日志；确认弹窗路径的失败由弹窗内红字展示
+  }
+}
+
+/** 由确认弹窗驱动：成功自动关弹窗，失败抛回弹窗展示错误（PRD BUG-01 契约）。 */
+async function confirmArchive(): Promise<void> {
+  const item = pendingArchive.value
+  if (!item) return
+  archiveLog.info('点确认停用', { categoryId: item.id })
+  await doSetArchived(item, true)
 }
 
 async function doSetArchived(item: CategoryDetailRecord, archived: boolean): Promise<void> {
   if (!finance || !appStore.ledgerId) return
-  archiving.value = true
   try {
     if (archived) await finance.archiveCategory(appStore.ledgerId, item.id)
     else await finance.unarchiveCategory(appStore.ledgerId, item.id)
+    archiveLog.info('归档返回成功', { categoryId: item.id })
     await load()
-  } finally {
-    archiving.value = false
-    pendingArchive.value = null
+    archiveLog.info('列表刷新完成', { categoryId: item.id })
+  } catch (cause) {
+    archiveLog.error('归档操作失败', { categoryId: item.id, error: String(cause) })
+    throw cause
   }
 }
+
+// 弹窗关闭后再清空 pendingArchive，避免过渡期间描述文案变空（PRD BUG-01）
+watch(showArchiveConfirm, (show) => {
+  if (show) return
+  archiveLog.info('确认弹窗关闭')
+  window.setTimeout(() => {
+    if (!showArchiveConfirm.value) pendingArchive.value = null
+  }, 220)
+})
 
 async function move(item: CategoryDetailRecord, direction: -1 | 1): Promise<void> {
   if (!finance || !appStore.ledgerId) return
@@ -426,11 +453,10 @@ onMounted(load)
     <AppConfirmPopup
       v-model:show="showArchiveConfirm"
       title="停用该分类？"
-      :description="`停用「${pendingArchive?.name ?? ''}」后不可再选它记账，历史交易仍会保留。`"
+      :description="archiveDescription"
       confirm-text="停用"
       danger
-      :loading="archiving"
-      @confirm="pendingArchive && doSetArchived(pendingArchive, true)"
+      :handler="confirmArchive"
     />
   </main>
 </template>

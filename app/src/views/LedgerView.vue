@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Archive, BookOpen, CheckCircle2, Pencil, Plus, RotateCcw } from '@lucide/vue'
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
@@ -8,6 +8,7 @@ import AppConfirmPopup from '@/components/AppConfirmPopup.vue'
 import AppTopBar from '@/components/AppTopBar.vue'
 import BaseCard from '@/components/BaseCard.vue'
 import type { LedgerSummary } from '@/db/repositories/ledger-repository'
+import { getLogger } from '@/features/debug/app-logger'
 import { useLedgerService } from '@/features/ledger/ledger-service'
 import { useAppStore } from '@/stores/app'
 
@@ -21,7 +22,9 @@ const error = ref('')
 const form = ref({ id: '', name: '' })
 const pendingArchive = ref<LedgerSummary | null>(null)
 const showArchiveConfirm = ref(false)
-const archiving = ref(false)
+/** 弹窗打开时快照描述文案，避免确认后 pendingArchive 被清导致文案变空 */
+const archiveDescription = ref('')
+const ledgerLog = getLogger('ledger')
 
 async function load(): Promise<void> {
   if (!service) return
@@ -72,30 +75,52 @@ async function toggleArchive(ledger: LedgerSummary): Promise<void> {
   if (!service) return
   if (!ledger.archivedAt) {
     pendingArchive.value = ledger
+    archiveDescription.value = `归档「${ledger.name}」后不可再选中记账，数据不会被删除，可随时恢复。`
+    ledgerLog.info('归档确认弹窗打开', { ledgerId: ledger.id, name: ledger.name })
     showArchiveConfirm.value = true
     return
   }
+  try {
+    await doToggleArchive(ledger)
+  } catch {
+    // 恢复失败已写入页面 error 展示；确认弹窗路径的失败由弹窗内红字展示
+  }
+}
+
+/** 由确认弹窗驱动：成功自动关弹窗，失败抛回弹窗展示错误（PRD BUG-01 契约）。 */
+async function confirmArchive(): Promise<void> {
+  const ledger = pendingArchive.value
+  if (!ledger) return
+  ledgerLog.info('点确认归档', { ledgerId: ledger.id })
   await doToggleArchive(ledger)
 }
 
 async function doToggleArchive(ledger: LedgerSummary): Promise<void> {
   if (!service) return
-  archiving.value = true
   error.value = ''
   try {
     await service.setArchived(ledger.id, !ledger.archivedAt)
+    ledgerLog.info(ledger.archivedAt ? '恢复账本完成' : '归档返回成功', { ledgerId: ledger.id })
     if (appStore.ledgerId === ledger.id) {
       const replacement = (await service.list()).find((item) => !item.archivedAt)
       if (replacement) appStore.selectLedger(replacement.id, replacement.name)
     }
     await load()
+    ledgerLog.info('列表刷新完成', { ledgerId: ledger.id })
   } catch (cause) {
     error.value = cause instanceof Error ? cause.message : String(cause)
-  } finally {
-    archiving.value = false
-    pendingArchive.value = null
+    throw cause
   }
 }
+
+// 弹窗关闭后再清空 pendingArchive，避免过渡期间描述文案变空（PRD BUG-01）
+watch(showArchiveConfirm, (show) => {
+  if (show) return
+  ledgerLog.info('确认弹窗关闭')
+  window.setTimeout(() => {
+    if (!showArchiveConfirm.value) pendingArchive.value = null
+  }, 220)
+})
 
 onMounted(load)
 </script>
@@ -152,11 +177,10 @@ onMounted(load)
     <AppConfirmPopup
       v-model:show="showArchiveConfirm"
       title="归档该账本？"
-      :description="`归档「${pendingArchive?.name ?? ''}」后不可再选中记账，数据不会被删除，可随时恢复。`"
+      :description="archiveDescription"
       confirm-text="归档"
       danger
-      :loading="archiving"
-      @confirm="pendingArchive && doToggleArchive(pendingArchive)"
+      :handler="confirmArchive"
     />
   </main>
 </template>

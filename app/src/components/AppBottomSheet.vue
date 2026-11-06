@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { X } from '@lucide/vue'
 import { Popup } from 'vant'
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import 'vant/es/popup/style'
 
+import { usePageScrollLock } from '@/composables/usePageScrollLock'
 import { useRoutePageActive } from '@/composables/routePageActivation'
 
 const props = defineProps<{
@@ -11,12 +12,21 @@ const props = defineProps<{
   title: string
 }>()
 
+const emit = defineEmits<{
+  'update:show': [value: boolean]
+}>()
+
 const pageActive = useRoutePageActive()
 const visible = computed(() => props.show && pageActive.value)
 
-defineEmits<{
-  'update:show': [value: boolean]
-}>()
+// PRD BUG-02：不再用 Vant 的 body 锁（与本应用真实滚动容器不一致，会泄漏），
+// 统一锁 .route-page-frame，引用计数、失活/卸载强制释放
+usePageScrollLock(visible)
+
+// 页面失活时重置 show，避免返回页面后弹层"复活"、滚动锁叠加
+watch(pageActive, (activePage) => {
+  if (!activePage && props.show) emit('update:show', false)
+})
 </script>
 
 <template>
@@ -26,6 +36,7 @@ defineEmits<{
     position="bottom"
     round
     safe-area-inset-bottom
+    :lock-scroll="false"
     class="app-bottom-sheet"
     @update:show="$emit('update:show', $event)"
   >

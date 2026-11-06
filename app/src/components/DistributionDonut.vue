@@ -8,7 +8,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 echarts.use([PieChart, TooltipComponent, CanvasRenderer])
 
 const props = defineProps<{
-  points: readonly { id: string; name: string; amountMinor: number }[]
+  points: readonly { id: string; name: string; amountMinor: number; isOther?: boolean }[]
 }>()
 
 const donutRef = ref<HTMLElement>()
@@ -38,6 +38,12 @@ const resolvedColors = computed(() =>
   }),
 )
 
+/** "其他"归并项用中性灰，与真实分类的固定配色区分（PRD BUG-04）。 */
+function colorFor(point: { isOther?: boolean }, index: number): string {
+  if (point.isOther) return getCssVar('--color-text-tertiary') || '#999999'
+  return resolvedColors.value[index % resolvedColors.value.length] ?? '#999999'
+}
+
 const positivePoints = computed(() => props.points.filter((point) => point.amountMinor > 0))
 const total = computed(() =>
   positivePoints.value.reduce((sum, point) => sum + point.amountMinor, 0),
@@ -51,7 +57,7 @@ function buildOption() {
   const data = positivePoints.value.map((point, index) => ({
     name: point.name,
     value: point.amountMinor / 100,
-    itemStyle: { color: resolvedColors.value[index % resolvedColors.value.length] },
+    itemStyle: { color: colorFor(point, index) },
   }))
 
   return {
@@ -130,7 +136,7 @@ watch(
         :class="{ active: selected?.id === point.id }"
         @click="selectedId = point.id"
       >
-        <i :style="{ background: resolvedColors[index % resolvedColors.length] }" />
+        <i :style="{ background: colorFor(point, index) }" />
         <span>{{ point.name }}</span>
         <strong>{{ ((point.amountMinor / total) * 100).toFixed(1) }}%</strong>
       </button>

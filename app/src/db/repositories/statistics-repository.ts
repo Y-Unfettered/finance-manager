@@ -82,7 +82,10 @@ export class StatisticsRepository extends BaseRepository {
       JOIN entries AS category_entry ON category_entry.transaction_id=transactions.id AND category_entry.category_id IS NOT NULL
       JOIN categories ON categories.id=category_entry.category_id LEFT JOIN categories AS parent ON parent.id=categories.parent_id
       WHERE transactions.status='posted' AND transactions.occurred_at>=? AND transactions.occurred_at<?
-      GROUP BY COALESCE(parent.id,categories.id),COALESCE(parent.name,categories.name) ORDER BY amountMinor DESC`,
+      GROUP BY COALESCE(parent.id,categories.id),COALESCE(parent.name,categories.name)
+      HAVING COALESCE(SUM(CASE WHEN transactions.type IN ('expense','credit_purchase') THEN transactions.amount_minor
+        WHEN transactions.type='refund' THEN -transactions.amount_minor ELSE 0 END),0) > 0
+      ORDER BY amountMinor DESC`,
       [accountId, startUtc, endUtc],
     )
   }

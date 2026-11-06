@@ -14,7 +14,7 @@ import {
   Scan,
   ScrollText,
 } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppSelect from '@/components/AppSelect.vue'
@@ -48,6 +48,33 @@ const preferences = ref<HomePreferences>({
   colorTheme: 'green',
 })
 const saving = ref(false)
+
+/** 滚动锁取证（临时，PRD BUG-02）：实时展示 body/frame 滚动状态，复现"取消后无法滚动"时看这里。 */
+const scrollDiagnosticsText = ref('')
+let scrollDiagnosticsTimer = 0
+
+function updateScrollDiagnostics(): void {
+  const body = document.body
+  const frame = document.querySelector<HTMLElement>('.route-page-frame')
+  const htmlOverflow = getComputedStyle(document.documentElement).overflow
+  scrollDiagnosticsText.value = [
+    `body.className: ${body.className || '(空)'}`,
+    `body.style.overflow: ${body.style.overflow || '(空)'}`,
+    `html computed overflow: ${htmlOverflow}`,
+    frame
+      ? `frame scrollTop/scrollHeight/clientHeight: ${frame.scrollTop} / ${frame.scrollHeight} / ${frame.clientHeight}`
+      : 'frame: 未找到 .route-page-frame',
+  ].join('\n')
+}
+
+onMounted(() => {
+  updateScrollDiagnostics()
+  scrollDiagnosticsTimer = window.setInterval(updateScrollDiagnostics, 800)
+})
+
+onBeforeUnmount(() => {
+  window.clearInterval(scrollDiagnosticsTimer)
+})
 
 const displayTypeOptions = [
   { value: 'income_expense', label: '收入与支出' },
@@ -315,6 +342,12 @@ onMounted(async () => {
             <ChevronRight :size="19" />
           </button>
         </BaseCard>
+        <BaseCard class="settings-card scroll-diagnostics">
+          <details>
+            <summary>滚动锁取证（临时）</summary>
+            <pre>{{ scrollDiagnosticsText }}</pre>
+          </details>
+        </BaseCard>
       </section>
       <p class="privacy-note">账本数据默认仅保存在本机，请定期创建备份。</p>
     </div>
@@ -401,6 +434,20 @@ h2 {
   color: var(--color-warning);
   font-size: var(--type-caption-size);
   line-height: var(--type-caption-line);
+}
+.scroll-diagnostics summary {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.scroll-diagnostics pre {
+  margin: var(--space-2) 0 0;
+  overflow-x: auto;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 .reader-entry {
   margin-top: var(--space-2);

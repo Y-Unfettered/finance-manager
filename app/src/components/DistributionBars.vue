@@ -7,7 +7,7 @@ import { CanvasRenderer } from 'echarts/renderers'
 echarts.use([BarChart, CanvasRenderer])
 
 const props = defineProps<{
-  items: readonly { id: string; name: string; amountMinor: number }[]
+  items: readonly { id: string; name: string; amountMinor: number; isOther?: boolean }[]
 }>()
 
 const chartRef = ref<HTMLElement>()
@@ -32,7 +32,8 @@ function buildOption() {
   const maxVal = Math.max(1, ...values.map((v) => Math.abs(v)))
 
   return {
-    grid: { left: 0, right: 50, top: 4, bottom: 4, containLabel: false },
+    // containLabel:true 给类目轴标签让位，否则标签画在画布外被裁掉（PRD BUG-03）
+    grid: { left: 8, right: 64, top: 4, bottom: 4, containLabel: true },
     xAxis: {
       type: 'value',
       show: false,
@@ -60,7 +61,11 @@ function buildOption() {
         data: sortedItems.value.map((item) => ({
           value: Number((item.amountMinor / 100).toFixed(2)),
           itemStyle: {
-            color: item.amountMinor < 0 ? expenseColor : primaryColor,
+            color: item.isOther
+              ? tertiaryColor
+              : item.amountMinor < 0
+                ? expenseColor
+                : primaryColor,
             borderRadius: [0, 6, 6, 0],
           },
         })),
@@ -70,7 +75,10 @@ function buildOption() {
           position: 'right',
           formatter: (params: unknown) => {
             const p = params as { value: number }
-            return `¥${p.value.toFixed(2)}`
+            return `¥${p.value.toLocaleString('zh-CN', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}`
           },
           color: tertiaryColor,
           fontSize: 11,
@@ -109,8 +117,9 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 <template>
   <div v-if="sortedItems.length" class="distribution-bars">
     <div ref="chartRef" class="bar-chart" />
+    <p class="bars-caption">支出 = 消费 − 退款，不含转账/还款</p>
   </div>
-  <p v-else class="empty-hint">暂无支出数据</p>
+  <p v-else class="empty-hint">该区间无支出</p>
 </template>
 
 <style scoped>
@@ -128,5 +137,12 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
   color: var(--color-text-tertiary);
   text-align: center;
   padding: var(--space-3);
+}
+
+.bars-caption {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  text-align: center;
 }
 </style>
