@@ -1,5 +1,6 @@
 import type { CategoryPostingRef } from '@/domain/accounting'
 import type { CategoryDetailRecord, CategoryRecord } from '@/domain/entities'
+import { normalizeCategoryColor } from '@/features/finance/category-color'
 
 import { BaseRepository } from './base-repository'
 
@@ -103,7 +104,8 @@ export class CategoryRepository extends BaseRepository {
       parentId: row.parentId ?? undefined,
       archivedAt: row.archivedAt ?? undefined,
       iconKey: row.iconKey ?? undefined,
-      color: row.color ?? undefined,
+      // 历史数据可能是 hex：读取时统一归一化为色槽名（PRD 需求一 4.5 兼容策略）
+      color: row.color ? normalizeCategoryColor(row.color) : undefined,
     }))
   }
 

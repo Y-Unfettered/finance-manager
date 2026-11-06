@@ -1399,7 +1399,7 @@ onUnmounted(() => {
             >
               <CategoryIcon
                 :icon-key="cat.iconKey"
-                :color="selectedRootId === cat.id ? 'var(--color-primary-500)' : 'var(--color-text-tertiary)'"
+                :color="selectedRootId === cat.id ? (cat.color ?? 'cat-1') : 'var(--color-text-tertiary)'"
                 :size="32"
                 :label="cat.name"
               />

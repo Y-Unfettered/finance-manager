@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
+import {
+  CATEGORY_COLOR_SLOTS,
+  categoryColorVar,
+  normalizeCategoryColor,
+} from '@/features/finance/category-color'
 import {
   Archive,
   ArrowDown,
   ArrowUp,
+  Check,
   ChevronDown,
   ChevronRight,
   ImagePlus,
@@ -22,7 +27,11 @@ import CategoryIcon from '@/components/CategoryIcon.vue'
 import { useUiPreference } from '@/composables/useUiPreference'
 import type { CategoryDetailRecord } from '@/domain/entities'
 import { getLogger } from '@/features/debug/app-logger'
-import { CATEGORY_ICON_OPTIONS, type CategoryIconSeries } from '@/features/finance/category-icons'
+import {
+  CATEGORY_ICON_GROUPS,
+  CATEGORY_ICON_OPTIONS,
+  type CategoryIconSeries,
+} from '@/features/finance/category-icons'
 import { useFinanceService } from '@/features/finance/finance-service'
 import { useAppStore } from '@/stores/app'
 import { showAppFailToast } from '@/utils/app-toast'
@@ -55,9 +64,8 @@ const form = ref({
   parentId: '',
   name: '',
   iconKey: 'utensils',
-  color: THEME_COLOR_FALLBACKS.blue,
+  color: 'cat-1',
 })
-
 const roots = computed(() =>
   categories.value.filter(
     (item) =>
@@ -87,6 +95,57 @@ const filteredIcons = computed(() => {
   )
 })
 
+const RECENT_ICONS_STORAGE_KEY = 'category-icon-recent'
+const recentIconKeys = ref<string[]>(loadRecentIconKeys())
+
+function loadRecentIconKeys(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_ICONS_STORAGE_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string').slice(0, 8)
+      : []
+  } catch {
+    return []
+  }
+}
+
+function rememberIconUsage(key: string): void {
+  recentIconKeys.value = [key, ...recentIconKeys.value.filter((item) => item !== key)].slice(0, 8)
+  try {
+    localStorage.setItem(RECENT_ICONS_STORAGE_KEY, JSON.stringify(recentIconKeys.value))
+  } catch {
+    // 忽略存储失败
+  }
+}
+
+/** 最近使用（按当前系列解析出具体图标，存的是基础 key 不带 filled: 前缀）。 */
+const recentIcons = computed(() => {
+  if (iconQuery.value.trim()) return []
+  return recentIconKeys.value
+    .map((base) =>
+      CATEGORY_ICON_OPTIONS.find(
+        (icon) => icon.key === (iconSeries.value === 'filled' ? `filled:${base}` : base),
+      ),
+    )
+    .filter((icon) => icon !== undefined)
+})
+
+/** 分组后的选择器数据：搜索时给单一"搜索结果"组，否则按语义分桶（PRD 4.4）。 */
+const iconGroups = computed(() => {
+  const icons = filteredIcons.value
+  if (iconQuery.value.trim()) return [{ title: '搜索结果', icons }]
+  return CATEGORY_ICON_GROUPS.map((group) => ({
+    title: group.title,
+    icons: icons.filter((icon) => group.keys.includes(icon.key)),
+  })).filter((group) => group.icons.length > 0)
+})
+
+function chooseIcon(key: string): void {
+  form.value.iconKey = key
+  rememberIconUsage(key.replace(/^filled:/, ''))
+}
+
 async function load(): Promise<void> {
   if (finance && appStore.ledgerId)
     categories.value = await finance.listCategories(appStore.ledgerId)
@@ -104,7 +163,7 @@ function openCreate(parentId = ''): void {
     parentId,
     name: '',
     iconKey: 'circle-ellipsis',
-    color: THEME_COLOR_FALLBACKS.blue,
+    color: 'cat-1',
   }
   iconQuery.value = ''
   iconSeries.value = 'outline'
@@ -119,7 +178,7 @@ function openEdit(item: CategoryDetailRecord): void {
     parentId: item.parentId ?? '',
     name: item.name,
     iconKey: item.iconKey ?? 'circle-ellipsis',
-    color: item.color ?? THEME_COLOR_FALLBACKS.blue,
+    color: normalizeCategoryColor(item.color),
   }
   iconQuery.value = ''
   iconSeries.value = form.value.iconKey.startsWith('filled:') ? 'filled' : 'outline'
@@ -432,21 +491,72 @@ onMounted(load)
             :disabled="busy"
             placeholder="搜索餐饮、交通、购物…"
         /></label>
-        <div class="icon-picker">
-          <button
-            v-for="icon in filteredIcons"
-            :key="icon.key"
-            type="button"
-            :disabled="busy"
-            :class="{ active: form.iconKey === icon.key }"
-            :aria-label="icon.label"
-            @click="form.iconKey = icon.key"
-          >
-            <CategoryIcon :icon-key="icon.key" :color="form.color" :size="36" />
-            <small>{{ icon.label }}</small>
-          </button>
+        <div class="icon-scroll">
+          <div v-if="recentIcons.length" class="icon-group">
+            <small class="icon-group__title">最近使用</small>
+            <div class="icon-picker">
+              <button
+                v-for="icon in recentIcons"
+                :key="icon.key"
+                type="button"
+                :disabled="busy"
+                :class="{ active: form.iconKey === icon.key }"
+                :aria-label="icon.label"
+                @click="chooseIcon(icon.key)"
+              >
+                <CategoryIcon :icon-key="icon.key" :color="form.color" :size="36" />
+                <small>{{ icon.label }}</small>
+              </button>
+            </div>
+          </div>
+          <div v-for="group in iconGroups" :key="group.title" class="icon-group">
+            <small class="icon-group__title">{{ group.title }}</small>
+            <div class="icon-picker">
+              <button
+                v-for="icon in group.icons"
+                :key="icon.key"
+                type="button"
+                :disabled="busy"
+                :class="{ active: form.iconKey === icon.key }"
+                :aria-label="icon.label"
+                @click="chooseIcon(icon.key)"
+              >
+                <CategoryIcon :icon-key="icon.key" :color="form.color" :size="36" />
+                <small>{{ icon.label }}</small>
+              </button>
+            </div>
+          </div>
+          <p v-if="!iconGroups.length" class="icon-empty">
+            没有匹配的图标；可点击上方"上传自定义图标"。
+          </p>
         </div>
-        <label><span>颜色</span><input v-model="form.color" type="color" /></label>
+        <div class="color-field">
+          <span>颜色</span>
+          <div class="color-slots" role="radiogroup" aria-label="分类颜色">
+            <button
+              v-for="slot in CATEGORY_COLOR_SLOTS"
+              :key="slot"
+              type="button"
+              class="color-slot"
+              :class="{ active: form.color === slot }"
+              :style="{ background: categoryColorVar(slot) }"
+              role="radio"
+              :aria-checked="form.color === slot"
+              :aria-label="`色槽 ${slot}`"
+              :disabled="busy"
+              @click="form.color = slot"
+            >
+              <Check
+                v-if="form.color === slot"
+                :size="18"
+                stroke-width="3"
+                aria-hidden="true"
+                class="color-slot__check"
+              />
+            </button>
+          </div>
+          <small class="color-hint">跟随主题色，切换主题会自动适配</small>
+        </div>
         <p v-if="error" class="error">{{ error }}</p>
         <button class="save-button" type="submit" :disabled="busy">
           {{ preparingIcon ? '处理图片…' : saving ? '保存中…' : '保存' }}
@@ -676,12 +786,58 @@ onMounted(load)
   color: white;
   background: var(--color-primary-600);
 }
+.icon-scroll {
+  display: grid;
+  max-height: 300px;
+  overflow-y: auto;
+  gap: var(--space-3);
+}
+.icon-group {
+  display: grid;
+  gap: var(--space-2);
+}
+.icon-group__title {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
+.icon-empty {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+}
 .icon-picker {
   display: grid;
-  max-height: 246px;
-  overflow-y: auto;
   grid-template-columns: repeat(5, 1fr);
   gap: var(--space-2);
+}
+.color-field {
+  display: grid;
+  gap: var(--space-2);
+}
+.color-slots {
+  display: grid;
+  grid-template-columns: repeat(4, 44px);
+  gap: var(--space-2);
+}
+.color-slot {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 2px solid var(--color-surface);
+  box-shadow: 0 0 0 1px var(--color-divider);
+  border-radius: 50%;
+}
+.color-slot.active {
+  border-color: var(--color-text-primary);
+}
+.color-slot__check {
+  color: #ffffff;
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 45%));
+}
+.color-hint {
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
 }
 .icon-picker button {
   display: grid;

@@ -4,6 +4,7 @@ import type {
   AccountActivityRecord,
   TransactionSearchResultItem,
 } from '@/db/repositories/transaction-repository'
+import { normalizeCategoryColor } from '@/features/finance/category-color'
 import { AccountRepository } from '@/db/repositories/account-repository'
 import { CategoryRepository } from '@/db/repositories/category-repository'
 import {
@@ -28,6 +29,8 @@ export interface DistributionSlice {
   id: string
   name: string
   amountMinor: number
+  /** 分类色（槽名 cat-N），渲染端解析为当前主题 token */
+  color?: string
   /** true = 由小项归并出的"其他" */
   isOther?: boolean
 }
@@ -138,9 +141,30 @@ export class StatisticsService {
         ? Math.round((totals.incomeMinor + totals.expenseMinor) / totals.transactionCount)
         : 0,
       monthly,
-      distribution: buildDistribution(distribution),
+      distribution: await this.withDistributionColors(
+        category.ledgerId,
+        buildDistribution(distribution),
+      ),
       transactions,
     }
+  }
+
+  /** 分类 id → 色槽（仅含有颜色偏好的分类），保证统计图与分类管理页同色（PRD 需求一 4.5）。 */
+  private async categoryColorMap(ledgerId: string): Promise<Map<string, string>> {
+    const details = await this.categories.listDetailsByLedger(ledgerId)
+    return new Map(
+      details
+        .filter((detail) => detail.color)
+        .map((detail) => [detail.id, normalizeCategoryColor(detail.color)]),
+    )
+  }
+
+  private async withDistributionColors(
+    ledgerId: string,
+    slices: readonly DistributionSlice[],
+  ): Promise<DistributionSlice[]> {
+    const colorMap = await this.categoryColorMap(ledgerId)
+    return slices.map((slice) => ({ ...slice, color: colorMap.get(slice.id) }))
   }
   async account(accountId: string, range: DateRange): Promise<AccountStatistics> {
     const account = await this.accounts.findBalance(accountId)
@@ -201,8 +225,11 @@ export class StatisticsService {
       transferRepaymentMinor,
       transactionCount: activities.length,
       monthly: [...monthMap.values()].sort((a, b) => a.periodKey.localeCompare(b.periodKey)),
-      distribution: buildDistribution(
-        await this.stats.accountDistribution(accountId, range.startUtc, range.endUtc),
+      distribution: await this.withDistributionColors(
+        account.ledgerId,
+        buildDistribution(
+          await this.stats.accountDistribution(accountId, range.startUtc, range.endUtc),
+        ),
       ),
       activities,
     }

@@ -63,6 +63,15 @@
   --color-success-600: #1d6b50;
   --color-primary-200: #b9e2d9;
   --color-primary-400: #52a292;
+  /* 分类语义色槽（PRD 需求一 4.5）：cat-1 主题主色 / 2 蓝 / 3 金 / 4 珊瑚 / 5 紫 / 6 青 / 7 灰 / 8 棕 */
+  --color-cat-1: #2a806f;
+  --color-cat-2: #4778ad;
+  --color-cat-3: #d8a248;
+  --color-cat-4: #d45f5a;
+  --color-cat-5: #8a73bd;
+  --color-cat-6: #55a6a6;
+  --color-cat-7: #8a939b;
+  --color-cat-8: #a8763e;
 
   /* 语义别名：历史代码引用的基础名，统一指向具体 token（勿在新代码中使用） */
   --color-primary: var(--color-primary-600);
@@ -130,6 +139,7 @@
   --color-primary-600: #376fae;
   --color-primary-500: #5b8def;
   --color-primary-200: #c5def8;
+  --color-cat-1: #376fae;
   --color-primary-100: #dce8f7;
   --color-primary-50: #eff5fc;
   --color-primary-rgb: 55 111 174;
@@ -151,6 +161,14 @@
   --color-primary-50: #18322d;
   --color-primary-100: #21483f;
   --color-primary-200: #2c584e;
+  --color-cat-1: #4cae97;
+  --color-cat-2: #6f9bd1;
+  --color-cat-3: #e0b45c;
+  --color-cat-4: #e5837e;
+  --color-cat-5: #a48fd1;
+  --color-cat-6: #63bdbd;
+  --color-cat-7: #8a959d;
+  --color-cat-8: #c08a54;
   --color-warning-50: #3a2d15;
   --color-warning-100: #54421e;
   --color-warning-600: #e3aa51;
@@ -172,6 +190,14 @@
   --color-primary-50: #1c3048;
   --color-primary-100: #274566;
   --color-primary-200: #2d4a66;
+  --color-cat-1: #6f9fe8;
+  --color-cat-2: #6f9bd1;
+  --color-cat-3: #e0b45c;
+  --color-cat-4: #e5837e;
+  --color-cat-5: #a48fd1;
+  --color-cat-6: #63bdbd;
+  --color-cat-7: #8a959d;
+  --color-cat-8: #c08a54;
   --color-warning-50: #3a2d15;
   --color-warning-100: #54421e;
   --color-warning-600: #e3aa51;
@@ -195,6 +221,14 @@
     --color-primary-50: #18322d;
     --color-primary-100: #21483f;
     --color-primary-200: #2c584e;
+    --color-cat-1: #4cae97;
+    --color-cat-2: #6f9bd1;
+    --color-cat-3: #e0b45c;
+    --color-cat-4: #e5837e;
+    --color-cat-5: #a48fd1;
+    --color-cat-6: #63bdbd;
+    --color-cat-7: #8a959d;
+    --color-cat-8: #c08a54;
     --color-warning-50: #3a2d15;
     --color-warning-100: #54421e;
     --color-warning-600: #e3aa51;
@@ -217,6 +251,14 @@
     --color-primary-50: #1c3048;
     --color-primary-100: #274566;
     --color-primary-200: #2d4a66;
+    --color-cat-1: #6f9fe8;
+    --color-cat-2: #6f9bd1;
+    --color-cat-3: #e0b45c;
+    --color-cat-4: #e5837e;
+    --color-cat-5: #a48fd1;
+    --color-cat-6: #63bdbd;
+    --color-cat-7: #8a959d;
+    --color-cat-8: #c08a54;
     --color-warning-50: #3a2d15;
     --color-warning-100: #54421e;
     --color-warning-600: #e3aa51;

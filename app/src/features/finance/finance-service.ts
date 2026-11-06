@@ -476,8 +476,15 @@ export class FinanceService implements FinanceServicePort {
 
   async listExpenseCategories(ledgerId: string): Promise<ExpenseCategoryOption[]> {
     const categories = await this.categories.listDetailsByLedger(ledgerId)
+    const archivedIds = new Set(categories.filter((item) => item.archivedAt).map((item) => item.id))
+    // 一级停用时其二级一并不可选（PRD 需求一 4.6）
     return categories
-      .filter((category) => category.kind === 'expense' && !category.archivedAt)
+      .filter(
+        (category) =>
+          category.kind === 'expense' &&
+          !category.archivedAt &&
+          !(category.parentId && archivedIds.has(category.parentId)),
+      )
       .map(({ id, kind, name, parentId, iconKey, color }) => ({
         id,
         kind,
@@ -490,8 +497,15 @@ export class FinanceService implements FinanceServicePort {
 
   async listIncomeCategories(ledgerId: string): Promise<IncomeCategoryOption[]> {
     const categories = await this.categories.listDetailsByLedger(ledgerId)
+    const archivedIds = new Set(categories.filter((item) => item.archivedAt).map((item) => item.id))
+    // 一级停用时其二级一并不可选（PRD 需求一 4.6）
     return categories
-      .filter((category) => category.kind === 'income' && !category.archivedAt)
+      .filter(
+        (category) =>
+          category.kind === 'income' &&
+          !category.archivedAt &&
+          !(category.parentId && archivedIds.has(category.parentId)),
+      )
       .map(({ id, kind, name, parentId, iconKey, color }) => ({
         id,
         kind,

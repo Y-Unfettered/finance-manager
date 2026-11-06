@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+
+import { resolveCategoryColor } from '@/features/finance/category-color'
 import * as echarts from 'echarts/core'
 import { PieChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
@@ -9,7 +11,13 @@ import { CanvasRenderer } from 'echarts/renderers'
 echarts.use([PieChart, TooltipComponent, CanvasRenderer])
 
 const props = defineProps<{
-  points: readonly { id: string; name: string; amountMinor: number; isOther?: boolean }[]
+  points: readonly {
+    id: string
+    name: string
+    amountMinor: number
+    color?: string
+    isOther?: boolean
+  }[]
 }>()
 
 const donutRef = ref<HTMLElement>()
@@ -40,8 +48,9 @@ const resolvedColors = computed(() =>
 )
 
 /** "其他"归并项用中性灰，与真实分类的固定配色区分（PRD BUG-04）。 */
-function colorFor(point: { isOther?: boolean }, index: number): string {
+function colorFor(point: { color?: string; isOther?: boolean }, index: number): string {
   if (point.isOther) return getCssVar('--color-text-tertiary') || THEME_COLOR_FALLBACKS.gray
+  if (point.color) return resolveCategoryColor(point.color)
   return resolvedColors.value[index % resolvedColors.value.length] ?? THEME_COLOR_FALLBACKS.gray
 }
 

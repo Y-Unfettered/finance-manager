@@ -1,17 +1,18 @@
 <script setup lang="ts">
-import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { computed } from 'vue'
 
+import { categoryColorVar } from '@/features/finance/category-color'
 import { findCategoryIcon } from '@/features/finance/category-icons'
 
 const props = withDefaults(
   defineProps<{
     iconKey?: string
+    /** 槽名（cat-1..8）/ 历史 hex / CSS 颜色；空值落默认槽 */
     color?: string
     size?: number
     label?: string
   }>(),
-  { iconKey: 'circle-ellipsis', color: THEME_COLOR_FALLBACKS.blue, size: 42, label: '分类' },
+  { iconKey: 'circle-ellipsis', color: '', size: 42, label: '分类' },
 )
 
 const icon = computed(() => findCategoryIcon(props.iconKey))
@@ -19,17 +20,18 @@ const customIconDataUri = computed(() => {
   const iconKey = props.iconKey.trim()
   return /^data:image\/(?:png|jpeg|webp);base64,/i.test(iconKey) ? iconKey : ''
 })
+const displayColor = computed(() => categoryColorVar(props.color))
 const background = computed(() =>
-  props.color.startsWith('#')
-    ? `${props.color}1f`
-    : `color-mix(in srgb, ${props.color} 12%, transparent)`,
+  displayColor.value.startsWith('#')
+    ? `${displayColor.value}1f`
+    : `color-mix(in srgb, ${displayColor.value} 12%, transparent)`,
 )
 </script>
 
 <template>
   <span
     class="category-icon"
-    :style="{ width: `${size}px`, height: `${size}px`, color, backgroundColor: background }"
+    :style="{ width: `${size}px`, height: `${size}px`, color: displayColor, backgroundColor: background }"
     role="img"
     :aria-label="label"
   >

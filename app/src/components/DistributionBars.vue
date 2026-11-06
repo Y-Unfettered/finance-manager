@@ -5,10 +5,18 @@ import * as echarts from 'echarts/core'
 import { BarChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 
+import { resolveCategoryColor } from '@/features/finance/category-color'
+
 echarts.use([BarChart, CanvasRenderer])
 
 const props = defineProps<{
-  items: readonly { id: string; name: string; amountMinor: number; isOther?: boolean }[]
+  items: readonly {
+    id: string
+    name: string
+    amountMinor: number
+    color?: string
+    isOther?: boolean
+  }[]
 }>()
 
 const chartRef = ref<HTMLElement>()
@@ -25,8 +33,8 @@ const sortedItems = computed(() =>
 function buildOption() {
   const primaryColor = getCssVar('--color-primary-500') || THEME_COLOR_FALLBACKS.primary500
   const expenseColor = getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense
-  const textColor = getCssVar('--color-text-secondary') || '#666'
-  const tertiaryColor = getCssVar('--color-text-tertiary') || '#999'
+  const textColor = getCssVar('--color-text-secondary') || THEME_COLOR_FALLBACKS.textSecondary
+  const tertiaryColor = getCssVar('--color-text-tertiary') || THEME_COLOR_FALLBACKS.textTertiary
 
   const names = sortedItems.value.map((item) => item.name)
   const values = sortedItems.value.map((item) => Number((item.amountMinor / 100).toFixed(2)))
@@ -64,9 +72,11 @@ function buildOption() {
           itemStyle: {
             color: item.isOther
               ? tertiaryColor
-              : item.amountMinor < 0
-                ? expenseColor
-                : primaryColor,
+              : item.color
+                ? resolveCategoryColor(item.color)
+                : item.amountMinor < 0
+                  ? expenseColor
+                  : primaryColor,
             borderRadius: [0, 6, 6, 0],
           },
         })),
