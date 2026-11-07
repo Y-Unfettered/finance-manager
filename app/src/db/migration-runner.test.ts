@@ -15,7 +15,7 @@ describe('database migrations', () => {
     const executor = new NodeSqliteExecutor()
 
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
     ])
     await expect(runMigrations(executor, undefined, now)).resolves.toEqual([])
 
@@ -73,6 +73,7 @@ describe('database migrations', () => {
       { version: 16 },
       { version: 17 },
       { version: 18 },
+      { version: 19 },
     ])
   })
 
@@ -120,7 +121,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '原有账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '原有账本' },
     ])
@@ -143,7 +144,7 @@ describe('database migrations', () => {
       `INSERT INTO ledgers VALUES ('ledger', '升级账本', 'CNY', 1, '${now()}', '${now()}');`,
     )
 
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
     expect(await executor.query<{ name: string }>('SELECT name FROM ledgers')).toEqual([
       { name: '升级账本' },
     ])
@@ -228,7 +229,7 @@ describe('database migrations', () => {
     )
 
     // 升级到 v5/v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
 
     // 旧数据保留
     const rows = await executor.query<{ id: string; source: string; record_count: number }>(
@@ -299,7 +300,7 @@ describe('database migrations', () => {
     `)
 
     // 升级到 v6/v7/v8
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])
 
     // 旧数据保留
     const tx = await executor.query<{ id: string; type: string }>(
@@ -428,7 +429,7 @@ describe('database migrations', () => {
     `)
 
     // 跑 v12：旧账户补齐 ID，新账户不变
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12, 13, 14, 15, 16, 17, 18])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12, 13, 14, 15, 16, 17, 18, 19])
 
     // 新账户保持原 ID
     const bankRow = await executor.query<{ id: string }>(
@@ -491,7 +492,7 @@ describe('database migrations', () => {
     `)
 
     // 跑 v12：已有 account_ 前缀的账户应该保持不变
-    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12, 13, 14, 15, 16, 17, 18])
+    await expect(runMigrations(executor, undefined, now)).resolves.toEqual([12, 13, 14, 15, 16, 17, 18, 19])
     expect(await executor.query<{ id: string }>('SELECT id FROM accounts')).toEqual([
       { id: 'account_abc' },
     ])

@@ -43,8 +43,9 @@ const CAPSULES: readonly { value: StatisticsRangePreset; label: string }[] = [
 const currentYear = new Date().getFullYear()
 
 const years = computed(() => {
-  // 年份范围 = min(最早一笔交易年份, 今年-1) → 今年；无数据年份保留（选中后显示空状态）
-  const floor = Math.min(props.minYear ?? currentYear, currentYear - 1)
+  // 至少铺满 6 年（今年-5 起，回测反馈：只有两项时滚轮太空）；
+  // 有更早数据时从最早年份铺起；无数据年份保留（选中后显示空状态）
+  const floor = Math.min(props.minYear ?? currentYear - 5, currentYear - 5)
   const start = Math.max(2000, Math.min(floor, currentYear))
   const list: number[] = []
   for (let y = start; y <= currentYear; y += 1) list.push(y)
@@ -62,12 +63,14 @@ function scrollToYear(target: number, smooth: boolean): void {
   const index = years.value.indexOf(target)
   const item = index >= 0 ? (el.children[index] as HTMLElement | undefined) : undefined
   if (!item) return
-  const left = item.offsetLeft + item.offsetWidth / 2 - el.clientWidth / 2
-  if (!smooth) {
-    el.scrollLeft = left
-    return
-  }
-  el.scrollTo({ left, behavior: 'smooth' })
+  const max = el.scrollWidth - el.clientWidth
+  const left = Math.max(0, Math.min(item.offsetLeft + item.offsetWidth / 2 - el.clientWidth / 2, max))
+  // 定位（非平滑）时必须绕过容器的 scroll-behavior:smooth：
+  // 平滑动画会被路由过渡打断、停在半路（回测：选中年份未居中）
+  const prev = el.style.scrollBehavior
+  el.style.scrollBehavior = smooth ? 'smooth' : 'auto'
+  el.scrollTo({ left, behavior: smooth ? 'smooth' : 'auto' })
+  el.style.scrollBehavior = prev
 }
 
 function onWheelScroll(): void {
@@ -117,8 +120,16 @@ watch(
   (year) => void nextTick(() => scrollToYear(year, false)),
 )
 
-onMounted(() => {
+// 年份列表变化（数据加载后最早年份变化）时重新居中
+watch(years, () => {
   void nextTick(() => scrollToYear(props.year, false))
+})
+
+onMounted(() => {
+  // 双 rAF 确保路由过渡/字体加载后布局稳定再定位
+  void nextTick(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollToYear(props.year, false)))
+  })
 })
 </script>
 

@@ -39,7 +39,7 @@ function buildOption() {
   )
 
   return {
-    grid: { left: 0, right: 0, top: 8, bottom: 22, containLabel: false },
+    grid: { left: 0, right: 0, top: 14, bottom: 22, containLabel: false },
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -66,7 +66,7 @@ function buildOption() {
         type: 'bar',
         data: incomeData,
         itemStyle: { color: incomeColor, borderRadius: [4, 4, 0, 0] },
-        barMaxWidth: 20,
+        barMaxWidth: 12,
         barGap: '20%',
       },
       {
@@ -74,7 +74,7 @@ function buildOption() {
         type: 'bar',
         data: expenseData,
         itemStyle: { color: expenseColor, borderRadius: [4, 4, 0, 0] },
-        barMaxWidth: 20,
+        barMaxWidth: 12,
       },
     ],
   }
@@ -119,6 +119,6 @@ watch(() => props.points, () => nextTick(renderChart), { deep: true })
 <style scoped>
 .monthly-chart {
   width: 100%;
-  height: 132px;
+  height: 140px;
 }
 </style>
