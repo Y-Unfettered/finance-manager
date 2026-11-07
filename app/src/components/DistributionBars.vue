@@ -32,7 +32,7 @@ const sortedItems = computed(() =>
 )
 
 /** 画布高度随条目数自适应：每档约 22px（回测反馈：高度/间距缩短一半） */
-const chartHeight = computed(() => Math.max(100, sortedItems.value.length * 22 + 10))
+const chartHeight = computed(() => Math.max(72, sortedItems.value.length * 22 + 4))
 
 function buildOption() {
   const textColor = getCssVar('--color-text-secondary') || THEME_COLOR_FALLBACKS.textSecondary
@@ -44,7 +44,7 @@ function buildOption() {
 
   return {
     // containLabel:true 给类目轴标签让位，否则标签画在画布外被裁掉（PRD BUG-03）
-    grid: { left: 8, right: 64, top: 2, bottom: 2, containLabel: true },
+    grid: { left: 8, right: 64, top: 0, bottom: 0, containLabel: true },
     xAxis: {
       type: 'value',
       show: false,
@@ -80,7 +80,7 @@ function buildOption() {
             borderRadius: [0, 5, 5, 0],
           },
         })),
-        barMaxWidth: 8,
+        barMaxWidth: 10,
         label: {
           show: true,
           position: 'right',
@@ -138,7 +138,6 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 <style scoped>
 .distribution-bars {
   width: 100%;
-  min-height: 120px;
   /* 与上方环形图分区：上边线分隔（回测反馈：两块贴在一起没有边界感） */
   margin-top: var(--space-2);
   padding-top: var(--space-2);
@@ -147,7 +146,8 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 
 .bar-chart {
   width: 100%;
-  min-height: 128px;
+  /* 高度完全由 chartHeight 内联控制；此前 128px 的 min-height 会在分类少时
+     把画布强行撑高，多出的部分全变成最后一根柱子下面的死空间（回测反馈） */
 }
 
 .empty-hint {
@@ -157,7 +157,7 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 }
 
 .bars-caption {
-  margin: var(--space-1) 0 0;
+  margin: 2px 0 0;
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   text-align: center;
