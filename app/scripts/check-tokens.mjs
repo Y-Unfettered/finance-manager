@@ -32,6 +32,8 @@ for (const match of readFileSync(tokensFile, 'utf8').matchAll(/--([a-zA-Z0-9-]+)
 
 // 品牌资产/装饰插画类硬编码白名单（不属于主题 token 体系）
 const FILE_WHITELIST_HEX = ['AccountBrandIcon.vue', 'SideDrawer.vue']
+// 68px 行高白名单：分类管理行带 6 个操作钮、密度高，2026-11-07 回测后有意恢复 68
+const FILE_WHITELIST_68PX = ['CategoryManagementView.vue']
 // 白名单 hex（黑/白中性色）
 const HEX_WHITELIST = new Set(['#ffffff', '#000000'])
 
@@ -52,8 +54,10 @@ for (const file of walk(srcDir, ['.vue'])) {
       if (!HEX_WHITELIST.has(hex)) problems.push(`${rel}: .vue 内硬编码 hex ${match[0]}`)
     }
   }
-  for (const _match of text.matchAll(/min-height:\s*68px/g)) {
-    problems.push(`${rel}: 行高 68px 偏差（应 56px）`)
+  if (!FILE_WHITELIST_68PX.some((name) => rel.endsWith(name))) {
+    for (const _match of text.matchAll(/min-height:\s*68px/g)) {
+      problems.push(`${rel}: 行高 68px 偏差（应 56px）`)
+    }
   }
 }
 

@@ -158,6 +158,7 @@ function children(id: string): CategoryDetailRecord[] {
 }
 
 function openCreate(parentId = ''): void {
+  archiveLog.info('编辑弹层打开（新增）', { parentId })
   form.value = {
     categoryId: '',
     parentId,
@@ -173,6 +174,7 @@ function openCreate(parentId = ''): void {
 }
 
 function openEdit(item: CategoryDetailRecord): void {
+  archiveLog.info('编辑弹层打开（编辑）', { categoryId: item.id, name: item.name })
   form.value = {
     categoryId: item.id,
     parentId: item.parentId ?? '',
@@ -321,6 +323,8 @@ function toggle(id: string): void {
   if (next.has(id)) next.delete(id)
   else next.add(id)
   expanded.value = next
+  // 临时取证（回测反馈 1/2）：展开/收起动作入库，配合日志页核对"自动收起"现象
+  archiveLog.info('展开切换', { categoryId: id, expanded: next.has(id) })
 }
 
 onMounted(load)
@@ -391,26 +395,26 @@ onMounted(load)
               :icon-key="child.iconKey ?? root.iconKey"
               :color="child.color ?? root.color"
               :label="child.name"
-              :size="32"
+              :size="40"
             />
             <button type="button" @click="openEdit(child)">
               <span>{{ child.name }}</span
               ><small v-if="child.archivedAt">已停用</small>
             </button>
             <button type="button" class="mini-button" aria-label="上移" @click="move(child, -1)">
-              <ArrowUp :size="15" />
+              <ArrowUp :size="16" />
             </button>
             <button type="button" class="mini-button" aria-label="下移" @click="move(child, 1)">
-              <ArrowDown :size="15" />
+              <ArrowDown :size="16" />
             </button>
             <button
               type="button"
-              class="mini-button"
+              class="icon-button"
               :aria-label="child.archivedAt ? '启用' : '停用'"
               @click="setArchived(child, !child.archivedAt)"
             >
-              <RotateCcw v-if="child.archivedAt" :size="15" />
-              <Archive v-else :size="15" />
+              <RotateCcw v-if="child.archivedAt" :size="18" />
+              <Archive v-else :size="18" />
             </button>
           </div>
           <button type="button" class="add-child" @click="openCreate(root.id)">
@@ -425,13 +429,18 @@ onMounted(load)
       :title="form.categoryId ? '编辑分类' : form.parentId ? '新增二级分类' : '新增一级分类'"
     >
       <form class="editor" @submit.prevent="save">
-        <label><span>分类名称</span><input v-model="form.name" required maxlength="12" /></label>
-        <AppSelect
-          v-model="form.parentId"
-          label="上级分类"
-          :options="parentOptions"
-          variant="compact"
-        />
+        <div class="editor__scroll">
+          <div class="editor-row-2col">
+            <label
+              ><span>分类名称</span><input v-model="form.name" required maxlength="12"
+            /></label>
+            <AppSelect
+              v-model="form.parentId"
+              label="上级分类"
+              :options="parentOptions"
+              variant="compact"
+            />
+          </div>
         <div class="custom-icon-upload">
           <button
             type="button"
@@ -530,37 +539,44 @@ onMounted(load)
             没有匹配的图标；可点击上方"上传自定义图标"。
           </p>
         </div>
-        <div class="color-field">
-          <span>颜色</span>
-          <div class="color-slots" role="radiogroup" aria-label="分类颜色">
-            <button
-              v-for="slot in CATEGORY_COLOR_SLOTS"
-              :key="slot"
-              type="button"
-              class="color-slot"
-              :class="{ active: form.color === slot }"
-              :style="{ background: categoryColorVar(slot) }"
-              role="radio"
-              :aria-checked="form.color === slot"
-              :aria-label="`色槽 ${slot}`"
-              :disabled="busy"
-              @click="form.color = slot"
-            >
-              <Check
-                v-if="form.color === slot"
-                :size="18"
-                stroke-width="3"
-                aria-hidden="true"
-                class="color-slot__check"
-              />
-            </button>
+            <p v-if="!iconGroups.length" class="icon-empty">
+              没有匹配的图标；可点击上方"上传自定义图标"。
+            </p>
           </div>
-          <small class="color-hint">跟随主题色，切换主题会自动适配</small>
         </div>
-        <p v-if="error" class="error">{{ error }}</p>
-        <button class="save-button" type="submit" :disabled="busy">
-          {{ preparingIcon ? '处理图片…' : saving ? '保存中…' : '保存' }}
-        </button>
+        <div class="editor__footer">
+          <div class="color-field">
+            <span>颜色</span>
+            <div class="color-slots" role="radiogroup" aria-label="分类颜色">
+              <button
+                v-for="slot in CATEGORY_COLOR_SLOTS"
+                :key="slot"
+                type="button"
+                class="color-slot"
+                :class="{ active: form.color === slot }"
+                :style="{ background: categoryColorVar(slot) }"
+                role="radio"
+                :aria-checked="form.color === slot"
+                :aria-label="`色槽 ${slot}`"
+                :disabled="busy"
+                @click="form.color = slot"
+              >
+                <Check
+                  v-if="form.color === slot"
+                  :size="18"
+                  stroke-width="3"
+                  aria-hidden="true"
+                  class="color-slot__check"
+                />
+              </button>
+            </div>
+            <small class="color-hint">跟随主题色，切换主题会自动适配</small>
+          </div>
+          <p v-if="error" class="error">{{ error }}</p>
+          <button class="save-button" type="submit" :disabled="busy">
+            {{ preparingIcon ? '处理图片…' : saving ? '保存中…' : '保存' }}
+          </button>
+        </div>
       </form>
     </AppBottomSheet>
     <AppConfirmPopup
@@ -593,10 +609,6 @@ onMounted(load)
   color: var(--color-text-secondary);
   background: transparent;
   border: 0;
-}
-.mini-button {
-  width: 28px;
-  height: 36px;
 }
 .content {
   display: grid;
@@ -649,10 +661,17 @@ onMounted(load)
 }
 .category-row {
   display: grid;
-  min-height: 56px;
-  grid-template-columns: 44px 1fr 28px 28px 36px 36px;
+  min-height: 68px;
+  grid-template-columns: 44px 1fr 40px 40px 44px 44px;
   align-items: center;
   gap: 2px;
+}
+/* 按压反馈替代被全局关闭的 WebView 默认高亮 */
+.category-row button:active,
+.child-row button:active,
+.children .add-child:active {
+  background: var(--color-background);
+  border-radius: var(--radius-control);
 }
 .category-main {
   display: grid;
@@ -667,13 +686,14 @@ onMounted(load)
   color: var(--color-text-tertiary);
 }
 .children {
-  padding: 0 0 var(--space-3) 44px;
+  padding: 0 0 var(--space-3) var(--space-3);
   border-top: 1px solid var(--color-divider);
 }
+/* 二级分类与一级同构：同样的框、行高、图标尺寸与操作钮（回测反馈 3a/3b） */
 .child-row {
   display: grid;
-  min-height: 48px;
-  grid-template-columns: 36px 1fr 28px 28px 28px;
+  min-height: 68px;
+  grid-template-columns: 44px 1fr 40px 40px 44px;
   align-items: center;
   gap: 2px;
   border-bottom: 1px solid var(--color-divider);
@@ -684,13 +704,21 @@ onMounted(load)
   align-items: center;
   justify-content: space-between;
   color: inherit;
+  text-align: left;
   background: transparent;
   border: 0;
+}
+.child-row > button:nth-child(2) span {
+  overflow: hidden;
+  font-size: var(--type-list-primary-size);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .children .add-child {
   display: flex;
   width: 100%;
-  min-height: 48px;
+  min-height: 56px;
   align-items: center;
   gap: var(--space-2);
   color: var(--color-primary-600);
@@ -702,13 +730,31 @@ onMounted(load)
   color: var(--color-text-tertiary);
   text-align: center;
 }
+/* 弹层布局：中间滚动 + 底部固定（颜色 + 保存），回测反馈 3c/3d */
 .editor {
-  display: grid;
+  display: flex;
   max-height: calc(100dvh - 112px - env(safe-area-inset-bottom));
-  padding: 1px;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.editor__scroll {
+  display: grid;
+  min-height: 0;
   overflow-y: auto;
   gap: var(--space-4);
   overscroll-behavior: contain;
+}
+.editor__footer {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-divider);
+}
+.editor-row-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+  align-items: start;
 }
 .editor label {
   display: grid;
@@ -788,8 +834,6 @@ onMounted(load)
 }
 .icon-scroll {
   display: grid;
-  max-height: 300px;
-  overflow-y: auto;
   gap: var(--space-3);
 }
 .icon-group {

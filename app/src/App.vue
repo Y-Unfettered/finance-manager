@@ -525,6 +525,12 @@ watch(
 </template>
 
 <style>
+/* 全局关闭 Android WebView 默认点击高亮：半透明闪层在每次点按"变深→变淡"，
+   观感像误选中；按压反馈统一由各组件的 :active 样式提供 */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
 .app-navigation {
   min-height: 100dvh;
   overflow-x: clip;
