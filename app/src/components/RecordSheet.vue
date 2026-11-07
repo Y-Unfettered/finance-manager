@@ -1412,17 +1412,28 @@ onUnmounted(() => {
             v-if="expandedRootId && row.some((cat) => cat.id === expandedRootId) && !draggingId"
             class="category-children--inline"
           >
-            <div>
-              <button
-                v-for="child in childCategoriesOf(expandedRootId)"
-                :key="child.id"
-                type="button"
-                :class="{ active: selectedCategoryId === child.id }"
-                @click="selectCategory(child)"
-              >
-                {{ child.name }}
-              </button>
-            </div>
+            <button
+              v-for="child in childCategoriesOf(expandedRootId)"
+              :key="child.id"
+              type="button"
+              class="category-item"
+              :class="{ active: selectedCategoryId === child.id }"
+              @click="selectCategory(child)"
+            >
+              <CategoryIcon
+                :icon-key="child.iconKey ?? row.find((cat) => cat.id === expandedRootId)?.iconKey"
+                :color="
+                  selectedCategoryId === child.id
+                    ? (child.color ??
+                      row.find((cat) => cat.id === expandedRootId)?.color ??
+                      'cat-1')
+                    : 'var(--color-text-tertiary)'
+                "
+                :size="32"
+                :label="child.name"
+              />
+              <span class="category-item__label">{{ child.name }}</span>
+            </button>
           </div>
         </template>
       </div>
@@ -1764,39 +1775,17 @@ onUnmounted(() => {
   transform: scale(0.92);
 }
 
-/* 二级分类条：内嵌在网格中、紧跟所选一级分类那一行 */
+/* 二级分类条：与一级分类同构（icon 上、名字下），紧跟所选一级分类那一行 */
 .category-children--inline {
   grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-2);
   margin: var(--space-1) 0 var(--space-2);
-  padding: var(--space-2);
+  padding: var(--space-1);
   background: var(--color-surface);
   border: 1px solid var(--color-divider);
   border-radius: var(--radius-control);
-}
-
-.category-children--inline > div {
-  display: flex;
-  overflow-x: auto;
-  gap: var(--space-2);
-  scrollbar-width: none;
-}
-
-.category-children--inline button {
-  min-height: 34px;
-  padding: 0 var(--space-3);
-  flex: none;
-  color: var(--color-text-secondary);
-  background: var(--color-background);
-  border: 1px solid var(--color-divider);
-  border-radius: var(--radius-pill);
-  font-size: var(--type-caption-size);
-}
-
-.category-children--inline button.active {
-  color: var(--color-primary-700);
-  background: var(--color-primary-50);
-  border-color: var(--color-primary-500);
-  font-weight: 600;
 }
 
 .transfer-panel {
