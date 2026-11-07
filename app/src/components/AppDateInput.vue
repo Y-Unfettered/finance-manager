@@ -133,6 +133,10 @@ function onSelect(value: string) {
 
 .app-date-input--compact {
   display: grid;
+  /* 内部轨道必须显式拉伸：否则 auto 轨道按内容宽停靠左侧，
+     值框不填满外部栏位，三栏布局里「至」就会贴向右侧（2026-11-07 回测） */
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
   gap: 6px;
   min-height: 0;
   padding: 0;
