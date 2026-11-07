@@ -32,7 +32,7 @@ const sortedItems = computed(() =>
 )
 
 /** 画布高度随条目数自适应：每档约 22px（回测反馈：高度/间距缩短一半） */
-const chartHeight = computed(() => Math.max(72, sortedItems.value.length * 22 + 4))
+const chartHeight = computed(() => Math.max(66, sortedItems.value.length * 22))
 
 function buildOption() {
   const textColor = getCssVar('--color-text-secondary') || THEME_COLOR_FALLBACKS.textSecondary
@@ -138,16 +138,16 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 <style scoped>
 .distribution-bars {
   width: 100%;
-  /* 与上方环形图分区：上边线分隔（回测反馈：两块贴在一起没有边界感） */
+  /* 与上方环形图分区：上边线分隔；上下内边距对称（6/2+备注行距≈2.5），
+     使首柱↔线、末柱↔备注的视觉距离相等（回测反馈：上下失衡） */
   margin-top: var(--space-2);
-  padding-top: var(--space-2);
+  padding: 6px 0 2px;
   border-top: 1px solid var(--color-divider);
 }
 
 .bar-chart {
   width: 100%;
-  /* 高度完全由 chartHeight 内联控制；此前 128px 的 min-height 会在分类少时
-     把画布强行撑高，多出的部分全变成最后一根柱子下面的死空间（回测反馈） */
+  /* 高度完全由 chartHeight 内联控制（档数×22，无余量） */
 }
 
 .empty-hint {
@@ -157,7 +157,7 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 }
 
 .bars-caption {
-  margin: 2px 0 0;
+  margin: 0;
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   text-align: center;
