@@ -30,6 +30,9 @@ const sortedItems = computed(() =>
   [...props.items].sort((a, b) => Math.abs(b.amountMinor) - Math.abs(a.amountMinor)),
 )
 
+/** 画布高度随条目数自适应：每档约 44px，避免固定高度在条目少时大片留白、视觉贴顶 */
+const chartHeight = computed(() => Math.max(128, sortedItems.value.length * 44 + 16))
+
 function buildOption() {
   const primaryColor = getCssVar('--color-primary-500') || THEME_COLOR_FALLBACKS.primary500
   const expenseColor = getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense
@@ -105,6 +108,8 @@ function renderChart(): void {
     chart = echarts.init(chartRef.value)
   }
   chart.setOption(buildOption(), true)
+  // 高度随条目数变化后同步画布尺寸
+  chart.resize()
 }
 
 function handleResize(): void {
@@ -127,7 +132,7 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 
 <template>
   <div v-if="sortedItems.length" class="distribution-bars">
-    <div ref="chartRef" class="bar-chart" />
+    <div ref="chartRef" class="bar-chart" :style="{ height: `${chartHeight}px` }" />
     <p class="bars-caption">支出 = 消费 − 退款，不含转账/还款</p>
   </div>
   <p v-else class="empty-hint">该区间无支出</p>
@@ -137,11 +142,15 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 .distribution-bars {
   width: 100%;
   min-height: 120px;
+  /* 与上方环形图分区：上边线分隔（回测反馈：两块贴在一起没有边界感） */
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-divider);
 }
 
 .bar-chart {
   width: 100%;
-  height: 220px;
+  min-height: 128px;
 }
 
 .empty-hint {

@@ -199,9 +199,9 @@ watch(
   font-size: var(--type-label-size);
 }
 .legend {
+  /* 不再做 154px 滚动窗口：归一化后最多 9 项，完整展示；
+     此前裁切窗口紧贴条形图，观感像被挡住（2026-11-07 回测反馈） */
   display: grid;
-  max-height: 154px;
-  overflow-y: auto;
 }
 .legend button {
   display: grid;
