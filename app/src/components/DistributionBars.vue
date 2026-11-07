@@ -172,13 +172,13 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
      备注文字自带约 2px 行距，视觉上下≈相等）。想调就改这三个数 */
   padding: 6px 0 0px;
   border-top: 1px solid var(--color-divider);
-  border-bottom: 1px solid var(--color-divider);
+  /* border-bottom: 1px solid var(--color-divider); */
 }
 
 .bar-chart {
   width: 100%;
   /* 高度完全由 chartHeight 内联控制（档数×22，无余量） */
-  background-color: aqua;
+  /* background-color: aqua; */
 }
 
 .empty-hint {
@@ -193,6 +193,6 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   text-align: center;
-  background-color: aquamarine;
+  /* background-color: aquamarine; */
 }
 </style>
