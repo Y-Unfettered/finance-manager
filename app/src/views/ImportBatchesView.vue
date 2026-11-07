@@ -668,6 +668,10 @@ onMounted(load)
   font-size: var(--type-caption-size);
 }
 
+.batch-section {
+  display: grid;
+  gap: var(--space-3); /* 卡片间距 12px，与其他页面卡片栈一致 */
+}
 .batch-section__title {
   margin: var(--space-2) 0 var(--space-1);
   font-size: var(--type-section-title-size);
