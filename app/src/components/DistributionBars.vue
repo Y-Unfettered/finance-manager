@@ -170,7 +170,7 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
   margin-top: var(--space-2);
   /* ③ 与分隔线的上下关系：padding 上 6px（线→首柱）、下 2px（末柱→备注，
      备注文字自带约 2px 行距，视觉上下≈相等）。想调就改这三个数 */
-  padding: 6px 0 0px;
+  padding: 6px 0 2px;
   border-top: 1px solid var(--color-divider);
   /* border-bottom: 1px solid var(--color-divider); */
 }

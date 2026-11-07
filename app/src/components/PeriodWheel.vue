@@ -18,7 +18,7 @@ const props = withDefaults(
     year: number
     startDate: string
     endDate: string
-    /** 有数据的最早年份（取自统计最早月份），用于生成连续年份区间 */
+    /** 有数据的最早年份（取自统计最早月份），用于生成年份区间起点 */
     minYear?: number
   }>(),
   { minYear: undefined },
@@ -31,7 +31,11 @@ const emit = defineEmits<{
   'update:endDate': [value: string]
 }>()
 
-/** 粒度胶囊（PRD 需求二 5.2）："今年/去年/指定年份"统一收进年份滚轮 */
+/**
+ * 粒度分段控件（样式对齐资产趋势卡的 trend-tabs）：
+ * 本月 / 上月 / 全年 / 全部 / 自定义，五段一个灰底胶囊槽。
+ * 年份滚轮只在「全年」时出现（本月/上月取当下、全部=不限时间、自定义=选日期）。
+ */
 const CAPSULES: readonly { value: StatisticsRangePreset; label: string }[] = [
   { value: 'this_month', label: '本月' },
   { value: 'last_month', label: '上月' },
@@ -40,20 +44,34 @@ const CAPSULES: readonly { value: StatisticsRangePreset; label: string }[] = [
   { value: 'custom', label: '自定义' },
 ]
 
+const SEGMENT_INDEX: Record<StatisticsRangePreset, number> = {
+  this_month: 0,
+  last_month: 1,
+  this_year: 2,
+  last_year: 2,
+  year: 2,
+  all: 3,
+  custom: 4,
+}
+
+const activeSegment = computed(() => SEGMENT_INDEX[props.preset] ?? 2)
+
 const currentYear = new Date().getFullYear()
+/** 选中年份后面至少保留的年份数（保证选「今年」时也居中，回测反馈 ①） */
+const FUTURE_YEARS = 2
 
 const years = computed(() => {
-  // 至少铺满 6 年（今年-5 起，回测反馈：只有两项时滚轮太空）；
-  // 有更早数据时从最早年份铺起；无数据年份保留（选中后显示空状态）
   const floor = Math.min(props.minYear ?? currentYear - 5, currentYear - 5)
   const start = Math.max(2000, Math.min(floor, currentYear))
+  const end = currentYear + FUTURE_YEARS
   const list: number[] = []
-  for (let y = start; y <= currentYear; y += 1) list.push(y)
+  for (let y = start; y <= end; y += 1) list.push(y)
   return list
 })
 
 const wheelEl = ref<HTMLElement>()
-const wheelDimmed = computed(() => props.preset === 'all' || props.preset === 'custom')
+/** 年份滚轮仅在「全年」粒度出现（回测反馈 ③） */
+const showWheel = computed(() => props.preset === 'this_year' || props.preset === 'year')
 
 let scrollDebounce = 0
 
@@ -65,7 +83,7 @@ function scrollToYear(target: number, smooth: boolean): void {
   if (!item) return
   const max = el.scrollWidth - el.clientWidth
   const left = Math.max(0, Math.min(item.offsetLeft + item.offsetWidth / 2 - el.clientWidth / 2, max))
-  // 定位（非平滑）时必须绕过容器的 scroll-behavior:smooth：
+  // 定位（非平滑）时绕过容器的 scroll-behavior:smooth：
   // 平滑动画会被路由过渡打断、停在半路（回测：选中年份未居中）
   const prev = el.style.scrollBehavior
   el.style.scrollBehavior = smooth ? 'smooth' : 'auto'
@@ -115,6 +133,16 @@ function onKeydown(event: KeyboardEvent): void {
   }
 }
 
+function centerCurrentYear(): void {
+  void nextTick(() => {
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollToYear(props.year, false)))
+  })
+}
+
+function selectCapsule(value: StatisticsRangePreset): void {
+  emit('update:preset', value)
+}
+
 watch(
   () => props.year,
   (year) => void nextTick(() => scrollToYear(year, false)),
@@ -125,33 +153,37 @@ watch(years, () => {
   void nextTick(() => scrollToYear(props.year, false))
 })
 
-onMounted(() => {
-  // 双 rAF 确保路由过渡/字体加载后布局稳定再定位
-  void nextTick(() => {
-    requestAnimationFrame(() => requestAnimationFrame(() => scrollToYear(props.year, false)))
-  })
+// 滚轮重新出现（切回「全年」）时重新居中
+watch(showWheel, (visible) => {
+  if (visible) centerCurrentYear()
 })
+
+onMounted(centerCurrentYear)
 </script>
 
 <template>
   <div class="period-wheel-wrap">
-    <div class="period-wheel__capsules" role="tablist" aria-label="统计粒度">
+    <!-- 分段控件：灰底胶囊槽 + 白色选中滑块（样式对齐资产趋势卡） -->
+    <div class="preset-tabs" role="tablist" aria-label="统计粒度">
       <button
-        v-for="capsule in CAPSULES"
+        v-for="(capsule, index) in CAPSULES"
         :key="capsule.value"
         type="button"
         role="tab"
-        :aria-selected="preset === capsule.value"
-        :class="{ active: preset === capsule.value }"
-        @click="emit('update:preset', capsule.value)"
+        :aria-selected="activeSegment === index"
+        :class="{ active: activeSegment === index }"
+        @click="selectCapsule(capsule.value)"
       >
         {{ capsule.label }}
       </button>
     </div>
+
+    <!-- 年份滚轮：仅「全年」粒度出现；data-router-touch-ignore 防止横滑误触全局返回 -->
     <div
+      v-if="showWheel"
       ref="wheelEl"
       class="period-wheel"
-      :class="{ 'period-wheel--dim': wheelDimmed }"
+      data-router-touch-ignore
       role="listbox"
       aria-label="统计年份"
       tabindex="0"
@@ -170,15 +202,17 @@ onMounted(() => {
         {{ y }}
       </span>
     </div>
-    <span class="visually-hidden" aria-live="polite">已切换到 {{ year }} 年</span>
-    <div v-if="preset === 'custom'" class="period-wheel__custom">
+    <span v-if="showWheel" class="visually-hidden" aria-live="polite">已切换到 {{ year }} 年</span>
+
+    <!-- 自定义日期区间 -->
+    <div v-if="preset === 'custom'" class="period-custom">
       <AppDateInput
         :model-value="startDate"
         label="开始日期"
         variant="compact"
         @update:model-value="emit('update:startDate', $event ?? '')"
       />
-      <span>至</span>
+      <span class="period-custom__to">至</span>
       <AppDateInput
         :model-value="endDate"
         label="结束日期"
@@ -195,29 +229,38 @@ onMounted(() => {
   gap: var(--space-2);
 }
 
-.period-wheel__capsules {
-  display: flex;
-  justify-content: center;
-  gap: var(--space-2);
-}
-
-.period-wheel__capsules button {
-  min-height: 32px;
-  padding: 0 var(--space-3);
-  color: var(--color-text-secondary);
-  font-size: var(--type-caption-size);
-  background: var(--color-surface);
-  border: 1px solid var(--color-divider);
+/* 分段控件：灰底胶囊槽 + 白色选中块（对齐资产趋势卡 trend-tabs） */
+.preset-tabs {
+  display: grid;
+  width: 100%;
+  padding: 3px;
+  grid-template-columns: repeat(5, 1fr);
+  background: var(--color-background);
   border-radius: var(--radius-pill);
 }
 
-.period-wheel__capsules button.active {
-  color: var(--color-primary-600);
-  font-weight: 600;
-  background: var(--color-primary-50);
-  border-color: var(--color-primary-200);
+.preset-tabs button {
+  height: 34px;
+  padding: 0 var(--space-1);
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-pill);
+  transition:
+    color var(--motion-fast) var(--ease-standard),
+    background-color var(--motion-fast) var(--ease-standard),
+    box-shadow var(--motion-fast) var(--ease-standard);
 }
 
+.preset-tabs button.active {
+  color: var(--color-text-primary);
+  font-weight: 650;
+  background: var(--color-surface);
+  box-shadow: 0 1px 6px rgb(23 33 30 / 8%);
+}
+
+/* 年份滚轮（仅全年出现） */
 .period-wheel {
   display: flex;
   height: 56px;
@@ -228,17 +271,13 @@ onMounted(() => {
   scroll-behavior: smooth;
   scrollbar-width: none;
   background: var(--color-surface);
-  border-radius: var(--radius-control);
+  border-radius: 12px;
   -webkit-mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
   mask-image: linear-gradient(to right, transparent, #000 24px, #000 calc(100% - 24px), transparent);
 }
 
 .period-wheel::-webkit-scrollbar {
   display: none;
-}
-
-.period-wheel--dim {
-  opacity: 0.55;
 }
 
 .period-wheel__item {
@@ -258,10 +297,25 @@ onMounted(() => {
   font-weight: 600;
 }
 
-.period-wheel__custom {
+/* 自定义日期区间：白底圆角容器，两个日期并排、中点「至」分隔 */
+.period-custom {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  background: var(--color-surface);
+  border-radius: 12px;
+  padding: 10px var(--space-3);
+}
+
+.period-custom :deep(.app-date-input) {
+  flex: 1;
+  min-width: 0;
+}
+
+.period-custom__to {
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
 }
 
 .visually-hidden {
