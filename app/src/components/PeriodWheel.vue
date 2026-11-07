@@ -300,25 +300,24 @@ onMounted(centerCurrentYear)
   font-weight: 600;
 }
 
-/* 自定义日期区间：三栏等宽（开始 | 至 | 结束），整体水平居中 */
+/* 自定义日期区间：三等分栏（开始 | 至 | 结束）。
+   「至」在自己的栏内水平垂直居中——到左右两个日期框的距离由构造保证相等（回测反馈） */
 .period-custom {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: var(--space-2);
+  display: flex;
+  align-items: flex-end;
   background: var(--color-surface);
   border-radius: 12px;
   padding: 12px var(--space-3);
 }
 
 .period-custom :deep(.app-date-input) {
+  flex: 1;
   min-width: 0;
 }
 
 .period-custom__to {
-  /* 与右侧日期值框同高（44px）并对齐其底部：让「至」与 2026-11-07 那一行水平对齐，
-     而不是对着「开始日期」标签整列居中（回测反馈：至偏上、字太小） */
-  align-self: end;
+  flex: 1;
+  align-self: flex-end;
   display: flex;
   height: 44px;
   align-items: center;
