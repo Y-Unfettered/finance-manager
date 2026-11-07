@@ -532,7 +532,9 @@ export class FinanceService implements FinanceServicePort {
       if (parent?.kind !== undefined && parent.kind !== input.kind)
         throw new Error('父子分类收支类型必须一致')
       if (parent?.parentId) throw new Error('最多只支持两级分类')
-      if (input.categoryId === input.parentId) throw new Error('分类不能作为自己的父分类')
+      // 仅在两者都有值时才有"自指"语义；新建一级时两者同为 undefined，不能误判
+      if (input.categoryId && input.categoryId === input.parentId)
+        throw new Error('分类不能作为自己的父分类')
       if (
         input.categoryId &&
         input.parentId &&
@@ -542,7 +544,10 @@ export class FinanceService implements FinanceServicePort {
       }
       const duplicate = all.find(
         (category) =>
-          category.id !== input.categoryId && category.kind === input.kind && category.name === name,
+          category.id !== input.categoryId &&
+          category.kind === input.kind &&
+          !category.archivedAt &&
+          category.name === name,
       )
       if (duplicate) throw new Error('同名分类已存在')
       const now = this.clock.nowIso()
@@ -593,10 +598,18 @@ export class FinanceService implements FinanceServicePort {
   }
 
   async unarchiveCategory(ledgerId: string, categoryId: string): Promise<void> {
-    const category = (await this.categories.listByLedger(ledgerId)).find(
-      (item) => item.id === categoryId,
-    )
+    const all = await this.categories.listByLedger(ledgerId)
+    const category = all.find((item) => item.id === categoryId)
     if (!category) throw new Error('分类不存在')
+    // 新建/改名已允许与"已归档分类"同名，恢复时需保证未归档范围内不重名
+    const conflict = all.find(
+      (item) =>
+        item.id !== categoryId &&
+        item.kind === category.kind &&
+        !item.archivedAt &&
+        item.name === category.name,
+    )
+    if (conflict) throw new Error(`已存在同名分类「${category.name}」，请先修改名称后再恢复`)
     await this.categories.unarchive(categoryId, this.clock.nowIso())
   }
 

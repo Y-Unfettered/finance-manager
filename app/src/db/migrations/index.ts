@@ -16,6 +16,7 @@ import { TRANSACTION_FINGERPRINT_V14_MIGRATION } from './014_transaction_fingerp
 import { TRANSACTION_FINGERPRINT_INDEX_V15_MIGRATION } from './015_transaction_fingerprint_index_v15'
 import { CATEGORY_COLOR_SLOTS_V16_MIGRATION } from './016_category_color_slots_v16'
 import { APP_LOGS_V17_MIGRATION } from './017_app_logs_v17'
+import { CATEGORY_UNIQUE_ACTIVE_V18_MIGRATION } from './018_category_unique_active_v18'
 
 export const APP_MIGRATIONS: readonly Migration[] = [
   INITIAL_SCHEMA_MIGRATION,
@@ -35,5 +36,6 @@ export const APP_MIGRATIONS: readonly Migration[] = [
   TRANSACTION_FINGERPRINT_INDEX_V15_MIGRATION,
   CATEGORY_COLOR_SLOTS_V16_MIGRATION,
   APP_LOGS_V17_MIGRATION,
+  CATEGORY_UNIQUE_ACTIVE_V18_MIGRATION,
 ]
-export const LATEST_SCHEMA_VERSION = APP_LOGS_V17_MIGRATION.version
+export const LATEST_SCHEMA_VERSION = CATEGORY_UNIQUE_ACTIVE_V18_MIGRATION.version
