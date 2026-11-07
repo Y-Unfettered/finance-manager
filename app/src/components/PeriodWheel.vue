@@ -204,22 +204,25 @@ onMounted(centerCurrentYear)
     </div>
     <span v-if="showWheel" class="visually-hidden" aria-live="polite">已切换到 {{ year }} 年</span>
 
-    <!-- 自定义日期区间 -->
-    <div v-if="preset === 'custom'" class="period-custom">
-      <AppDateInput
-        :model-value="startDate"
-        label="开始日期"
-        variant="compact"
-        @update:model-value="emit('update:startDate', $event ?? '')"
-      />
-      <span class="period-custom__to">至</span>
-      <AppDateInput
-        :model-value="endDate"
-        label="结束日期"
-        variant="compact"
-        @update:model-value="emit('update:endDate', $event ?? '')"
-      />
-    </div>
+    <!-- 自定义日期区间：三栏（开始 | 至 | 结束），整体居中 -->
+    <template v-if="preset === 'custom'">
+      <div class="period-custom">
+        <AppDateInput
+          :model-value="startDate"
+          label="开始日期"
+          variant="compact"
+          @update:model-value="emit('update:startDate', $event ?? '')"
+        />
+        <span class="period-custom__to">至</span>
+        <AppDateInput
+          :model-value="endDate"
+          label="结束日期"
+          variant="compact"
+          @update:model-value="emit('update:endDate', $event ?? '')"
+        />
+      </div>
+      <p v-if="!startDate || !endDate" class="period-custom__hint">请选择完整的起止日期</p>
+    </template>
   </div>
 </template>
 
@@ -297,25 +300,32 @@ onMounted(centerCurrentYear)
   font-weight: 600;
 }
 
-/* 自定义日期区间：白底圆角容器，两个日期并排、中点「至」分隔 */
+/* 自定义日期区间：三栏等宽（开始 | 至 | 结束），整体水平居中 */
 .period-custom {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: var(--space-2);
   background: var(--color-surface);
   border-radius: 12px;
-  padding: 10px var(--space-3);
+  padding: 12px var(--space-3);
 }
 
 .period-custom :deep(.app-date-input) {
-  flex: 1;
   min-width: 0;
 }
 
 .period-custom__to {
-  flex: none;
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
+  text-align: center;
+}
+
+.period-custom__hint {
+  margin: 2px 0 0;
+  color: var(--color-text-tertiary);
+  font-size: var(--type-caption-size);
+  text-align: center;
 }
 
 .visually-hidden {

@@ -337,6 +337,9 @@ export function statisticsRange(
       }
     const start = new Date(`${options.startDate}T00:00:00`)
     const end = new Date(`${options.endDate}T00:00:00`)
+    // 日期值可能来自未归一化的输入（如带时间串），非法时给中文提示而不是英文 RangeError
+    if (isNaN(start.getTime()) || isNaN(end.getTime()))
+      throw new Error('日期格式不正确，请重新选择')
     end.setDate(end.getDate() + 1)
     if (start >= end) throw new Error('开始日期不能晚于结束日期')
     return {

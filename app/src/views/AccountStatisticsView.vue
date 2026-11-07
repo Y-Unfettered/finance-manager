@@ -90,7 +90,6 @@ useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
         v-model:end-date="customEnd"
         :min-year="minYear"
       />
-      <p class="range-label">{{ range.label }}</p>
       <div v-if="loading" class="state">正在统计…</div>
       <div v-else-if="error" class="state error">{{ error }}</div>
       <template v-else-if="data">
@@ -167,7 +166,6 @@ useRefreshOnActivated(() => load({ preserveSelection: true, silent: true }))
 
 <style scoped src="./statistics-shared.css"></style>
 <style scoped>
-.range-label,
 .chart-hint {
   margin: 0;
   color: var(--color-text-tertiary);

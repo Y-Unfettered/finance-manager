@@ -9,7 +9,7 @@
       <small v-if="description">{{ description }}</small>
     </span>
     <span class="app-date-input__value">
-      <span class="app-date-input__value-text">{{ displayValue }}</span>
+      <span class="app-date-input__value-text" :class="{ 'app-date-input__value-text--empty': !modelValue }">{{ displayValue }}</span>
       <ChevronRight :size="18" :stroke-width="1.75" />
     </span>
     <DateTimePicker
@@ -55,7 +55,7 @@ const pickerShowModel = computed({
 })
 
 const displayValue = computed(() => {
-  if (!props.modelValue) return `< ${props.placeholder}`
+  if (!props.modelValue) return props.placeholder
   const d = new Date(props.modelValue)
   if (isNaN(d.getTime())) return props.modelValue
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -68,9 +68,20 @@ function open() {
   pickerShowModel.value = true
 }
 
+/** 选择器吐出的可能是带时间的串（如 2026-11-7T19:49），统一归一化为 YYYY-MM-DD */
+function normalizeDate(value: string): string {
+  const [datePart] = value.split('T')
+  if (!datePart) return value
+  const [y, m, d] = datePart.split('-').map(Number)
+  if (!y || !m || !d) return value
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${y}-${pad(m)}-${pad(d)}`
+}
+
 function onSelect(value: string) {
-  emit('update:modelValue', value)
-  emit('change', value)
+  const out = props.time ? value : normalizeDate(value)
+  emit('update:modelValue', out)
+  emit('change', out)
 }
 </script>
 
@@ -159,5 +170,10 @@ function onSelect(value: string) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+</style><style scoped>
+/* 空值占位：弱化为第三级文字色（原「< 选择日期」的角括号已移除） */
+.app-date-input__value-text--empty {
+  color: var(--color-text-tertiary);
 }
 </style>
