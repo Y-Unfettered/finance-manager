@@ -316,10 +316,13 @@ onMounted(centerCurrentYear)
 }
 
 .period-custom__to {
-  flex: 1;
+  /* 至不参与均分：两个日期框平分剩余宽度（各约 174px，足以容纳日期+箭头），
+     「至」用左右内边距保持视觉居中——选中日期后值框变宽也不会溢出卡片（回测反馈） */
+  flex: none;
   align-self: flex-end;
   display: flex;
   height: 44px;
+  padding: 0 10px;
   align-items: center;
   justify-content: center;
   color: var(--color-text-secondary);
