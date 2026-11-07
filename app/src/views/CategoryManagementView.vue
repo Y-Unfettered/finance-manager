@@ -429,7 +429,7 @@ onMounted(load)
       :title="form.categoryId ? '编辑分类' : form.parentId ? '新增二级分类' : '新增一级分类'"
     >
       <form class="editor" @submit.prevent="save">
-        <div class="editor__scroll">
+        <div class="editor__head">
           <div class="editor-row-2col">
             <label
               ><span>分类名称</span><input v-model="form.name" required maxlength="12"
@@ -500,6 +500,7 @@ onMounted(load)
             :disabled="busy"
             placeholder="搜索餐饮、交通、购物…"
         /></label>
+        </div>
         <div class="icon-scroll">
           <div v-if="recentIcons.length" class="icon-group">
             <small class="icon-group__title">最近使用</small>
@@ -538,7 +539,6 @@ onMounted(load)
           <p v-if="!iconGroups.length" class="icon-empty">
             没有匹配的图标；可点击上方"上传自定义图标"。
           </p>
-        </div>
         </div>
         <div class="editor__footer">
           <div class="color-field">
@@ -733,12 +733,11 @@ onMounted(load)
   flex-direction: column;
   gap: var(--space-4);
 }
-.editor__scroll {
+/* 弹层布局（回测反馈二）：头部（名称/上级/上传/系列/搜索）固定，
+   只有图标区（最近使用+分组）滚动，底部（颜色+保存）固定 */
+.editor__head {
   display: grid;
-  min-height: 0;
-  overflow-y: auto;
   gap: var(--space-4);
-  overscroll-behavior: contain;
 }
 .editor__footer {
   display: grid;
@@ -830,7 +829,12 @@ onMounted(load)
 }
 .icon-scroll {
   display: grid;
+  flex: 1 1 auto;
+  min-height: 96px;
+  align-content: start;
+  overflow-y: auto;
   gap: var(--space-3);
+  overscroll-behavior: contain;
 }
 .icon-group {
   display: grid;

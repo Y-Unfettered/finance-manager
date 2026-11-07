@@ -772,7 +772,14 @@ function startLongPress(
   cancelLongPress()
   longPressStart = { x: ev.clientX, y: ev.clientY }
   dragPointerId = ev.pointerId
+  // move/up/cancel 在 pointerdown 时就挂 document 级：快速点按抬起时的 up 也能取消长按定时器。
+  // （此前挂在 500ms 定时器回调里，快速点按无人取消 → 500ms 后误入拖拽态且 up 已错过、
+  //   无法复位，表现为"选中后马上变半透明"，2026-11-07 回测实测）
+  document.addEventListener('pointermove', onDragPointerMove)
+  document.addEventListener('pointerup', onDragPointerUp)
+  document.addEventListener('pointercancel', onDragPointerUp)
   longPressTimer = setTimeout(() => {
+    longPressTimer = undefined
     draggingId.value = cat.id
     suppressClick = true
     try {
@@ -780,12 +787,7 @@ function startLongPress(
     } catch {
       /* 设备不支持则忽略 */
     }
-    // 拖拽中锁页面滚动（touchmove 非被动拦截）；
-    // move/up/cancel 挂 document 级——手指移出网格再松手也能收到（否则 draggingId 残留、
-    // 该分类一直停留在半透明拖拽态，实测 2026-11-06）
-    document.addEventListener('pointermove', onDragPointerMove)
-    document.addEventListener('pointerup', onDragPointerUp)
-    document.addEventListener('pointercancel', onDragPointerUp)
+    // 拖拽中锁页面滚动（touchmove 非被动拦截）
     document.addEventListener('touchmove', preventScrollDuringDrag, { passive: false })
   }, 500)
 }
