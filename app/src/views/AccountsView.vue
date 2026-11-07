@@ -889,7 +889,7 @@ onUnmounted(() => {
 .assets-hero {
   position: relative;
   min-height: 238px;
-  padding: calc(env(safe-area-inset-top) + var(--space-8)) var(--page-gutter) var(--space-6);
+  padding: calc(var(--safe-top) + var(--space-8)) var(--page-gutter) var(--space-6);
   text-align: center;
   background: var(--color-surface);
   border-radius: 0 0 var(--radius-card) var(--radius-card);
@@ -897,7 +897,7 @@ onUnmounted(() => {
 
 .assets-hero__safe-top {
   position: absolute;
-  top: env(safe-area-inset-top);
+  top: var(--safe-top);
   left: var(--space-2);
   right: var(--space-2);
   display: flex;

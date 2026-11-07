@@ -1653,7 +1653,7 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: 48px 1fr 48px;
   align-items: center;
-  padding: env(safe-area-inset-top) var(--space-3) 0;
+  padding: var(--safe-top) var(--space-3) 0;
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-divider);
 }

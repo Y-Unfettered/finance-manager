@@ -785,7 +785,7 @@ onUnmounted(() => {
   top: 0;
   right: 0;
   left: 0;
-  height: calc(var(--size-app-bar) + env(safe-area-inset-top));
+  height: calc(var(--size-app-bar) + var(--safe-top));
   background: transparent;
   border-bottom: 1px solid transparent;
   box-shadow: 0 5px 16px rgb(11 27 23 / 10%);
@@ -818,7 +818,7 @@ onUnmounted(() => {
 .home-pull-zone {
   position: absolute;
   z-index: 36;
-  top: calc(var(--size-app-bar) + env(safe-area-inset-top));
+  top: calc(var(--size-app-bar) + var(--safe-top));
   right: 0;
   left: 0;
   height: 64px;

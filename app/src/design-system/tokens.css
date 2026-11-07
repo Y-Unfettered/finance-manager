@@ -28,6 +28,9 @@
   --radius-md: 8px;
 
   --page-bottom-inset: calc(var(--space-8) + env(safe-area-inset-bottom));
+  /* 顶部安全区：小米/HyperOS 的 env() 上报不足（实测 12px，实际状态栏 36px），
+     用 max() 兜底，保证顶栏内容始终在状态栏之下（2026-11-07 回测） */
+  --safe-top: max(env(safe-area-inset-top), 36px);
 
   --color-primary-700: #12574e;
   --color-primary-600: #176b5d;

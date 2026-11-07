@@ -146,7 +146,7 @@ onBeforeUnmount(() => {
 .side-drawer__profile {
   display: grid;
   width: 100%;
-  padding: calc(env(safe-area-inset-top) + 64px) 28px 42px;
+  padding: calc(var(--safe-top) + 64px) 28px 42px;
   gap: var(--space-1);
   color: inherit;
   text-align: left;

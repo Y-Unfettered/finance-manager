@@ -67,7 +67,8 @@ defineEmits<{
   align-items: center;
   box-sizing: border-box;
   width: 100%;
-  height: calc(var(--size-app-bar) + env(safe-area-inset-top));
+  height: calc(var(--size-app-bar) + var(--safe-top));
+  padding-top: var(--safe-top);
   color: var(--color-text-primary);
   background: var(--color-surface);
   transition:

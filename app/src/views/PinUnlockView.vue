@@ -56,7 +56,7 @@ async function onComplete(value: string): Promise<void> {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: calc(100dvh - env(safe-area-inset-top));
+  min-height: calc(100dvh - var(--safe-top));
   padding: var(--space-6) var(--page-gutter);
   gap: var(--space-10);
 }
