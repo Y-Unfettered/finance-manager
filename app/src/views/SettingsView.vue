@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import {
+  Bell,
   Bug,
+  CalendarClock,
   ChevronRight,
   DatabaseBackup,
   Download,
@@ -117,6 +119,8 @@ const entries = [
   { label: '导入账单', description: '导入历史交易', icon: FileUp, route: 'import' },
   { label: 'AI 记账提示词', description: '复制提示词到豆包/AI，截图生成 JSON', icon: MessageSquare, route: 'ai-prompt' },
   { label: '待确认账单', description: '自动捕获的支付待确认', icon: Receipt, route: 'capture-inbox' },
+  { label: '模板与周期交易', description: '常用交易模板与周期自动记账', icon: CalendarClock, route: 'templates' },
+  { label: '到期提醒', description: '信用卡还款、订阅等固定日程提醒', icon: Bell, route: 'reminders' },
   { label: '自动记账设置', description: '无障碍 / 通知监听 / 分享 OCR', icon: Scan, route: 'capture-settings' },
   { label: '备份与恢复', description: '完整本地备份', icon: DatabaseBackup, route: 'backup' },
   { label: '导出账单', description: 'CSV 或 JSON', icon: Download, route: 'export' },
