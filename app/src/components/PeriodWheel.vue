@@ -316,9 +316,16 @@ onMounted(centerCurrentYear)
 }
 
 .period-custom__to {
-  color: var(--color-text-tertiary);
-  font-size: var(--type-caption-size);
-  text-align: center;
+  /* 与右侧日期值框同高（44px）并对齐其底部：让「至」与 2026-11-07 那一行水平对齐，
+     而不是对着「开始日期」标签整列居中（回测反馈：至偏上、字太小） */
+  align-self: end;
+  display: flex;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .period-custom__hint {
