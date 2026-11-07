@@ -6,6 +6,7 @@ import { BarChart } from 'echarts/charts'
 import { CanvasRenderer } from 'echarts/renderers'
 
 import { resolveCategoryColor } from '@/features/finance/category-color'
+import { distributionColorAt } from '@/features/statistics/distribution-colors'
 
 echarts.use([BarChart, CanvasRenderer])
 
@@ -30,12 +31,10 @@ const sortedItems = computed(() =>
   [...props.items].sort((a, b) => Math.abs(b.amountMinor) - Math.abs(a.amountMinor)),
 )
 
-/** 画布高度随条目数自适应：每档约 44px，避免固定高度在条目少时大片留白、视觉贴顶 */
-const chartHeight = computed(() => Math.max(128, sortedItems.value.length * 44 + 16))
+/** 画布高度随条目数自适应：每档约 22px（回测反馈：高度/间距缩短一半） */
+const chartHeight = computed(() => Math.max(100, sortedItems.value.length * 22 + 10))
 
 function buildOption() {
-  const primaryColor = getCssVar('--color-primary-500') || THEME_COLOR_FALLBACKS.primary500
-  const expenseColor = getCssVar('--color-expense') || THEME_COLOR_FALLBACKS.expense
   const textColor = getCssVar('--color-text-secondary') || THEME_COLOR_FALLBACKS.textSecondary
   const tertiaryColor = getCssVar('--color-text-tertiary') || THEME_COLOR_FALLBACKS.textTertiary
 
@@ -45,7 +44,7 @@ function buildOption() {
 
   return {
     // containLabel:true 给类目轴标签让位，否则标签画在画布外被裁掉（PRD BUG-03）
-    grid: { left: 8, right: 64, top: 4, bottom: 4, containLabel: true },
+    grid: { left: 8, right: 64, top: 2, bottom: 2, containLabel: true },
     xAxis: {
       type: 'value',
       show: false,
@@ -70,20 +69,18 @@ function buildOption() {
     series: [
       {
         type: 'bar',
-        data: sortedItems.value.map((item) => ({
+        data: sortedItems.value.map((item, index) => ({
           value: Number((item.amountMinor / 100).toFixed(2)),
           itemStyle: {
             color: item.isOther
               ? tertiaryColor
               : item.color
                 ? resolveCategoryColor(item.color)
-                : item.amountMinor < 0
-                  ? expenseColor
-                  : primaryColor,
-            borderRadius: [0, 6, 6, 0],
+                : distributionColorAt(index),
+            borderRadius: [0, 5, 5, 0],
           },
         })),
-        barMaxWidth: 10,
+        barMaxWidth: 8,
         label: {
           show: true,
           position: 'right',
@@ -160,7 +157,7 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 }
 
 .bars-caption {
-  margin: var(--space-2) 0 0;
+  margin: var(--space-1) 0 0;
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   text-align: center;

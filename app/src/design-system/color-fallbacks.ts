@@ -27,4 +27,8 @@ export const THEME_COLOR_FALLBACKS = {
   sideDrawerSecondary: '#9b8cff',
   sideDrawerPeach: '#ffc7b7',
   sideDrawerMuted: '#7f898f',
+  /* 分布图（环形/条形）扩充配色：分类多时区分度更好 */
+  pink: '#d98695',
+  brown: '#a8763e',
+  steel: '#6b8ba4',
 }

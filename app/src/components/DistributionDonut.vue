@@ -3,6 +3,7 @@ import { THEME_COLOR_FALLBACKS } from '@/design-system/color-fallbacks'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { resolveCategoryColor } from '@/features/finance/category-color'
+import { distributionColorAt } from '@/features/statistics/distribution-colors'
 import * as echarts from 'echarts/core'
 import { PieChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
@@ -24,34 +25,17 @@ const donutRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
 
 const selectedId = ref<string>()
-const colors = [
-  'var(--color-primary-500)',
-  THEME_COLOR_FALLBACKS.gold,
-  THEME_COLOR_FALLBACKS.blue,
-  THEME_COLOR_FALLBACKS.expense,
-  THEME_COLOR_FALLBACKS.purple,
-  THEME_COLOR_FALLBACKS.teal,
-]
 
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
 
-const resolvedColors = computed(() =>
-  colors.map((c) => {
-    if (c.startsWith('var(')) {
-      const varName = c.slice(4, -1)
-      return getCssVar(varName) || c
-    }
-    return c
-  }),
-)
-
 /** "其他"归并项用中性灰，与真实分类的固定配色区分（PRD BUG-04）。 */
 function colorFor(point: { color?: string; isOther?: boolean }, index: number): string {
   if (point.isOther) return getCssVar('--color-text-tertiary') || THEME_COLOR_FALLBACKS.gray
   if (point.color) return resolveCategoryColor(point.color)
-  return resolvedColors.value[index % resolvedColors.value.length] ?? THEME_COLOR_FALLBACKS.gray
+  // 无分类色的切片按序取共享调色板（与条形图同色同序）
+  return distributionColorAt(index)
 }
 
 const positivePoints = computed(() => props.points.filter((point) => point.amountMinor > 0))
