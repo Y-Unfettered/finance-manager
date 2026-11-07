@@ -539,10 +539,6 @@ onMounted(load)
             没有匹配的图标；可点击上方"上传自定义图标"。
           </p>
         </div>
-            <p v-if="!iconGroups.length" class="icon-empty">
-              没有匹配的图标；可点击上方"上传自定义图标"。
-            </p>
-          </div>
         </div>
         <div class="editor__footer">
           <div class="color-field">
