@@ -38,6 +38,7 @@ const props = defineProps<{
 
 const chartRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
+let chartEl: HTMLElement | null = null
 
 function getCssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -66,6 +67,10 @@ function buildOption() {
       show: false,
       min: 0,
       max: maxVal * 1.2,
+      // 注意：父级 show:false 只是不画轴，containLabel 仍会按 axisLabel 的高度
+      // （margin 8 + 12px 字 ≈ 20px）预留空间，而且这块空间只从 grid 底部扣掉，
+      // 结果就是整块内容被顶上去、下面多出一大截。必须显式关掉 label 才真正归零。
+      axisLabel: { show: false },
     },
     yAxis: {
       type: 'category',
@@ -116,9 +121,15 @@ function buildOption() {
 }
 
 function renderChart(): void {
-  if (!chartRef.value) return
-  if (!chart) {
-    chart = echarts.init(chartRef.value)
+  const el = chartRef.value
+  if (!el) return
+  // 容器可能被 v-if 卸载后重建（如点击无数据年份时分布为空）：
+  // 实例与元素不匹配时必须弃旧实例重新 init，否则 setOption 画在已分离的旧画布上，
+  // 新容器永远空白（2026-11-07 回测：点年份滚轮后环/柱全部消失）
+  if (!chart || chartEl !== el) {
+    chart?.dispose()
+    chart = echarts.init(el)
+    chartEl = el
   }
   chart.setOption(buildOption(), true)
   // 高度随条目数变化后同步画布尺寸
@@ -138,6 +149,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
   chart?.dispose()
   chart = null
+  chartEl = null
 })
 
 watch(() => props.items, () => nextTick(renderChart), { deep: true })
@@ -158,13 +170,15 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
   margin-top: var(--space-2);
   /* ③ 与分隔线的上下关系：padding 上 6px（线→首柱）、下 2px（末柱→备注，
      备注文字自带约 2px 行距，视觉上下≈相等）。想调就改这三个数 */
-  padding: 6px 0 2px;
+  padding: 6px 0 0px;
   border-top: 1px solid var(--color-divider);
+  border-bottom: 1px solid var(--color-divider);
 }
 
 .bar-chart {
   width: 100%;
   /* 高度完全由 chartHeight 内联控制（档数×22，无余量） */
+  background-color: aqua;
 }
 
 .empty-hint {
@@ -175,8 +189,10 @@ watch(() => props.items, () => nextTick(renderChart), { deep: true })
 
 .bars-caption {
   margin: 0;
+  padding: 0;
   color: var(--color-text-tertiary);
   font-size: var(--type-caption-size);
   text-align: center;
+  background-color: aquamarine;
 }
 </style>

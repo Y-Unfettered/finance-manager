@@ -23,6 +23,7 @@ const props = defineProps<{
 
 const donutRef = ref<HTMLElement>()
 let chart: echarts.ECharts | null = null
+let chartEl: HTMLElement | null = null
 
 const selectedId = ref<string>()
 
@@ -81,9 +82,14 @@ function buildOption() {
 }
 
 function renderChart(): void {
-  if (!donutRef.value) return
-  if (!chart) {
-    chart = echarts.init(donutRef.value)
+  const el = donutRef.value
+  if (!el) return
+  // 容器被 v-if 卸载后重建时（分布短暂为空再恢复），实例与元素不匹配必须重新
+  // init，否则画在已分离的旧画布上、环消失（2026-11-07 回测）
+  if (!chart || chartEl !== el) {
+    chart?.dispose()
+    chart = echarts.init(el)
+    chartEl = el
   }
   chart.setOption(buildOption(), true)
 }
