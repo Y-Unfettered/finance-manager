@@ -58,3 +58,7 @@ cd app/android && ./gradlew testDebugUnitTest assembleDebug
 ## 版本策略
 
 三位语义（见 `AGENTS.md`）：第一位 = 发布版本，中间位 = 功能版本，最后位 = 补丁。每个版本写 `版本记录/` 并打 git tag；任务归档时提交并推送远端。
+
+## 许可
+
+本项目采用 [CC BY-NC-SA 4.0](LICENSE)（署名-非商业性使用-相同方式共享）：允许分享与改编，**禁止商用**；改编须相同方式共享。详见 `LICENSE`。
