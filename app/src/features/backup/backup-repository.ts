@@ -255,6 +255,8 @@ const TABLE_SCHEMAS: readonly TableSchema[] = [
       'last_triggered_at',
       'created_at',
       'updated_at',
+      'recurrence',
+      'managed_by',
     ],
   },
 ]

@@ -104,6 +104,15 @@ export interface RecurringTransactionWithTemplate extends RecurringTransactionRe
 
 export type ReminderType = 'credit_card_due' | 'prepaid_expiry' | 'receivable_due' | 'custom'
 
+/** 循环方式：none = 单次固定日期；monthly = 每月同日（以到期日的"日"为锚，短月取月末）。 */
+export type ReminderRecurrence = 'none' | 'monthly'
+
+/**
+ * 提醒来源：缺省（undefined）= 用户手工创建；
+ * 'credit_profile' = 由信用卡/信用账户的账期自动生成（账期变化、账户归档/删除时随之同步）。
+ */
+export type ReminderManagedBy = 'credit_profile'
+
 export interface ReminderRecord {
   id: string
   ledgerId: string
@@ -113,8 +122,10 @@ export interface ReminderRecord {
   dueDate: string
   amountMinor?: number
   advanceDays: number
+  recurrence: ReminderRecurrence
   enabled: boolean
   lastTriggeredAt?: string
+  managedBy?: ReminderManagedBy
   createdAt: string
   updatedAt: string
 }
@@ -127,6 +138,10 @@ export interface UpcomingReminder {
   reminder: ReminderWithAccount
   daysUntilDue: number
   isAdvance: boolean
+  /** 按循环规则计算的下一到期日（不循环 = 原 dueDate），本地日期语义。 */
+  nextDueDate: string
+  /** 当前这一期是否已"标记已处理"（lastTriggeredAt 落在本期提醒窗口内）。 */
+  isHandled: boolean
 }
 
 export interface LedgerRecord {

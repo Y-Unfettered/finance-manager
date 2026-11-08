@@ -1,4 +1,5 @@
 <script setup lang="ts">
+// AI署名: 豆包 | 2026-11-08 | 新增可选 minHeight（默认 240px 不变），供短确认面板按内容收缩
 import { X } from '@lucide/vue'
 import { Popup } from 'vant'
 import { computed, watch } from 'vue'
@@ -7,10 +8,15 @@ import 'vant/es/popup/style'
 import { usePageScrollLock } from '@/composables/usePageScrollLock'
 import { useRoutePageActive } from '@/composables/routePageActivation'
 
-const props = defineProps<{
-  show: boolean
-  title: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    show: boolean
+    title: string
+    /** 面板最小高度；短内容面板（如删除确认）传 0，让高度随内容收缩，避免按钮下方留白 */
+    minHeight?: number
+  }>(),
+  { minHeight: 240 },
+)
 
 const emit = defineEmits<{
   'update:show': [value: boolean]
@@ -18,6 +24,8 @@ const emit = defineEmits<{
 
 const pageActive = useRoutePageActive()
 const visible = computed(() => props.show && pageActive.value)
+/** 用 CSS 变量下发最小高度，避免各调用处都要感知样式实现 */
+const sheetStyle = computed(() => `--sheet-min-height: ${props.minHeight}px`)
 
 // PRD BUG-02：不再用 Vant 的 body 锁（与本应用真实滚动容器不一致，会泄漏），
 // 统一锁 .route-page-frame，引用计数、失活/卸载强制释放
@@ -38,6 +46,7 @@ watch(pageActive, (activePage) => {
     safe-area-inset-bottom
     :lock-scroll="false"
     class="app-bottom-sheet"
+    :style="sheetStyle"
     @update:show="$emit('update:show', $event)"
   >
     <div class="app-bottom-sheet__header">
@@ -62,7 +71,7 @@ watch(pageActive, (activePage) => {
 
 <style scoped>
 .app-bottom-sheet {
-  min-height: 240px;
+  min-height: var(--sheet-min-height, 240px);
   color: var(--color-text-primary);
   background: var(--color-surface);
 }

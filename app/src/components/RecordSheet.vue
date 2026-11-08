@@ -553,14 +553,23 @@ async function initializeFormState(): Promise<void> {
     if (typeof pendingCaptureId === 'string' && pendingCaptureId) {
       captureId.value = parseInt(pendingCaptureId, 10)
     }
+    let creditTargetId: string | null = null
     if (typeof pendingDirection === 'string' && pendingDirection) {
       captureDirection.value = pendingDirection
-      // 方向明确时自动切到对应模式（income→收入；transfer→转账），expense 保持默认；
+      // 方向明确时自动切到对应模式（income→收入；transfer→转账/还款），expense 保持默认；
       // 仅在无法判断（confirm）时提示用户自行确认
       if (pendingDirection === 'income') {
         switchMode('income')
       } else if (pendingDirection === 'transfer') {
-        switchMode('transfer')
+        // 转入线索命中信贷账户 → 还款模式（如支付宝还花呗，复用现有还款入账）；
+        // 未命中（转入方为借记账户，如微信转账/提现）→ 转账模式，行为不变
+        const targetHint =
+          typeof route.query.targetAccountHint === 'string' ? route.query.targetAccountHint : ''
+        const srcPkg = typeof pendingSourcePackage === 'string' ? pendingSourcePackage : ''
+        creditTargetId = targetHint
+          ? matchCaptureAccount(targetHint, srcPkg, creditAccounts.value, false)
+          : null
+        switchMode(creditTargetId ? 'repayment' : 'transfer')
       }
       captureHintVisible.value = pendingDirection === 'confirm'
     }
@@ -575,14 +584,15 @@ async function initializeFormState(): Promise<void> {
       sourceAccountId.value = matchedAccountId
     }
     // P1：转账转入方预填（必须在 switchMode 之后——reset 会覆盖预填值）
+    // 还款模式转入方=信贷账户（如还花呗）；转账模式转入方=借记账户
     const pendingTarget = route.query.targetAccountHint
     if (typeof pendingTarget === 'string' && pendingTarget) {
-      const targetId = matchCaptureAccount(
-        pendingTarget,
-        typeof pendingSourcePackage === 'string' ? pendingSourcePackage : '',
-        activeAccounts.value,
-        true,
-      )
+      const srcPkg = typeof pendingSourcePackage === 'string' ? pendingSourcePackage : ''
+      const targetId =
+        creditTargetId ??
+        (isRepayment.value
+          ? matchCaptureAccount(pendingTarget, srcPkg, creditAccounts.value, false)
+          : matchCaptureAccount(pendingTarget, srcPkg, activeAccounts.value, true))
       if (targetId) targetAccountId.value = targetId
     }
     // 分类预选：规则建议（如 expense:insurance）→ 按分类语义词典匹配用户实际分类

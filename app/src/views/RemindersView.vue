@@ -1,6 +1,7 @@
 <script setup lang="ts">
+// AI署名: 豆包 | 2026-11-08 | 刷新改静默（不闪 loading/不整页回顶）；删除面板按钮钉底等宽
 import { Bell, CalendarClock, Check, Pencil, Plus, Trash2 } from '@lucide/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import AppBottomSheet from '@/components/AppBottomSheet.vue'
@@ -24,15 +25,16 @@ import {
   type CreateReminderInput,
   type UpdateReminderInput,
 } from '@/features/reminders/reminder-service'
+import {
+  REMINDER_TYPE_LABELS,
+  daysLabel,
+  formatReminderDate as formatDate,
+  reminderTypeLabel as typeLabel,
+} from '@/features/reminders/reminder-labels'
+import { dateInputToLocalIso, toDateInputValue } from '@/features/reminders/reminder-dates'
+import { getLogger } from '@/features/debug/app-logger'
 import { useAppStore } from '@/stores/app'
 import { navigateBack } from '@/router/navigation-transition'
-
-const REMINDER_TYPE_LABELS: Record<ReminderType, string> = {
-  credit_card_due: '信用卡还款',
-  prepaid_expiry: '预付卡到期',
-  receivable_due: '应收款到期',
-  custom: '自定义提醒',
-}
 
 interface ReminderFormState {
   type: ReminderType
@@ -41,6 +43,7 @@ interface ReminderFormState {
   dueDate: string
   amount: string
   advanceDays: string
+  recurring: boolean
   enabled: boolean
 }
 
@@ -54,7 +57,10 @@ const upcoming = ref<readonly UpcomingReminder[]>([])
 const accounts = ref<AccountBalanceRecord[]>([])
 const loading = ref(true)
 const errorMessage = ref('')
+/** 编辑表单内的错误：只红字提示，不再替换掉列表（页面级错误走 errorMessage） */
+const formError = ref('')
 const saving = ref(false)
+const log = getLogger('reminder')
 
 const showEditor = ref(false)
 const editingId = ref<string | null>(null)
@@ -68,9 +74,10 @@ function defaultForm(): ReminderFormState {
     type: 'custom',
     accountId: '',
     title: '',
-    dueDate: localDateValue(new Date()),
+    dueDate: toDateInputValue(new Date().toISOString()),
     amount: '',
     advanceDays: '3',
+    recurring: false,
     enabled: true,
   }
 }
@@ -105,12 +112,20 @@ const currentAccountOptions = computed(() => {
   }
 })
 
-async function load(): Promise<void> {
+/**
+ * 加载列表。默认显示骨架屏；`silent` 为静默刷新：
+ * 不动 loading、不拆列表，用新数据原位替换。
+ *
+ * 为什么必须要静默模式（2026-11-08 实测）：模板里两个列表是 `v-if="!loading"`，
+ * 一置 true 列表整段被拆掉、内容高度塌回 0，滚动容器的 scrollTop 会被钳到 0；
+ * 数据回来后页面停在最上面，用户刚点的那条要重新往下找。
+ */
+async function load(options: { silent?: boolean } = {}): Promise<void> {
   if (!reminderService || !appStore.ledgerId) {
     loading.value = false
     return
   }
-  loading.value = true
+  if (!options.silent) loading.value = true
   errorMessage.value = ''
   try {
     const [list, up, accts] = await Promise.all([
@@ -131,7 +146,7 @@ async function load(): Promise<void> {
 function openCreate(): void {
   editingId.value = null
   form.value = defaultForm()
-  errorMessage.value = ''
+  formError.value = ''
   showEditor.value = true
 }
 
@@ -141,25 +156,29 @@ function openEdit(item: ReminderWithAccount): void {
     type: item.type,
     accountId: item.accountId ?? '',
     title: item.title,
-    dueDate: item.dueDate,
+    // 库里的 dueDate 是完整 ISO（本地零点、带 Z），表单只要 YYYY-MM-DD，
+    // 原样塞进去保存时会拼成非法日期并抛 RangeError: Invalid time value（2026-11-08 线上报错）
+    dueDate: toDateInputValue(item.dueDate),
     amount: item.amountMinor ? (item.amountMinor / 100).toFixed(2) : '',
     advanceDays: String(item.advanceDays),
+    recurring: item.recurrence === 'monthly',
     enabled: item.enabled,
   }
-  errorMessage.value = ''
+  formError.value = ''
   showEditor.value = true
 }
 
 async function submit(): Promise<void> {
   if (!reminderService || !appStore.ledgerId || saving.value) return
   saving.value = true
-  errorMessage.value = ''
+  formError.value = ''
   try {
-    const dueDateIso = new Date(`${form.value.dueDate}T00:00:00`).toISOString()
+    const dueDateIso = dateInputToLocalIso(form.value.dueDate)
     const amountMinor = form.value.amount.trim()
       ? parseCnyInputToMinor(form.value.amount)
       : undefined
     const advanceDays = Number.parseInt(form.value.advanceDays || '0', 10)
+    const recurrence = form.value.recurring ? 'monthly' : 'none'
     if (editingId.value) {
       const update: UpdateReminderInput = {
         ledgerId: appStore.ledgerId,
@@ -168,6 +187,7 @@ async function submit(): Promise<void> {
         dueDate: dueDateIso,
         amountMinor,
         advanceDays,
+        recurrence,
         enabled: form.value.enabled,
       }
       await reminderService.updateReminder(update)
@@ -180,14 +200,21 @@ async function submit(): Promise<void> {
         dueDate: dueDateIso,
         amountMinor,
         advanceDays,
+        recurrence,
         enabled: form.value.enabled,
       }
       await reminderService.createReminder(payload)
     }
     showEditor.value = false
-    await load()
+    await load({ silent: true })
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : String(error)
+    formError.value = error instanceof Error ? error.message : String(error)
+    log.error('保存提醒失败', {
+      editing: Boolean(editingId.value),
+      dueDate: form.value.dueDate,
+      recurring: form.value.recurring,
+      message: formError.value,
+    })
   } finally {
     saving.value = false
   }
@@ -206,7 +233,7 @@ async function confirmDelete(): Promise<void> {
     await reminderService.deleteReminder(appStore.ledgerId, pendingReminder.value.id)
     showDelete.value = false
     pendingReminder.value = null
-    await load()
+    await load({ silent: true })
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -224,7 +251,7 @@ async function toggleEnabled(item: ReminderWithAccount): Promise<void> {
       reminderId: item.id,
       enabled: !item.enabled,
     })
-    await load()
+    await load({ silent: true })
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -238,7 +265,7 @@ async function markTriggered(item: ReminderWithAccount): Promise<void> {
   errorMessage.value = ''
   try {
     await reminderService.markTriggered(item.id)
-    await load()
+    await load({ silent: true })
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -246,29 +273,24 @@ async function markTriggered(item: ReminderWithAccount): Promise<void> {
   }
 }
 
-function typeLabel(type: ReminderType): string {
-  return REMINDER_TYPE_LABELS[type] ?? type
-}
-
-function formatDate(iso: string): string {
-  const date = new Date(iso)
-  const pad = (n: number): string => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function daysLabel(days: number): string {
-  if (days === 0) return '今天到期'
-  if (days === 1) return '明天到期'
-  if (days < 0) return `已逾期 ${Math.abs(days)} 天`
-  return `${days} 天后到期`
-}
-
-function localDateValue(date: Date): string {
-  const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-  return shifted.toISOString().slice(0, 10)
-}
-
 onMounted(load)
+
+/**
+ * 页面被 App 的 KeepAlive 缓存，同一实例不会再次触发 onMounted：
+ * 建信用卡 / 改账期之后回到本页，看到的还是上一次的快照（2026-11-08 实测：
+ * 库里提醒已经建好/已改成 9 号，页面仍显示旧数据）。所以每次重新激活都刷新一次。
+ *
+ * 重激活必须静默刷新：RoutePageFrame 在 onActivated 时刚把 scrollTop 恢复好，
+ * 若这里再闪一次骨架屏、把列表拆掉，恢复的滚动位置会立刻被钳回 0。
+ */
+let skipFirstActivation = true
+onActivated(() => {
+  if (skipFirstActivation) {
+    skipFirstActivation = false
+    return
+  }
+  void load({ silent: true })
+})
 </script>
 
 <template>
@@ -287,7 +309,7 @@ onMounted(load)
       <div v-if="loading" class="page-state">正在加载…</div>
       <div v-else-if="errorMessage" class="page-state page-state--error">
         <span>{{ errorMessage }}</span>
-        <button type="button" @click="load">重新加载</button>
+        <button type="button" @click="load()">重新加载</button>
       </div>
 
       <section v-if="!loading && upcoming.length > 0" class="section">
@@ -312,14 +334,17 @@ onMounted(load)
           </div>
           <div class="upcoming-item__meta">
             <span>{{ typeLabel(item.reminder.type) }}</span>
-            <span>{{ formatDate(item.reminder.dueDate) }}</span>
+            <span>{{ formatDate(item.nextDueDate) }}</span>
+            <span v-if="item.reminder.recurrence === 'monthly'">每月重复</span>
+            <span v-if="item.reminder.managedBy === 'credit_profile'" class="auto-tag">自动</span>
             <span v-if="item.reminder.accountName">{{ item.reminder.accountName }}</span>
+            <span v-if="item.isHandled">本期已处理</span>
           </div>
           <div v-if="item.reminder.amountMinor" class="upcoming-item__amount">
             <span>应还金额</span>
             <MoneyText :amount-minor="item.reminder.amountMinor" />
           </div>
-          <div class="upcoming-item__actions">
+          <div v-if="!item.isHandled" class="upcoming-item__actions">
             <button type="button" class="chip" @click="markTriggered(item.reminder)">
               <Check :size="14" :stroke-width="2.5" aria-hidden="true" />标记已处理
             </button>
@@ -361,6 +386,8 @@ onMounted(load)
                 formatDate(item.dueDate)
               }}</span
             >
+            <span v-if="item.recurrence === 'monthly'">每月重复</span>
+            <span v-if="item.managedBy === 'credit_profile'" class="auto-tag">自动</span>
             <span v-if="item.accountName">{{ item.accountName }}</span>
             <span v-if="item.advanceDays > 0">提前 {{ item.advanceDays }} 天提醒</span>
           </div>
@@ -402,7 +429,7 @@ onMounted(load)
         <AppDateInput
           v-model="form.dueDate"
           label="到期日期"
-          description="点击选择日期"
+          :description="form.recurring ? '到期日按每月同一天自动延续（首次为所选日期）' : '点击选择日期'"
         />
         <label class="form-row">
           <span>金额（可选）</span>
@@ -414,11 +441,18 @@ onMounted(load)
         </label>
         <label class="form-row form-row--switch">
           <AppSwitch
+            v-model="form.recurring"
+            label="每月同日重复"
+            description="适合花呗/白条等固定还款日，开启后无需每月重设"
+          />
+        </label>
+        <label class="form-row form-row--switch">
+          <AppSwitch
             v-model="form.enabled"
             label="启用此提醒"
           />
         </label>
-        <div v-if="errorMessage" class="form-error">{{ errorMessage }}</div>
+        <div v-if="formError" class="form-error">{{ formError }}</div>
         <div class="form-actions">
           <button type="button" @click="showEditor = false">取消</button>
           <button type="submit" :disabled="saving">
@@ -428,13 +462,14 @@ onMounted(load)
       </form>
     </AppBottomSheet>
 
-    <AppBottomSheet v-model:show="showDelete" title="删除提醒">
+    <!-- 删除确认：高度随内容收缩（min-height 0），按钮钉在面板最底部、五五等宽 -->
+    <AppBottomSheet v-model:show="showDelete" title="删除提醒" :min-height="0">
       <div class="confirm-dialog">
         <p>
           将删除提醒 <strong>{{ pendingReminder?.title }}</strong
           >。确认删除？
         </p>
-        <div class="form-actions">
+        <div class="confirm-actions">
           <button type="button" @click="showDelete = false">取消</button>
           <button type="button" class="danger" :disabled="saving" @click="confirmDelete">
             删除
@@ -494,8 +529,13 @@ onMounted(load)
 .empty-state svg {
   color: var(--color-primary-500);
 }
+.section {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-3); /* 卡片栈间距 12px，与其他页面一致 */
+}
 .section h2 {
-  margin: 0 0 var(--space-2);
+  margin: var(--space-2) 0 var(--space-1);
   font-size: var(--type-section-title-size);
 }
 .upcoming-item,
@@ -552,6 +592,14 @@ onMounted(load)
   color: var(--color-primary-700);
   font-size: var(--type-caption-size);
   background: var(--color-primary-50);
+  border-radius: var(--radius-pill);
+}
+/* 由信用卡账期自动生成的提醒：给个小角标，避免用户以为是重复/来历不明的条目 */
+.auto-tag {
+  padding: 1px var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--type-caption-size);
+  background: var(--color-background);
   border-radius: var(--radius-pill);
 }
 .upcoming-item__amount,
@@ -696,10 +744,43 @@ onMounted(load)
   background: var(--color-expense);
   color: white;
 }
+.confirm-dialog {
+  display: grid;
+  gap: var(--space-5);
+}
 .confirm-dialog p {
-  margin: 0 0 var(--space-3);
+  margin: 0;
   color: var(--color-text-secondary);
   font-size: var(--type-body-size);
   line-height: 1.6;
+}
+/*
+ * 删除确认的两个按钮：一横排五五等宽，钉在面板最底部。
+ * 左右留白由 AppBottomSheet 的 body padding（16px）提供，
+ * 距屏幕底部的安全距离由 Popup 的 safe-area-inset-bottom + body padding 兜住。
+ * 面板用 min-height 0，高度随内容收缩，按钮下方不再有大片空白。
+ */
+.confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.confirm-actions button {
+  min-height: var(--size-touch-target);
+  padding: 0 var(--space-4);
+  color: var(--color-text-primary);
+  font-size: 15px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-control);
+}
+.confirm-actions button.danger {
+  color: #fff;
+  font-weight: 600;
+  background: var(--color-expense);
+  border-color: var(--color-expense);
+}
+.confirm-actions button:disabled {
+  opacity: 0.5;
 }
 </style>

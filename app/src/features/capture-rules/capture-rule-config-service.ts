@@ -102,6 +102,8 @@ export interface CaptureRule {
   /** 账户固定提示（模板语义固定入某账户，如红包→微信大号零钱） */
   defaultSourceAccountHint?: string
   defaultTargetAccountHint?: string
+  /** 分类无命中时的规则默认分类（如微信·转账收入→income-other） */
+  defaultCategoryId?: string
   enabled: boolean
   priority: number
 }
@@ -114,9 +116,10 @@ export interface CapturePreferences {
 
 /** 规则配置（JSON 格式，同步到原生侧）。
  * version 1/2 为旧版宽松匹配；3 = 收紧后的规则集（完整成功词 + 页面签名强制），
- * 加载到旧版本配置时自动升级为最新默认规则并回写原生。 */
+ * 加载到旧版本配置时自动升级为最新默认规则并回写原生。
+ * 5 = 微信多模板变体标签齐备；6 = 新增支付宝·还花呗模板 + 补齐 wechat-transfer-in。 */
 export interface CaptureRuleConfig {
-  version: 1 | 2 | 3 | 4 | 5
+  version: 1 | 2 | 3 | 4 | 5 | 6
   rules: CaptureRule[]
   preferences: CapturePreferences
 }
@@ -301,6 +304,42 @@ const DEFAULT_RULES: CaptureRule[] = [
     priority: 200,
   },
   {
+    id: 'alipay-huabei-repayment',
+    name: '支付宝·还花呗',
+    packageName: 'com.eg.android.AlipayGphone',
+    channel: 'accessibility',
+    pageType: 'bill-detail',
+    successKeywords: [],
+    amountPatterns: [],
+    merchantPatterns: [],
+    accountPatterns: [],
+    pageSignature: {
+      // "还款成功"+"花呗"双特征锁定还花呗详情页（还信用卡页无"花呗"字样，不会抢）
+      requireAll: ['还款成功', '花呗'],
+      requiredAnyLabel: ['创建时间', '支付时间', '还款时间'],
+      requireAnyOf: ['还款到', '付款方式'],
+    },
+    // 金额无标签（"580.47元"顶格显示），走整页扫描（时间串与卡号尾缀已被剔除）；
+    // 付款方式=转出账户（"中信银行储蓄卡(5441)"，账户匹配器按尾缀 5441 强匹配）
+    fieldAliases: {
+      occurredAtLabel: ['创建时间', '支付时间', '还款时间'],
+      accountLabel: ['付款方式', '支付方式'],
+      orderIdLabel: ['交易单号', '订单号'],
+    },
+    directionRule: {
+      negative: 'expense',
+      // 还款=自账户划转（付款方式→还款到），无外部打款信号字段
+      selfTransferFields: ['还款到', '付款方式'],
+      refundFields: ['退款'],
+      default: 'transfer',
+    },
+    // 转入方语义固定"花呗"（改账户名时改这里）；页面无商户/备注/订单号字段
+    defaultTargetAccountHint: '花呗',
+    categoryMappings: [],
+    enabled: true,
+    priority: 210,
+  },
+  {
     id: 'wechat-bill-detail',
     name: '微信·账单详情',
     packageName: 'com.tencent.mm',
@@ -463,10 +502,49 @@ const DEFAULT_RULES: CaptureRule[] = [
     enabled: true,
     priority: 210,
   },
+  {
+    // 与原生 CaptureRuleDefaults.java 的 wechatTransferInRule() 保持同步
+    //（此前只加在原生侧，前端漏配——版本升级整体替换默认配置时会把它冲掉）
+    id: 'wechat-transfer-in',
+    name: '微信·转账收入',
+    packageName: 'com.tencent.mm',
+    channel: 'accessibility',
+    pageType: 'bill-detail',
+    successKeywords: [],
+    amountPatterns: [],
+    merchantPatterns: [],
+    accountPatterns: [],
+    pageSignature: {
+      requireAll: ['-来自'],
+      requiredAnyLabel: ['付款商家', '转账说明', '当前状态', '收款时间'],
+    },
+    // 商户：优先"付款商家"标签（模板 D 有），无标签时布局锚点剥正则前缀（模板 E/标题）
+    layoutExtract: {
+      merchant: { anchor: 'amount', offset: -1, stripPrefixPattern: '^(商家转账|转账)-来自' },
+    },
+    defaultSourceAccountHint: '微信（大号）',
+    fieldAliases: {
+      amountLabel: ['金额'],
+      occurredAtLabel: ['转账时间', '收款时间'],
+      merchantLabel: ['付款商家'],
+      noteLabel: ['付款备注', '转账说明'],
+      orderIdLabel: ['付款单号', '转账单号'],
+    },
+    directionRule: {
+      negative: 'expense',
+      default: 'income',
+    },
+    categoryMappings: [
+      { namePattern: '(现金红包|红包|返现|奖励|签到|开盲盒)', categoryId: 'income-other', kind: 'income' },
+    ],
+    defaultCategoryId: 'income-other',
+    enabled: true,
+    priority: 205,
+  },
 ]
 
 const DEFAULT_CONFIG: CaptureRuleConfig = {
-  version: 5,
+  version: 6,
   rules: DEFAULT_RULES,
   preferences: {
     quickEntryEnabled: true,
@@ -489,9 +567,9 @@ export function captureAppName(packageName: string): string {
 
 const STORAGE_KEY = 'capture-rule-config'
 
-/** 校验配置版本：v1~v5 均接受（v5 为最新：微信多模板变体标签齐备）。 */
+/** 校验配置版本：v1~v6 均接受（v6 为最新：支付宝·还花呗模板 + 补齐微信·转账收入）。 */
 function isValidVersion(v: number): boolean {
-  return v === 1 || v === 2 || v === 3 || v === 4 || v === 5
+  return v === 1 || v === 2 || v === 3 || v === 4 || v === 5 || v === 6
 }
 
 /** 本地存储（web 层用 localStorage，作为原生侧的规则备份）。 */

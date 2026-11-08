@@ -57,6 +57,10 @@ import {
 import type { AccountActivityRecord } from '@/db/repositories/transaction-repository'
 import { PayableRepository } from '@/db/repositories/payable-repository'
 import { ReceivableRepository } from '@/db/repositories/receivable-repository'
+import {
+  CreditRepaymentReminderService,
+  type CreditAccountSnapshot,
+} from '@/features/reminders/credit-reminder-sync'
 
 export type { LedgerListItem }
 
@@ -386,6 +390,8 @@ export class FinanceService implements FinanceServicePort {
   private readonly transactions: TransactionRepository
   private readonly receivables: ReceivableRepository
   private readonly payables: PayableRepository
+  /** 信用卡账期 → 到期提醒 的同步器（账户操作后自动维护那条"每月同日"还款提醒）。 */
+  private readonly creditReminders: CreditRepaymentReminderService
 
   constructor(
     database: SqliteExecutor,
@@ -394,6 +400,7 @@ export class FinanceService implements FinanceServicePort {
   ) {
     this.accounts = new AccountRepository(database)
     this.accountProfiles = new AccountProfileRepository(database)
+    this.creditReminders = new CreditRepaymentReminderService(database, ids, clock)
     this.categories = new CategoryRepository(database)
     this.dashboard = new DashboardRepository(database)
     this.transactions = new TransactionRepository(database, ids, clock)
@@ -680,15 +687,25 @@ export class FinanceService implements FinanceServicePort {
         updatedAt: now,
       })
       if (isLiabilityAccountType(record.type)) {
-        await this.accountProfiles.saveCreditProfile({
-          accountId: record.id,
-          creditLimitMinor: input.creditLimitMinor ?? 0,
+        const creditProfile = {
           billDay: input.billDay,
           repaymentDay: input.repaymentDay,
           reminderDays: input.reminderDays ?? 3,
+        }
+        await this.accountProfiles.saveCreditProfile({
+          accountId: record.id,
+          creditLimitMinor: input.creditLimitMinor ?? 0,
+          ...creditProfile,
           effectiveFrom: input.occurredAt ?? now,
           createdAt: now,
           updatedAt: now,
+        })
+        // 账期填全（出账日 + 还款日）时，同步生成"每月同日"的还款提醒
+        await this.syncCreditReminder({
+          ledgerId: input.ledgerId,
+          accountId: record.id,
+          accountName: record.name,
+          profile: creditProfile,
         })
       }
       if (initialBalanceMinor > 0) {
@@ -743,18 +760,39 @@ export class FinanceService implements FinanceServicePort {
       })
       if (isLiabilityAccountType(input.type)) {
         const existing = await this.accountProfiles.getCreditProfile(input.accountId)
+        // 注意：编辑表单可能不传 reminderDays（如账户详情页只改名称/额度），
+        // 此时必须沿用已存的提前天数，否则会被 ?? 3 打回默认值（既有缺陷，2026-11-08 修）。
+        const reminderDays = input.reminderDays ?? existing?.reminderDays ?? 3
+        const creditProfile = {
+          billDay: input.billDay,
+          repaymentDay: input.repaymentDay,
+          reminderDays,
+        }
         await this.accountProfiles.saveCreditProfile({
           accountId: input.accountId,
           creditLimitMinor: input.creditLimitMinor ?? 0,
-          billDay: input.billDay,
-          repaymentDay: input.repaymentDay,
-          reminderDays: input.reminderDays ?? 3,
+          ...creditProfile,
           effectiveFrom: existing?.effectiveFrom ?? now,
           createdAt: existing?.createdAt ?? now,
           updatedAt: now,
         })
+        await this.syncCreditReminder({
+          ledgerId: input.ledgerId,
+          accountId: input.accountId,
+          accountName: requiredText(input.name, '请输入账户名称'),
+          profile: creditProfile,
+          previousProfile: existing,
+          previousAccountName: account.name,
+        })
       } else {
         await this.accountProfiles.deleteCreditProfile(input.accountId)
+        // 账户从信用账户改成其他类型：账期概念不复存在，连带清掉自动生成的还款提醒
+        await this.syncCreditReminder({
+          ledgerId: input.ledgerId,
+          accountId: input.accountId,
+          accountName: requiredText(input.name, '请输入账户名称'),
+          profile: undefined,
+        })
       }
       log.info('updateAccount: success', { accountId: input.accountId, name: input.name })
     } catch (error) {
@@ -797,6 +835,18 @@ export class FinanceService implements FinanceServicePort {
       const account = await this.accounts.findBalance(input.accountId)
       if (!account || account.ledgerId !== input.ledgerId) throw new Error('账户不存在')
       await this.accounts.rename(input.accountId, name, this.clock.nowIso())
+      // 账户改名：自动生成的提醒标题跟着改（用户自己改过的标题不动）
+      const profile = await this.accountProfiles.getCreditProfile(input.accountId)
+      if (profile) {
+        await this.syncCreditReminder({
+          ledgerId: input.ledgerId,
+          accountId: input.accountId,
+          accountName: name,
+          profile,
+          previousProfile: profile,
+          previousAccountName: account.name,
+        })
+      }
     } catch (error) {
       log.error('renameAccount: failed', { accountId: input.accountId , error: error instanceof Error ? error.message : String(error) })
       throw error
@@ -812,6 +862,7 @@ export class FinanceService implements FinanceServicePort {
         throw new Error('账户余额非零，请先调整余额或转账后再归档')
       }
       await this.accounts.archive(accountId, this.clock.nowIso())
+      await this.syncCreditReminderForExistingAccount(account, { archived: true, syncEnabled: true })
     } catch (error) {
       log.error('archiveAccount: failed', { accountId , error: error instanceof Error ? error.message : String(error) })
       throw error
@@ -824,6 +875,7 @@ export class FinanceService implements FinanceServicePort {
       const account = await this.accounts.findBalance(accountId)
       if (!account || account.ledgerId !== ledgerId) throw new Error('账户不存在')
       await this.accounts.unarchive(accountId, this.clock.nowIso())
+      await this.syncCreditReminderForExistingAccount(account, { archived: false, syncEnabled: true })
     } catch (error) {
       log.error('unarchiveAccount: failed', { accountId , error: error instanceof Error ? error.message : String(error) })
       throw error
@@ -842,12 +894,62 @@ export class FinanceService implements FinanceServicePort {
     try {
       const account = await this.accounts.findBalance(accountId)
       if (!account || account.ledgerId !== ledgerId) throw new Error('账户不存在')
+      // 先清掉由账期自动生成的还款提醒，避免账户删了提醒还在（不赌 FK 是否生效）
+      await this.creditReminders.removeForAccount(accountId)
       await this.accounts.deleteWithTransactions(ledgerId, accountId)
       log.info('deleteAccount: success', { accountId })
     } catch (error) {
       log.error('deleteAccount: failed', { accountId , error: error instanceof Error ? error.message : String(error) })
       throw error
     }
+  }
+
+  /**
+   * 存量账户一次性回填：账户里早已填好账期、但当时没有自动提醒的信用卡/信用账户，
+   * 升级后首次启动补建提醒（幂等，APP 侧只执行一次）。失败只记日志，不阻塞启动。
+   */
+  async backfillCreditReminders(): Promise<void> {
+    try {
+      const created = await this.creditReminders.backfillOnce()
+      if (created > 0) log.info('backfillCreditReminders: done', { created })
+    } catch (error) {
+      log.error('backfillCreditReminders: failed', {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  /**
+   * 账期同步的兜底包装：提醒是账户操作的"副产物"，同步失败不能让建卡/改卡整体失败
+   * （否则用户看到报错，但账户其实已经建好了）。失败留痕到 reminder/finance 日志。
+   */
+  private async syncCreditReminder(snapshot: CreditAccountSnapshot): Promise<void> {
+    try {
+      await this.creditReminders.syncForAccount(snapshot)
+    } catch (error) {
+      log.error('creditReminder sync failed (account op continues)', {
+        accountId: snapshot.accountId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  /** 按账户当前状态同步（归档/恢复用：落地 enabled，且不触碰用户手改的到期日/天数）。 */
+  private async syncCreditReminderForExistingAccount(
+    account: AccountBalanceRecord,
+    options: { archived: boolean; syncEnabled: boolean },
+  ): Promise<void> {
+    const profile = await this.accountProfiles.getCreditProfile(account.id)
+    await this.syncCreditReminder({
+      ledgerId: account.ledgerId,
+      accountId: account.id,
+      accountName: account.name,
+      profile: profile ?? undefined,
+      previousProfile: profile ?? undefined,
+      previousAccountName: account.name,
+      archived: options.archived,
+      syncEnabled: options.syncEnabled,
+    })
   }
 
   listReceivables(ledgerId: string): Promise<ReceivableBalanceRecord[]> {

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { App as CapacitorApp } from '@capacitor/app'
+import { Capacitor } from '@capacitor/core'
 import {
   CalendarDays,
   ChartNoAxesColumn,
@@ -24,10 +26,11 @@ import DeleteVerifyPopup from '@/components/DeleteVerifyPopup.vue'
 import LinearProgress from '@/components/LinearProgress.vue'
 import MoneyText from '@/components/MoneyText.vue'
 import RecentSummaryCard from '@/components/RecentSummaryCard.vue'
+import ReminderPopup from '@/components/ReminderPopup.vue'
 import SideDrawer from '@/components/SideDrawer.vue'
 import TransactionDetailSheet from '@/components/TransactionDetailSheet.vue'
 import type { LedgerListItem } from '@/db/repositories/dashboard-repository'
-import type { BudgetWithProgress } from '@/domain/entities'
+import type { BudgetWithProgress, UpcomingReminder } from '@/domain/entities'
 import {
   useFinanceService,
   type HomeSnapshot,
@@ -35,6 +38,7 @@ import {
 } from '@/features/finance/finance-service'
 import { useBudgetService } from '@/features/budget/budget-service'
 import { currentMonthPeriodKey } from '@/features/budget/budget-service'
+import { useReminderService, isInReminderWindow } from '@/features/reminders/reminder-service'
 import { useAppStore } from '@/stores/app'
 import {
   useHomePreferencesService,
@@ -55,6 +59,7 @@ const route = useRoute()
 const appStore = useAppStore()
 const finance = useFinanceService()
 const budgetService = useBudgetService()
+const reminderService = useReminderService()
 const homePreferencesService = useHomePreferencesService()
 const currentMonth = ref(periodKeyToDate(appStore.selectedHomePeriod))
 const snapshot = ref<HomeSnapshot>()
@@ -84,6 +89,9 @@ const bulkDeleting = ref(false)
 const bulkEditing = ref(false)
 const bulkEditDate = ref('')
 const bulkEditNote = ref('')
+const showReminderPopup = ref(false)
+const reminderPopupItems = ref<UpcomingReminder[]>([])
+const reminderPopupBusy = ref(false)
 const homeScroller = ref<HTMLElement>()
 const isTopbarScrolled = ref(false)
 const homePullDistance = ref(0)
@@ -184,6 +192,98 @@ async function loadHome(options: { silent?: boolean } = {}): Promise<void> {
 
 function openDrawer(): void {
   showDrawer.value = true
+}
+
+/** "今日不再提醒"的 localStorage 键：值为当天本地日期 YYYY-MM-DD，次日自动失效。 */
+const REMINDER_POPUP_DISMISS_KEY = 'finance-manager:ui:reminder-popup-dismissed-date'
+
+function todayDateKey(): string {
+  const now = new Date()
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+function readReminderPopupDismissed(): boolean {
+  try {
+    return localStorage.getItem(REMINDER_POPUP_DISMISS_KEY) === todayDateKey()
+  } catch {
+    return false
+  }
+}
+
+function writeReminderPopupDismissed(): void {
+  try {
+    localStorage.setItem(REMINDER_POPUP_DISMISS_KEY, todayDateKey())
+  } catch {
+    // 受限 WebView 下 localStorage 不可用：当天仍会弹，但不阻断首页
+  }
+}
+
+/**
+ * 检查是否要弹"到期提醒"（打开 APP 进首页 / 从后台切回时调用）。
+ *
+ * - 只在首页弹：记账页、资产页等不打扰（KeepAlive 下 HomeView 仍存活，
+ *   所以要显式判断 route.name，避免在别的页面回前台时冒出弹窗）；
+ * - 当天勾过"今日不再提醒"则静默（整包当天生效，次日自动失效）；
+ * - 只列提醒窗口内且本期未处理的项；
+ * - 失败一律静默：提醒是辅助信息，不能影响首页可用性。
+ */
+async function checkReminders(): Promise<void> {
+  if (!reminderService || !appStore.ledgerId) return
+  if (route.name !== 'home') return
+  if (readReminderPopupDismissed() && !showReminderPopup.value) return
+  try {
+    const nowIso = new Date().toISOString()
+    const upcoming = await reminderService.listUpcoming(appStore.ledgerId, 30)
+    // await 期间可能已被自动记账拉到记账页，不在首页就不弹
+    if (route.name !== 'home') return
+    const inWindow = upcoming.filter(
+      (item) => !item.isHandled && isInReminderWindow(item.reminder, item.nextDueDate, nowIso),
+    )
+    reminderPopupItems.value = [...inWindow]
+    showReminderPopup.value = inWindow.length > 0
+  } catch {
+    // 忽略：提醒读取失败（库未就绪/表异常）不应打断首页
+  }
+}
+
+function handleReminderDismiss(dismissToday: boolean): void {
+  showReminderPopup.value = false
+  if (dismissToday) writeReminderPopupDismissed()
+}
+
+/** 弹窗内"标记已处理"：当期静默，下期照常（由 service 的窗口判断保证）。 */
+async function handleReminderMarkHandled(reminderId: string): Promise<void> {
+  if (!reminderService || reminderPopupBusy.value) return
+  reminderPopupBusy.value = true
+  try {
+    await reminderService.markTriggered(reminderId)
+    await checkReminders()
+  } catch {
+    // 忽略：单条处理失败不关闭弹窗，用户可再点或去列表页处理
+  } finally {
+    reminderPopupBusy.value = false
+  }
+}
+
+function onHomeVisibilityChange(): void {
+  if (document.visibilityState === 'visible') void checkReminders()
+}
+
+/**
+ * 原生回前台事件（与 visibilitychange 互为兜底，沿用 App.vue 的做法：
+ * Android WebView 的 visibilitychange 在部分机型后台→前台时不可靠）。
+ */
+let reminderAppStateListener: { remove: () => void } | undefined
+
+async function bindReminderForegroundListener(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return
+  try {
+    reminderAppStateListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) void checkReminders()
+    })
+  } catch {
+    // 忽略：注册失败仍有 visibilitychange 兜底
+  }
 }
 
 function handleHomeSwipeStart(event: TouchEvent): void {
@@ -475,13 +575,23 @@ watch(
   () => route.name,
   (routeName) => {
     if (routeName !== 'home' && selectionMode.value) cancelSelection()
+    // 从别的页面回到首页时补一次提醒检查（KeepAlive 下 onMounted 只走一次）
+    if (routeName === 'home') void checkReminders()
   },
 )
 
 onMounted(loadHome)
 onMounted(bindHomeScroll)
+onMounted(() => {
+  void checkReminders()
+  // 从后台切回 APP 时再检查：KeepAlive + 进程常驻，onMounted 不会再次触发
+  document.addEventListener('visibilitychange', onHomeVisibilityChange)
+  void bindReminderForegroundListener()
+})
 useRefreshOnActivated(() => loadHome({ silent: true }))
 onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onHomeVisibilityChange)
+  reminderAppStateListener?.remove()
   homeScrollContainer?.removeEventListener('scroll', updateTopbarAppearance)
   appStore.homeFabVisible = true
 })
@@ -649,6 +759,14 @@ onUnmounted(() => {
     </div>
 
     <SideDrawer v-model:show="showDrawer" />
+
+    <ReminderPopup
+      v-model:show="showReminderPopup"
+      :items="reminderPopupItems"
+      :busy="reminderPopupBusy"
+      @dismiss="handleReminderDismiss"
+      @mark-handled="handleReminderMarkHandled"
+    />
 
     <AppBottomSheet v-model:show="showPeriod" title="选择账期">
       <div class="period-picker">

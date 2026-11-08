@@ -14,8 +14,8 @@ public final class CaptureRuleDefaults {
 
     private CaptureRuleDefaults() {}
 
-    /** 当前内置规则集版本（4 = 成功页默认禁用，捕获只走账单详情页）。 */
-    public static final int CURRENT_VERSION = 5;
+    /** 当前内置规则集版本（6 = 新增支付宝·还花呗模板 + 前端补齐 wechat-transfer-in；5 = 微信多模板变体）。 */
+    public static final int CURRENT_VERSION = 6;
 
     /** 内置默认规则 JSON 字符串（运行时通过 JSONObject 构建）。 */
     public static final String DEFAULT_CONFIG_JSON = initConfig();
@@ -32,7 +32,8 @@ public final class CaptureRuleDefaults {
         JSONObject config = new JSONObject();
         config.put("version", CURRENT_VERSION);
         config.put("rules", new JSONArray()
-                .put(alipayBillDetailRule()).put(wechatBillDetailRule()).put(wechatRedPacketRule())
+                .put(alipayBillDetailRule()).put(alipayHuabeiRepaymentRule()).put(wechatBillDetailRule())
+                .put(wechatRedPacketRule())
                 .put(wechatLingqiantongOutRule()).put(wechatWithdrawRule()).put(wechatTransferInRule())
                 .put(alipayRule()).put(wechatRule())
                 .put(jdRule()).put(meituanRule()).put(douyinRule()));
@@ -117,6 +118,53 @@ public final class CaptureRuleDefaults {
                 .put(categoryMapping("(提现|返现|退款|红包|签到|奖励|返款)", "income-other", "income")));
         rule.put("enabled", true);
         rule.put("priority", 200);
+        return rule;
+    }
+
+    /**
+     * 支付宝·还花呗（pageType=bill-detail）。priority 210 高于通用账单详情 200，优先命中。
+     * 实测（2026-11-08 读屏）：金额"580.47元"无标签顶格；"还款到"字段是本页专属
+     * （通用模板不认识它 → 方向 confirm+无备注 → 被残缺页过滤器丢弃，这正是"没跳转"的根因）。
+     */
+    private static JSONObject alipayHuabeiRepaymentRule() throws org.json.JSONException {
+        JSONObject rule = new JSONObject();
+        rule.put("id", "alipay-huabei-repayment");
+        rule.put("name", "支付宝·还花呗");
+        rule.put("packageName", "com.eg.android.AlipayGphone");
+        rule.put("channel", "accessibility");
+        rule.put("pageType", "bill-detail");
+
+        JSONObject sig = new JSONObject();
+        // "还款成功"+"花呗"双特征锁定还花呗详情页（还信用卡页无"花呗"字样，不会抢）
+        sig.put("requireAll", new JSONArray().put("还款成功").put("花呗"));
+        // 时间标签措辞并存（普通详情"创建时间"、自动扣款"支付时间"），任一命中
+        sig.put("requiredAnyLabel", new JSONArray()
+                .put("创建时间").put("支付时间").put("还款时间"));
+        sig.put("requireAnyOf", new JSONArray().put("还款到").put("付款方式"));
+        rule.put("pageSignature", sig);
+
+        // 金额无标签，走整页扫描（时间串与卡号尾缀 "(5441)" 已被剔除）；
+        // 付款方式=转出账户线索（"中信银行储蓄卡(5441)"，前端账户匹配器按尾缀强匹配）
+        JSONObject aliases = new JSONObject();
+        aliases.put("occurredAtLabel", new JSONArray()
+                .put("创建时间").put("支付时间").put("还款时间"));
+        aliases.put("accountLabel", new JSONArray().put("付款方式").put("支付方式"));
+        aliases.put("orderIdLabel", new JSONArray().put("交易单号").put("订单号"));
+        rule.put("fieldAliases", aliases);
+
+        // 还款=自账户划转（付款方式→还款到），方向 transfer；转入方语义固定"花呗"（改账户名时改这里）
+        rule.put("defaultTargetAccountHint", "花呗");
+
+        JSONObject dir = new JSONObject();
+        dir.put("negative", "expense");
+        dir.put("selfTransferFields", new JSONArray().put("还款到").put("付款方式"));
+        dir.put("refundFields", new JSONArray().put("退款"));
+        dir.put("default", "transfer");
+        rule.put("directionRule", dir);
+
+        rule.put("categoryMappings", new JSONArray());
+        rule.put("enabled", true);
+        rule.put("priority", 210);
         return rule;
     }
 

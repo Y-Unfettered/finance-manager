@@ -1,17 +1,33 @@
-import type { ReminderRecord, ReminderType, ReminderWithAccount } from '@/domain/entities'
+import type {
+  ReminderManagedBy,
+  ReminderRecord,
+  ReminderRecurrence,
+  ReminderType,
+  ReminderWithAccount,
+} from '@/domain/entities'
 import type { SqlValue } from '@/db/core/types'
 import { BaseRepository } from '@/db/repositories/base-repository'
 
-interface ReminderRow extends Omit<
-  ReminderRecord,
-  'accountId' | 'amountMinor' | 'lastTriggeredAt' | 'enabled' | 'dueDate' | 'type'
-> {
+interface ReminderRow
+  extends Omit<
+    ReminderRecord,
+    | 'accountId'
+    | 'amountMinor'
+    | 'lastTriggeredAt'
+    | 'enabled'
+    | 'dueDate'
+    | 'type'
+    | 'recurrence'
+    | 'managedBy'
+  > {
   account_id: string | null
   amount_minor: number | null
   last_triggered_at: string | null
   enabled: number
   due_date: string
   type: string
+  recurrence: string | null
+  managed_by: string | null
 }
 
 interface ReminderWithAccountRow extends ReminderRow {
@@ -26,7 +42,10 @@ export interface CreateReminderInput {
   dueDate: string
   amountMinor?: number
   advanceDays?: number
+  recurrence?: ReminderRecurrence
   enabled?: boolean
+  /** 来源标记：'credit_profile' = 由信用卡账期自动生成；缺省 = 用户手建。 */
+  managedBy?: ReminderManagedBy
 }
 
 export interface UpdateReminderInput {
@@ -36,7 +55,10 @@ export interface UpdateReminderInput {
   dueDate?: string
   amountMinor?: number
   advanceDays?: number
+  recurrence?: ReminderRecurrence
   enabled?: boolean
+  /** 传 null 表示清掉"本期已处理"标记（账期改期后由自动同步清，手动编辑不传）。 */
+  lastTriggeredAt?: string | null
 }
 
 export class ReminderRepository extends BaseRepository {
@@ -47,8 +69,9 @@ export class ReminderRepository extends BaseRepository {
           statement: `
             INSERT INTO reminders (
               id, ledger_id, type, account_id, title, due_date,
-              amount_minor, advance_days, enabled, last_triggered_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              amount_minor, advance_days, recurrence, enabled, last_triggered_at,
+              managed_by, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
           values: [
             record.id,
@@ -59,8 +82,10 @@ export class ReminderRepository extends BaseRepository {
             record.dueDate,
             record.amountMinor ?? null,
             record.advanceDays,
+            record.recurrence ?? 'none',
             record.enabled ? 1 : 0,
             record.lastTriggeredAt ?? null,
+            record.managedBy ?? null,
             record.createdAt,
             record.updatedAt,
           ] as SqlValue[],
@@ -93,9 +118,17 @@ export class ReminderRepository extends BaseRepository {
       setClauses.unshift('advance_days = ?')
       values.unshift(fields.advanceDays)
     }
+    if (fields.recurrence !== undefined) {
+      setClauses.unshift('recurrence = ?')
+      values.unshift(fields.recurrence)
+    }
     if (fields.enabled !== undefined) {
       setClauses.unshift('enabled = ?')
       values.unshift(fields.enabled ? 1 : 0)
+    }
+    if (fields.lastTriggeredAt !== undefined) {
+      setClauses.unshift('last_triggered_at = ?')
+      values.unshift(fields.lastTriggeredAt)
     }
     values.push(id)
     await this.database.executeSet(
@@ -123,6 +156,21 @@ export class ReminderRepository extends BaseRepository {
     return rows[0] ? mapReminder(rows[0]) : undefined
   }
 
+  /**
+   * 查"某账户下由指定来源自动生成的提醒"（信用卡账期同步用）。
+   * 只认带 managed_by 标记的条目——用户手工建的提醒（managed_by 为 NULL）不会被同步逻辑碰。
+   */
+  async findByAccountManagedBy(
+    accountId: string,
+    managedBy: ReminderManagedBy,
+  ): Promise<ReminderRecord | undefined> {
+    const rows = await this.database.query<ReminderRow>(
+      `${REMINDER_SELECT} WHERE account_id = ? AND managed_by = ? ORDER BY created_at ASC LIMIT 1`,
+      [accountId, managedBy],
+    )
+    return rows[0] ? mapReminder(rows[0]) : undefined
+  }
+
   async listByLedger(ledgerId: string): Promise<ReminderWithAccount[]> {
     const rows = await this.database.query<ReminderWithAccountRow>(
       `${REMINDER_WITH_ACCOUNT_SELECT} WHERE reminders.ledger_id = ?
@@ -132,22 +180,17 @@ export class ReminderRepository extends BaseRepository {
     return rows.map(mapReminderWithAccount)
   }
 
-  async listUpcoming(
-    ledgerId: string,
-    fromIso: string,
-    lookaheadDays: number,
-  ): Promise<ReminderWithAccount[]> {
-    const endIso = new Date(
-      new Date(fromIso).getTime() + lookaheadDays * 24 * 60 * 60 * 1000,
-    ).toISOString()
+  /**
+   * 取账本下全部启用提醒（不按日期过滤）。
+   * 日期窗口/循环期次的计算在 service 层用本地日期做——原先在 SQL 里拿
+   * due_date（UTC 偏移串）与本地日期串做字符串比较，UTC+8 下"今天到期"
+   * 的提醒在到期当天反而查不出来（2026-11-08 排查确认），这里一并根治。
+   */
+  async listEnabledByLedger(ledgerId: string): Promise<ReminderWithAccount[]> {
     const rows = await this.database.query<ReminderWithAccountRow>(
-      `${REMINDER_WITH_ACCOUNT_SELECT}
-       WHERE reminders.ledger_id = ?
-         AND reminders.enabled = 1
-         AND reminders.due_date >= ?
-         AND reminders.due_date <= ?
+      `${REMINDER_WITH_ACCOUNT_SELECT} WHERE reminders.ledger_id = ? AND reminders.enabled = 1
        ORDER BY reminders.due_date ASC`,
-      [ledgerId, fromIso.slice(0, 10), endIso.slice(0, 10)],
+      [ledgerId],
     )
     return rows.map(mapReminderWithAccount)
   }
@@ -170,8 +213,10 @@ const REMINDER_SELECT = `
     due_date AS due_date,
     amount_minor AS amount_minor,
     advance_days AS advanceDays,
+    recurrence AS recurrence,
     enabled,
     last_triggered_at AS last_triggered_at,
+    managed_by AS managed_by,
     created_at AS createdAt,
     updated_at AS updatedAt
   FROM reminders
@@ -187,8 +232,10 @@ const REMINDER_WITH_ACCOUNT_SELECT = `
     reminders.due_date AS due_date,
     reminders.amount_minor AS amount_minor,
     reminders.advance_days AS advanceDays,
+    reminders.recurrence AS recurrence,
     reminders.enabled,
     reminders.last_triggered_at AS last_triggered_at,
+    reminders.managed_by AS managed_by,
     reminders.created_at AS createdAt,
     reminders.updated_at AS updatedAt,
     accounts.name AS accountName
@@ -206,8 +253,10 @@ function mapReminder(row: ReminderRow): ReminderRecord {
     dueDate: row.due_date,
     amountMinor: row.amount_minor ?? undefined,
     advanceDays: row.advanceDays,
+    recurrence: (row.recurrence as ReminderRecurrence | null) ?? 'none',
     enabled: row.enabled === 1,
     lastTriggeredAt: row.last_triggered_at ?? undefined,
+    managedBy: (row.managed_by as ReminderManagedBy | null) ?? undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }

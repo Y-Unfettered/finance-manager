@@ -23,6 +23,15 @@ interface CreditProfileRow {
   updatedAt: string
 }
 
+/** 信用账户账期 + 账户本体（回填自动还款提醒用：需要账户名、账本、归档状态）。 */
+export interface CreditProfileWithAccount {
+  accountId: string
+  ledgerId: string
+  accountName: string
+  archivedAt?: string
+  profile: CreditProfileRecord
+}
+
 export class AccountProfileRepository extends BaseRepository {
   async getPreference(accountId: string): Promise<AccountPreferenceRecord | undefined> {
     const rows = await this.database.query<PreferenceRow>(
@@ -76,6 +85,35 @@ export class AccountProfileRepository extends BaseRepository {
       [accountId],
     )
     return rows[0] ? mapCreditProfile(rows[0]) : undefined
+  }
+
+  /**
+   * 列出全部信用账户的账期（含账户名/账本/归档状态）。
+   * 用途：启动时一次性回填"账期 → 还款提醒"，因此不能只按当前账本查。
+   */
+  async listCreditProfilesWithAccounts(): Promise<CreditProfileWithAccount[]> {
+    const rows = await this.database.query<CreditProfileRow & {
+      accountName: string
+      ledgerId: string
+      archivedAt: string | null
+    }>(
+      `SELECT cp.account_id AS accountId, cp.credit_limit_minor AS creditLimitMinor,
+        cp.bill_day AS billDay, cp.repayment_day AS repaymentDay, cp.reminder_days AS reminderDays,
+        cp.effective_from AS effectiveFrom, cp.created_at AS createdAt, cp.updated_at AS updatedAt,
+        accounts.name AS accountName,
+        accounts.ledger_id AS ledgerId,
+        accounts.archived_at AS archivedAt
+       FROM credit_profiles cp
+       JOIN accounts ON accounts.id = cp.account_id
+       ORDER BY cp.account_id ASC`,
+    )
+    return rows.map((row) => ({
+      accountId: row.accountId,
+      ledgerId: row.ledgerId,
+      accountName: row.accountName,
+      archivedAt: row.archivedAt ?? undefined,
+      profile: mapCreditProfile(row),
+    }))
   }
 
   async saveCreditProfile(record: CreditProfileRecord): Promise<void> {

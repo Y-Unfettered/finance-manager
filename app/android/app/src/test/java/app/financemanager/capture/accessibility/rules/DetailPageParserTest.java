@@ -458,6 +458,105 @@ public class DetailPageParserTest {
 
     // ---------- 测试用规则（与 CaptureRuleDefaults / 前端 DEFAULT_RULES 同步） ----------
 
+    // ---------- 还花呗（2026-11-08 读屏实测） ----------
+
+    /** 2026-11-08 还花呗账单详情读屏原文（文本节点按树序摊平，与 extractVisibleText 同源）。
+     * 含"服务详情"行——15:25 实机完整渲染后多出的"花呗自动还款-2026年11月账单"
+     * 正是把金额带偏成 -2026 的元凶（11:55 首次读屏时该行尚未渲染，夹具必须含它）。 */
+    private static final String HUABEI_DUMP =
+            "花呗\n580.47元\n还款成功\n"
+                    + "创建时间\n2026-11-08 08:44:55\n2026-11-08 08:44:55\n"
+                    + "付款方式\n中信银行储蓄卡(5441) \n"
+                    + "还款到\n花呗\n花呗\n服务详情\n花呗自动还款-2026年11月账单\n查看详情\n更多\n"
+                    + "账单管理\n我的消费图鉴\n"
+                    + "账单分类\n信用借还\n标签\n请选择\n为您推荐\n计入收支\n开关\n备注\n添加\n"
+                    + "对此订单有疑问\n账单详情\n全部账单";
+
+    /** 支付宝·还花呗规则（与 CaptureRuleDefaults.alipayHuabeiRepaymentRule / 前端 alipay-huabei-repayment 同步）。 */
+    private static JSONObject huabeiRule() throws Exception {
+        return new JSONObject("{\"id\":\"alipay-huabei-repayment\",\"name\":\"支付宝·还花呗\","
+                + "\"packageName\":\"com.eg.android.AlipayGphone\","
+                + "\"pageSignature\":{\"requireAll\":[\"还款成功\",\"花呗\"],"
+                + "\"requiredAnyLabel\":[\"创建时间\",\"支付时间\",\"还款时间\"],"
+                + "\"requireAnyOf\":[\"还款到\",\"付款方式\"]},"
+                + "\"fieldAliases\":{"
+                + "\"occurredAtLabel\":[\"创建时间\",\"支付时间\",\"还款时间\"],"
+                + "\"accountLabel\":[\"付款方式\",\"支付方式\"],"
+                + "\"orderIdLabel\":[\"交易单号\",\"订单号\"]},"
+                + "\"directionRule\":{\"negative\":\"expense\","
+                + "\"selfTransferFields\":[\"还款到\",\"付款方式\"],\"refundFields\":[\"退款\"],\"default\":\"transfer\"},"
+                + "\"defaultTargetAccountHint\":\"花呗\","
+                + "\"categoryMappings\":[]}}");
+    }
+
+    /** 读屏原文通过还花呗签名（还款成功+花呗+还款到）。 */
+    @Test
+    public void huabei_pageSignature_matchesRealDump() throws Exception {
+        assertNull(PARSER.checkPageSignature(HUABEI_DUMP, huabeiRule()));
+    }
+
+    /** 金额无标签（"580.47元"顶格）→ 整页扫描取 58047；时间串/卡号尾缀被剔除不污染。 */
+    @Test
+    public void huabei_paidAmount_unlabeledTopAmount() throws Exception {
+        Map<String, String> fields = PARSER.extractFields(HUABEI_DUMP, huabeiRule());
+        DetailPageParser.AmountResult r = PARSER.extractPaidAmount(HUABEI_DUMP, fields, huabeiRule());
+        assertEquals(58047L, r.minor);
+        assertFalse(r.negative);
+    }
+
+    /** 方向：含"还款到"（自账户划转）→ transfer，不再 confirm。 */
+    @Test
+    public void huabei_direction_transfer() throws Exception {
+        Map<String, String> fields = PARSER.extractFields(HUABEI_DUMP, huabeiRule());
+        assertEquals("transfer", PARSER.decideDirection(HUABEI_DUMP, fields, false, huabeiRule(), null));
+    }
+
+    /** 字段：时间取创建时间 → ISO；转出账户取付款方式（卡号尾缀保留给账户匹配器）。 */
+    @Test
+    public void huabei_fields_timeAndAccount() throws Exception {
+        Map<String, String> fields = PARSER.extractFields(HUABEI_DUMP, huabeiRule());
+        assertEquals("2026-11-08T08:44:55", PARSER.extractOccurredAt(fields, huabeiRule()));
+        assertEquals("中信银行储蓄卡(5441)", PARSER.extractFirstField(
+                fields, huabeiRule().optJSONObject("fieldAliases"), "accountLabel"));
+    }
+
+    /** 回归（2026-11-08 实机）：服务详情行"花呗自动还款-2026年11月账单"的"-2026"
+     * 不再被当带负号金额（此前负号优先级稳压实付 580.47，并把方向带成 expense）。 */
+    @Test
+    public void huabei_paidAmount_serviceDetailLine_notPolluted() throws Exception {
+        // HUABEI_DUMP 已含该行：完整真实文本下金额必须仍是 580.47
+        Map<String, String> fields = PARSER.extractFields(HUABEI_DUMP, huabeiRule());
+        DetailPageParser.AmountResult r = PARSER.extractPaidAmount(HUABEI_DUMP, fields, huabeiRule());
+        assertEquals(58047L, r.minor);
+        assertFalse(r.negative);
+    }
+
+    /** 纯日期串剔除：中文年月(日)与 ISO 日期（不带时间）都不留数字组。 */
+    @Test
+    public void stripNoise_removesDateOnlyStrings() {
+        String out = DetailPageParser.stripNonAmountNoise(
+                "花呗自动还款-2026年11月账单\n2026-11-08\n2026/11/8\n2026年11月8日");
+        assertFalse(out.matches("(?s).*\\d{4}.*"));
+    }
+
+    /** 渐进加载竞态：时间值只渲染出日期"2026-11-08"（时间未到）→ 不再产出 2026/-11 候选。 */
+    @Test
+    public void huabei_paidAmount_dateOnlyTimeValue_notPolluted() throws Exception {
+        String text = "花呗\n580.47元\n还款成功\n创建时间\n2026-11-08\n"
+                + "付款方式\n中信银行储蓄卡(5441)\n还款到\n花呗";
+        Map<String, String> fields = PARSER.extractFields(text, huabeiRule());
+        DetailPageParser.AmountResult r = PARSER.extractPaidAmount(text, fields, huabeiRule());
+        assertEquals(58047L, r.minor);
+        assertFalse(r.negative);
+    }
+
+    /** 回归锚点：通用账单详情规则在本页仍判 confirm（+无备注 → 服务层残缺页丢弃）——这正是"没跳转"的根因。 */
+    @Test
+    public void huabei_genericRuleStillConfirms_whyDedicatedTemplateExists() throws Exception {
+        Map<String, String> fields = PARSER.extractFields(HUABEI_DUMP, alipayRule());
+        assertEquals("confirm", PARSER.decideDirection(HUABEI_DUMP, fields, false, alipayRule(), null));
+    }
+
     private static JSONObject alipayRule() throws Exception {
         return new JSONObject("{\"id\":\"alipay-bill-detail\",\"name\":\"支付宝·账单详情\","
                 + "\"packageName\":\"com.eg.android.AlipayGphone\","

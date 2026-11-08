@@ -2,8 +2,10 @@
 import type { EntityKind, IdGenerator } from '@/domain/identity'
 import type { Clock } from '@/domain/time'
 import { runMigrations } from '@/db/migration-runner'
+import { LATEST_SCHEMA_VERSION } from '@/db/migrations'
 import { AccountRepository } from '@/db/repositories/account-repository'
 import { LedgerRepository } from '@/db/repositories/ledger-repository'
+import { ReminderRepository } from '@/db/repositories/reminder-repository'
 import { TransactionRepository } from '@/db/repositories/transaction-repository'
 import { FinanceService } from '@/features/finance/finance-service'
 import { LedgerInitializationService } from '@/features/ledger/ledger-initialization-service'
@@ -57,7 +59,7 @@ describe('BackupService', () => {
     const parsed = JSON.parse(json)
     expect(parsed.format).toBe('finance-manager-backup')
     expect(parsed.version).toBe(1)
-    expect(parsed.schemaVersion).toBe(19)
+    expect(parsed.schemaVersion).toBe(LATEST_SCHEMA_VERSION)
     expect(parsed.appVersion).toBe('0.0.10')
     expect(parsed.checksum).toMatch(/^[0-9a-f]{64}$/)
     expect(parsed.recordCounts.transactions).toBeGreaterThanOrEqual(1)
@@ -73,7 +75,7 @@ describe('BackupService', () => {
     const result = await verifyBackupJson(json)
     expect(result.ok).toBe(true)
     if (result.ok) {
-      expect(result.schemaVersion).toBe(19)
+      expect(result.schemaVersion).toBe(LATEST_SCHEMA_VERSION)
       expect(result.totalRestored).toBeGreaterThan(0)
     }
   })
@@ -142,6 +144,44 @@ describe('RestoreService', () => {
         (category) => category.id === food.id,
       )?.iconKey,
     ).toBe(customIcon)
+  })
+
+  it('keeps the reminder recurrence flag through a full backup and restore', async () => {
+    const { database, ledger } = await setupLedgerWithExpenses()
+    const reminders = new ReminderRepository(database)
+    await reminders.create({
+      id: 'reminder_1',
+      ledgerId: ledger.id,
+      type: 'credit_card_due',
+      title: '花呗还款',
+      dueDate: '2026-11-08T00:00:00.000Z',
+      advanceDays: 3,
+      recurrence: 'monthly',
+      enabled: true,
+      managedBy: 'credit_profile',
+      createdAt: clock.nowIso(),
+      updatedAt: clock.nowIso(),
+    })
+    const json = await new BackupService({
+      database,
+      clock,
+      appVersion: '0.0.10',
+    }).createBackupJson()
+
+    const fresh = new NodeSqliteExecutor()
+    await runMigrations(fresh, undefined, clock.nowIso)
+    const outcome = await new RestoreService({
+      database: fresh,
+      clock,
+      appVersion: '0.0.10',
+    }).restoreFromJson(json)
+    expect(outcome.result.ok).toBe(true)
+
+    // recurrence 在恢复后不丢失，且默认值语义（不循环 = 'none'）仍是 none
+    const restored = await new ReminderRepository(fresh).findById('reminder_1')
+    expect(restored?.recurrence).toBe('monthly')
+    // 来源标记也要保住：恢复后仍是"信用卡账期自动生成"，才能继续被账期同步管理
+    expect(restored?.managedBy).toBe('credit_profile')
   })
 
   it('restores a backup into an empty database and reproduces balances', async () => {

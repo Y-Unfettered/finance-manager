@@ -18,6 +18,8 @@ import { CATEGORY_COLOR_SLOTS_V16_MIGRATION } from './016_category_color_slots_v
 import { APP_LOGS_V17_MIGRATION } from './017_app_logs_v17'
 import { CATEGORY_UNIQUE_ACTIVE_V18_MIGRATION } from './018_category_unique_active_v18'
 import { CATEGORY_COLOR_RESET_V19_MIGRATION } from './019_category_color_reset_v19'
+import { REMINDER_RECURRENCE_V20_MIGRATION } from './020_reminder_recurrence_v20'
+import { REMINDER_MANAGED_BY_V21_MIGRATION } from './021_reminder_managed_by_v21'
 
 export const APP_MIGRATIONS: readonly Migration[] = [
   INITIAL_SCHEMA_MIGRATION,
@@ -39,5 +41,7 @@ export const APP_MIGRATIONS: readonly Migration[] = [
   APP_LOGS_V17_MIGRATION,
   CATEGORY_UNIQUE_ACTIVE_V18_MIGRATION,
   CATEGORY_COLOR_RESET_V19_MIGRATION,
+  REMINDER_RECURRENCE_V20_MIGRATION,
+  REMINDER_MANAGED_BY_V21_MIGRATION,
 ]
-export const LATEST_SCHEMA_VERSION = CATEGORY_COLOR_RESET_V19_MIGRATION.version
+export const LATEST_SCHEMA_VERSION = REMINDER_MANAGED_BY_V21_MIGRATION.version

@@ -116,6 +116,10 @@ async function bootstrap(): Promise<void> {
       // 进程启动即检查一次月度自动备份：开关打开且本月尚无备份时静默创建一份。
       // 检查本身只做几次 app_settings 读取；真正的全表 dump 只在跨月后首次触发。
       void autoBackup.ensureMonthlyBackup()
+
+      // 信用卡账期的存量账户一次性回填：为"早已填好出账日+还款日"的信用账户补建还款提醒。
+      // 内部用 app_settings 打标记，只执行一次；失败只记日志，不影响启动。
+      void financeServiceInstance.backfillCreditReminders()
     } else {
       appStore.databaseStatus = 'not_applicable'
     }
